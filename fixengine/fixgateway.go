@@ -23,7 +23,10 @@ import (
 	"github.com/quickfixgo/tag"
 	"github.com/shopspring/decimal"
 	"github.com/thrasher-corp/gocryptotrader/common"
+<<<<<<< HEAD
 	"github.com/thrasher-corp/gocryptotrader/common/file"
+=======
+>>>>>>> 4b434f849663eb7d68cd7145f8d86ef359205771
 	"github.com/thrasher-corp/gocryptotrader/currency"
 	"github.com/thrasher-corp/gocryptotrader/exchanges/account"
 	"github.com/thrasher-corp/gocryptotrader/exchanges/asset"
@@ -71,6 +74,7 @@ func NewFixGateway(eventDispacher *websocketRoutineManager, exchangeManager *Exc
 }
 
 func (a *Application) Start() error {
+<<<<<<< HEAD
 	var cfgFileName string
 	filename := "fixgw.cfg"
 	execPath, _ := common.GetExecutablePath()
@@ -78,6 +82,9 @@ func (a *Application) Start() error {
 	if !file.Exists(cfgFileName) {
 		cfgFileName = path.Join(common.GetDefaultDataDir(runtime.GOOS), filename)
 	}
+=======
+	var cfgFileName string = path.Join(common.GetDefaultDataDir(runtime.GOOS), "fixgw.cfg")
+>>>>>>> 4b434f849663eb7d68cd7145f8d86ef359205771
 
 	cfg, err := os.Open(cfgFileName)
 	if err != nil {
