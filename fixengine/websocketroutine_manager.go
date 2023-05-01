@@ -21,16 +21,10 @@ func setupWebsocketRoutineManager(exchangeManager iExchangeManager, orderManager
 	if exchangeManager == nil {
 		return nil, errNilExchangeManager
 	}
-<<<<<<< HEAD
 	/*
 		if orderManager == nil {
 			return nil, errNilOrderManager
 		}*/
-=======
-	if orderManager == nil {
-		return nil, errNilOrderManager
-	}
->>>>>>> 4b434f849663eb7d68cd7145f8d86ef359205771
 	if syncer == nil {
 		return nil, errNilCurrencyPairSyncer
 	}
@@ -249,7 +243,6 @@ func (m *websocketRoutineManager) websocketDataHandler(exchName string, data int
 		}
 		m.syncer.PrintOrderbookSummary(base, "websocket", nil)
 	case *order.Detail:
-<<<<<<< HEAD
 		if m.orderManager != nil {
 			if !m.orderManager.Exists(d) {
 				err := m.orderManager.Add(d)
@@ -273,29 +266,28 @@ func (m *websocketRoutineManager) websocketDataHandler(exchName string, data int
 				}
 				m.printOrderSummary(d, true)
 			}
-=======
-		if !m.orderManager.Exists(d) {
-			err := m.orderManager.Add(d)
-			if err != nil {
-				return err
-			}
-			m.printOrderSummary(d, false)
-		} else {
-			od, err := m.orderManager.GetByExchangeAndID(d.Exchange, d.OrderID)
-			if err != nil {
-				return err
-			}
-			err = od.UpdateOrderFromDetail(d)
-			if err != nil {
-				return err
-			}
+			if !m.orderManager.Exists(d) {
+				err := m.orderManager.Add(d)
+				if err != nil {
+					return err
+				}
+				m.printOrderSummary(d, false)
+			} else {
+				od, err := m.orderManager.GetByExchangeAndID(d.Exchange, d.OrderID)
+				if err != nil {
+					return err
+				}
+				err = od.UpdateOrderFromDetail(d)
+				if err != nil {
+					return err
+				}
 
-			err = m.orderManager.UpdateExistingOrder(od)
-			if err != nil {
-				return err
+				err = m.orderManager.UpdateExistingOrder(od)
+				if err != nil {
+					return err
+				}
+				m.printOrderSummary(d, true)
 			}
-			m.printOrderSummary(d, true)
->>>>>>> 4b434f849663eb7d68cd7145f8d86ef359205771
 		}
 	case order.ClassificationError:
 		return fmt.Errorf("%w %s", d.Err, d.Error())
