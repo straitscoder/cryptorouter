@@ -15,6 +15,11 @@ require (
 	github.com/mattn/go-sqlite3 v1.14.16
 	github.com/pkg/errors v0.9.1
 	github.com/pquerna/otp v1.4.0
+	github.com/quickfixgo/enum v0.0.0-20171007195659-2cbed3730c3e
+	github.com/quickfixgo/field v0.0.0-20171007195410-74cea5ec78c7
+	github.com/quickfixgo/fix42 v0.0.0-20171007212724-86a4567f1c77
+	github.com/quickfixgo/quickfix v0.6.1-0.20190718201950-819c58d51b95
+	github.com/quickfixgo/tag v0.0.0-20171007194743-cbb465760521
 	github.com/shopspring/decimal v1.3.1
 	github.com/spf13/viper v1.15.0
 	github.com/thrasher-corp/gct-ta v0.0.0-20200623072738-f2b55b7f9f41
@@ -35,6 +40,7 @@ require (
 	github.com/cpuguy83/go-md2man/v2 v2.0.2 // indirect
 	github.com/friendsofgo/errors v0.9.2 // indirect
 	github.com/fsnotify/fsnotify v1.6.0 // indirect
+	github.com/globalsign/mgo v0.0.0-20181015135952-eeefdecb41b8 // indirect
 	github.com/golang/protobuf v1.5.2 // indirect
 	github.com/hashicorp/hcl v1.0.0 // indirect
 	github.com/magiconair/properties v1.8.7 // indirect
