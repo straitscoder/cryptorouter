@@ -23,6 +23,7 @@ import (
 	"github.com/quickfixgo/tag"
 	"github.com/shopspring/decimal"
 	"github.com/thrasher-corp/gocryptotrader/common"
+	"github.com/thrasher-corp/gocryptotrader/common/file"
 	"github.com/thrasher-corp/gocryptotrader/currency"
 	"github.com/thrasher-corp/gocryptotrader/exchanges/account"
 	"github.com/thrasher-corp/gocryptotrader/exchanges/asset"
@@ -70,7 +71,13 @@ func NewFixGateway(eventDispacher *websocketRoutineManager, exchangeManager *Exc
 }
 
 func (a *Application) Start() error {
-	var cfgFileName string = path.Join(common.GetDefaultDataDir(runtime.GOOS), "fixgw.cfg")
+	var cfgFileName string
+	filename := "fixgw.cfg"
+	execPath, _ := common.GetExecutablePath()
+	cfgFileName = path.Join(execPath, filename)
+	if !file.Exists(cfgFileName) {
+		cfgFileName = path.Join(common.GetDefaultDataDir(runtime.GOOS), filename)
+	}
 
 	cfg, err := os.Open(cfgFileName)
 	if err != nil {
