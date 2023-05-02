@@ -27,7 +27,7 @@ import (
 type FixEngine struct {
 	Config *config.Config
 	//apiServer               *apiServerManager
-	connectionManager       *connectionManager
+	//connectionManager       *connectionManager
 	currencyPairSyncer      *syncManager
 	ExchangeManager         *ExchangeManager
 	websocketRoutineManager *websocketRoutineManager
@@ -176,19 +176,6 @@ func (fixengine *FixEngine) Start() error {
 		}
 	}
 
-	// Sets up internet connectivity monitor
-	if fixengine.Settings.EnableConnectivityMonitor {
-		fixengine.connectionManager, err = setupConnectionManager(&fixengine.Config.ConnectionMonitor)
-		if err != nil {
-			gctlog.Errorf(gctlog.Global, "Connection manager unable to setup: %v", err)
-		} else {
-			err = fixengine.connectionManager.Start()
-			if err != nil {
-				gctlog.Errorf(gctlog.Global, "Connection manager unable to start: %v", err)
-			}
-		}
-	}
-
 	fixengine.uptime = time.Now()
 	gctlog.Debugf(gctlog.Global, "fixengine '%s' started.\n", fixengine.Config.Name)
 	gctlog.Debugf(gctlog.Global, "Using data dir: %s\n", fixengine.Settings.DataDir)
@@ -277,12 +264,6 @@ func (fixengine *FixEngine) Stop() {
 	gctlog.Debugln(gctlog.Global, "Engine shutting down..")
 	if fixengine.fixgateway != nil {
 		fixengine.fixgateway.Stop()
-	}
-
-	if fixengine.connectionManager.IsRunning() {
-		if err := fixengine.connectionManager.Stop(); err != nil {
-			gctlog.Errorf(gctlog.Global, "Connection manager unable to stop. Error: %v", err)
-		}
 	}
 
 	if dispatch.IsRunning() {
@@ -560,24 +541,4 @@ func (fixengine *FixEngine) SetupExchanges() error {
 // of the currency pair syncer management system.
 func (fixengine *FixEngine) WaitForInitialCurrencySync() error {
 	return fixengine.currencyPairSyncer.WaitForInitialSync()
-}
-
-// RegisterWebsocketDataHandler registers an externally defined data handler
-// for diverting and handling websocket notifications across all enabled
-// exchanges. InterceptorOnly as true will purge all other registered handlers
-// (including default) bypassing all other handling.
-func (fixengine *FixEngine) RegisterWebsocketDataHandler(fn WebsocketDataHandler, interceptorOnly bool) error {
-	if fixengine == nil {
-		return errNilBot
-	}
-	return fixengine.websocketRoutineManager.registerWebsocketDataHandler(fn, interceptorOnly)
-}
-
-// SetDefaultWebsocketDataHandler sets the default websocket handler and
-// removing all pre-existing handlers
-func (fixengine *FixEngine) SetDefaultWebsocketDataHandler() error {
-	if fixengine == nil {
-		return errNilBot
-	}
-	return fixengine.websocketRoutineManager.setWebsocketDataHandler(fixengine.websocketRoutineManager.websocketDataHandler)
 }

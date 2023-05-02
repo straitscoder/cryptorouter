@@ -588,11 +588,6 @@ func (m *syncManager) worker() {
 									c.Pair,
 									c.AssetType)
 								m.PrintOrderbookSummary(result, "REST", err)
-								if err == nil {
-									if m.remoteConfig.WebsocketRPC.Enabled {
-										relayWebsocketEvent(result, "orderbook_update", c.AssetType.String(), exchangeName)
-									}
-								}
 								updateErr := m.Update(c.Exchange, c.Pair, c.AssetType, SyncItemOrderbook, err)
 								if updateErr != nil {
 									log.Error(log.SyncMgr, updateErr)
@@ -666,11 +661,6 @@ func (m *syncManager) worker() {
 												c.AssetType)
 										}
 										m.PrintTickerSummary(result, "REST", err)
-										if err == nil {
-											if m.remoteConfig.WebsocketRPC.Enabled {
-												relayWebsocketEvent(result, "ticker_update", c.AssetType.String(), exchangeName)
-											}
-										}
 										updateErr := m.Update(c.Exchange, c.Pair, c.AssetType, SyncItemTicker, err)
 										if updateErr != nil {
 											log.Error(log.SyncMgr, updateErr)
@@ -903,18 +893,4 @@ func (m *syncManager) WaitForInitialSync() error {
 
 	m.initSyncWG.Wait()
 	return nil
-}
-
-func relayWebsocketEvent(result interface{}, event, assetType, exchangeName string) {
-	evt := WebsocketEvent{
-		Data:      result,
-		Event:     event,
-		AssetType: assetType,
-		Exchange:  exchangeName,
-	}
-	err := BroadcastWebsocketMessage(evt)
-	if !errors.Is(err, ErrWebsocketServiceNotRunning) {
-		log.Errorf(log.APIServerMgr, "Failed to broadcast websocket event %v. Error: %s",
-			event, err)
-	}
 }
