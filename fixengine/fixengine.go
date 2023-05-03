@@ -22,6 +22,111 @@ import (
 	"github.com/thrasher-corp/gocryptotrader/utils"
 )
 
+// Settings stores engine params. Please define a settings struct for automatic
+// display of instance settings. For example, if you define a struct named
+// ManagerSettings, it will be displayed as a subheading "Manager Settings"
+// and individual field names such as 'EnableManager' will be displayed
+// as "Enable Manager: true/false".
+type Settings struct {
+	ConfigFile            string
+	DataDir               string
+	MigrationDir          string
+	LogFile               string
+	GoMaxProcs            int
+	CheckParamInteraction bool
+	EnableFIXEngine       bool
+
+	CoreSettings
+	ExchangeSyncerSettings
+	ExchangeTuningSettings
+
+	// Main shutdown channel
+	Shutdown chan struct{}
+}
+
+// CoreSettings defines settings related to core engine operations
+type CoreSettings struct {
+	EnableDryRun                bool
+	EnableAllExchanges          bool
+	EnableAllPairs              bool
+	EnableCoinmarketcapAnalysis bool
+	EnablePortfolioManager      bool
+	EnableDataHistoryManager    bool
+	PortfolioManagerDelay       time.Duration
+	EnableGRPC                  bool
+	EnableGRPCProxy             bool
+	EnableGRPCShutdown          bool
+	EnableWebsocketRPC          bool
+	EnableDeprecatedRPC         bool
+	EnableCommsRelayer          bool
+	EnableExchangeSyncManager   bool
+	EnableDepositAddressManager bool
+	EnableEventManager          bool
+	EnableOrderManager          bool
+	EnableConnectivityMonitor   bool
+	EnableDatabaseManager       bool
+	EnableGCTScriptManager      bool
+	EnableNTPClient             bool
+	EnableWebsocketRoutine      bool
+	EnableCurrencyStateManager  bool
+	EventManagerDelay           time.Duration
+	EnableFuturesTracking       bool
+	Verbose                     bool
+	EnableDispatcher            bool
+	DispatchMaxWorkerAmount     int
+	DispatchJobsLimit           int
+}
+
+// ExchangeSyncerSettings defines settings for the exchange pair synchronisation
+type ExchangeSyncerSettings struct {
+	EnableTickerSyncing    bool
+	EnableOrderbookSyncing bool
+	EnableTradeSyncing     bool
+	SyncWorkersCount       int
+	SyncContinuously       bool
+	SyncTimeoutREST        time.Duration
+	SyncTimeoutWebsocket   time.Duration
+}
+
+// ExchangeTuningSettings defines settings related to an exchange
+type ExchangeTuningSettings struct {
+	EnableExchangeHTTPRateLimiter       bool
+	EnableExchangeHTTPDebugging         bool
+	EnableExchangeVerbose               bool
+	ExchangePurgeCredentials            bool
+	EnableExchangeAutoPairUpdates       bool
+	DisableExchangeAutoPairUpdates      bool
+	EnableExchangeRESTSupport           bool
+	EnableExchangeWebsocketSupport      bool
+	MaxHTTPRequestJobsLimit             int
+	TradeBufferProcessingInterval       time.Duration
+	RequestMaxRetryAttempts             int
+	AlertSystemPreAllocationCommsBuffer int // See exchanges/alert.go
+	ExchangeShutdownTimeout             time.Duration
+	HTTPTimeout                         time.Duration
+	HTTPUserAgent                       string
+	HTTPProxy                           string
+	GlobalHTTPTimeout                   time.Duration
+	GlobalHTTPUserAgent                 string
+	GlobalHTTPProxy                     string
+}
+
+const (
+	// MsgStatusOK message to display when status is "OK"
+	MsgStatusOK string = "ok"
+	// MsgStatusSuccess message to display when status is successful
+	MsgStatusSuccess string = "success"
+	// MsgStatusError message to display when failure occurs
+	MsgStatusError string = "error"
+	grpcName       string = "grpc"
+	grpcProxyName  string = "grpc_proxy"
+)
+
+// newConfigMutex only locks and unlocks on engine creation functions
+// as engine modifies global files, this protects the main bot creation
+// functions from interfering with each other
+var newEngineMutex sync.Mutex
+
 // Engine contains configuration, portfolio manager, exchange & ticker data and is the
 // overarching type across this code base.
 type FixEngine struct {
@@ -460,54 +565,10 @@ func (fixengine *FixEngine) LoadExchange(name string, wg *sync.WaitGroup) error 
 	return nil
 }
 
-func (fixengine *FixEngine) dryRunParamInteraction(param string) {
-	if !fixengine.Settings.CheckParamInteraction {
-		return
-	}
-
-	if !fixengine.Settings.EnableDryRun {
-		gctlog.Warnf(gctlog.Global,
-			"Command line argument '-%s' induces dry run mode."+
-				" Set -dryrun=false if you wish to override this.",
-			param)
-		fixengine.Settings.EnableDryRun = true
-	}
-}
-
 // SetupExchanges sets up the exchanges used by the fixengine
 func (fixengine *FixEngine) SetupExchanges() error {
 	var wg sync.WaitGroup
 	configs := fixengine.Config.GetAllExchangeConfigs()
-	if fixengine.Settings.EnableAllPairs {
-		fixengine.dryRunParamInteraction("enableallpairs")
-	}
-	if fixengine.Settings.EnableAllExchanges {
-		fixengine.dryRunParamInteraction("enableallexchanges")
-	}
-	if fixengine.Settings.EnableExchangeVerbose {
-		fixengine.dryRunParamInteraction("exchangeverbose")
-	}
-	if fixengine.Settings.EnableExchangeWebsocketSupport {
-		fixengine.dryRunParamInteraction("exchangewebsocketsupport")
-	}
-	if fixengine.Settings.EnableExchangeAutoPairUpdates {
-		fixengine.dryRunParamInteraction("exchangeautopairupdates")
-	}
-	if fixengine.Settings.DisableExchangeAutoPairUpdates {
-		fixengine.dryRunParamInteraction("exchangedisableautopairupdates")
-	}
-	if fixengine.Settings.HTTPUserAgent != "" {
-		fixengine.dryRunParamInteraction("httpuseragent")
-	}
-	if fixengine.Settings.HTTPProxy != "" {
-		fixengine.dryRunParamInteraction("httpproxy")
-	}
-	if fixengine.Settings.HTTPTimeout != exchange.DefaultHTTPTimeout {
-		fixengine.dryRunParamInteraction("httptimeout")
-	}
-	if fixengine.Settings.EnableExchangeHTTPDebugging {
-		fixengine.dryRunParamInteraction("exchangehttpdebugging")
-	}
 
 	for x := range configs {
 		if !configs[x].Enabled && !fixengine.Settings.EnableAllExchanges {
