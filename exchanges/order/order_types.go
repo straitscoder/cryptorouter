@@ -169,6 +169,8 @@ type Detail struct {
 	ExecutedAmount       float64
 	RemainingAmount      float64
 	Cost                 float64
+	LastExecutedPrice    float64
+	LastExecutedQuantity float64
 	CostAsset            currency.Code
 	Fee                  float64
 	FeeAsset             currency.Code
