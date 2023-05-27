@@ -18,6 +18,7 @@ import (
 	"github.com/quickfixgo/fix42/marketdatarequest"
 	"github.com/quickfixgo/fix42/marketdatasnapshotfullrefresh"
 	"github.com/quickfixgo/fix42/newordersingle"
+	"github.com/quickfixgo/fix42/ordercancelreplacerequest"
 	"github.com/quickfixgo/fix42/ordercancelrequest"
 	"github.com/quickfixgo/quickfix"
 	"github.com/quickfixgo/tag"
@@ -55,6 +56,7 @@ func NewFixGateway(eventDispacher *websocketRoutineManager, exchangeManager *Exc
 	app.AddRoute(newordersingle.Route(app.onNewOrderSingle))
 	app.AddRoute(ordercancelrequest.Route(app.onOrderCancelRequest))
 	app.AddRoute(marketdatarequest.Route(app.onMarketDataRequest))
+	app.AddRoute(ordercancelreplacerequest.Route(app.onOrderCancelReplaceRequest))
 
 	app.socketDispatcher = eventDispacher
 	app.sessions = make(map[string]quickfix.SessionID)
@@ -303,6 +305,11 @@ func (a *Application) onOrderCancelRequest(msg ordercancelrequest.OrderCancelReq
 		return err
 	}
 
+	clOrdID, err := msg.GetClOrdID()
+	if err != nil {
+		return err
+	}
+
 	exchange, err := msg.GetSecurityExchange()
 	if err != nil {
 		return err
@@ -319,11 +326,12 @@ func (a *Application) onOrderCancelRequest(msg ordercancelrequest.OrderCancelReq
 	}
 
 	request := &order.Cancel{
-		Exchange:  exchange,
-		OrderID:   orderID,
-		Side:      FromSide(side),
-		Pair:      pair,
-		AssetType: FromSecurityType(securityType),
+		Exchange:      exchange,
+		OrderID:       orderID,
+		Side:          FromSide(side),
+		Pair:          pair,
+		AssetType:     FromSecurityType(securityType),
+		ClientOrderID: clOrdID,
 	}
 
 	exch, e := a.exchangeManager.GetExchangeByName(request.Exchange)
@@ -332,6 +340,72 @@ func (a *Application) onOrderCancelRequest(msg ordercancelrequest.OrderCancelReq
 	}
 
 	exch.CancelOrder(context.TODO(), request)
+	return nil
+}
+
+func (a *Application) onOrderCancelReplaceRequest(msg ordercancelreplacerequest.OrderCancelReplaceRequest, sessionID quickfix.SessionID) quickfix.MessageRejectError {
+	orderID, err := msg.GetOrderID()
+	if err != nil {
+		return err
+	}
+
+	side, err := msg.GetSide()
+	if err != nil {
+		return err
+	}
+
+	symbol, err := msg.GetSymbol()
+	if err != nil {
+		return err
+	}
+
+	clOrdID, err := msg.GetClOrdID()
+	if err != nil {
+		return err
+	}
+
+	exchange, err := msg.GetSecurityExchange()
+	if err != nil {
+		return err
+	}
+
+	securityType, err := msg.GetSecurityType()
+	if err != nil {
+		return err
+	}
+
+	pair, e := currency.NewPairFromString(symbol)
+	if e != nil {
+		return err
+	}
+
+	price, err := msg.GetPrice()
+	if err != nil {
+		return err
+	}
+
+	orderQty, err := msg.GetOrderQty()
+	if err != nil {
+		return err
+	}
+
+	request := &order.Modify{
+		Exchange:      exchange,
+		OrderID:       orderID,
+		Side:          FromSide(side),
+		Pair:          pair,
+		AssetType:     FromSecurityType(securityType),
+		ClientOrderID: clOrdID,
+		Price:         price.InexactFloat64(),
+		Amount:        orderQty.InexactFloat64(),
+	}
+
+	exch, e := a.exchangeManager.GetExchangeByName(request.Exchange)
+	if e != nil {
+		return quickfix.ValueIsIncorrect(tag.SecurityExchange)
+	}
+
+	exch.ModifyOrder(context.TODO(), request)
 	return nil
 }
 
@@ -617,12 +691,12 @@ func (a *Application) UpdateOrder(msg *order.Detail, status enum.OrdStatus) {
 	execReport.SetSecurityExchange(msg.Exchange)
 	execReport.SetSecurityType(ToSecurityType(msg.AssetType))
 
-	/*
-		switch status {
-		case enum.OrdStatus_FILLED, enum.OrdStatus_PARTIALLY_FILLED:
-			execReport.SetLastPx(decimal.NewFromFloat(msg.LastExecutedPrice), 8)
-			execReport.SetLastShares(decimal.NewFromFloat(msg.LastExecutedQuantity), 8)
-		}*/
+	switch status {
+	case enum.OrdStatus_FILLED, enum.OrdStatus_PARTIALLY_FILLED:
+		execReport.SetExecType(enum.ExecType_TRADE)
+		execReport.SetLastPx(decimal.NewFromFloat(msg.LastExecutedPrice), 8)
+		execReport.SetLastShares(decimal.NewFromFloat(msg.LastExecutedQuantity), 8)
+	}
 
 	for _, sessionID := range a.sessions {
 		sendErr := quickfix.SendToTarget(execReport, sessionID)
