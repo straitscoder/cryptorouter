@@ -175,7 +175,7 @@ func NewFromSettings(settings *Settings, flagSet map[string]bool) (*FixEngine, e
 	}
 
 	if *b.Config.Logging.Enabled {
-		err = gctlog.SetupGlobalLogger()
+		err = gctlog.SetupGlobalLogger("gct/backtester", false)
 		if err != nil {
 			return nil, fmt.Errorf("failed to setup global logger. %w", err)
 		}

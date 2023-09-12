@@ -33,7 +33,6 @@ import (
 	"github.com/thrasher-corp/gocryptotrader/exchanges/orderbook"
 	"github.com/thrasher-corp/gocryptotrader/exchanges/ticker"
 	"github.com/thrasher-corp/gocryptotrader/exchanges/trade"
-	"github.com/thrasher-corp/gocryptotrader/log"
 )
 
 // Application implements the quickfix.Application interface
@@ -436,7 +435,7 @@ func (a *Application) WebsocketDataHandler(exchName string, data interface{}) er
 
 	switch d := data.(type) {
 	case string:
-		log.Info(log.WebsocketMgr, d)
+		//log.Infoln(log.WebsocketMgr, d)
 	case error:
 		return fmt.Errorf("exchange %s websocket error - %s", exchName, data)
 	case *ticker.Price:

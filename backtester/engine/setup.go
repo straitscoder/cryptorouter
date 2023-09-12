@@ -147,11 +147,14 @@ func (bt *BackTest) SetupFromConfig(cfg *config.Config, templatePath, output str
 				exch.SetDefaults()
 				exchBase := exch.GetBase()
 				exchBase.Verbose = cfg.DataSettings.VerboseExchangeRequests
-				exchBase.Config = &gctconfig.Exchange{
-					Name:           exchBase.Name,
-					HTTPTimeout:    gctexchange.DefaultHTTPTimeout,
-					BaseCurrencies: exchBase.BaseCurrencies,
-					CurrencyPairs:  &currency.PairsManager{},
+				var dc *gctconfig.Exchange
+				dc, err = exch.GetDefaultConfig(context.TODO())
+				if err != nil {
+					return err
+				}
+				err = exch.Setup(dc)
+				if err != nil {
+					return err
 				}
 				err = exch.UpdateTradablePairs(context.TODO(), true)
 				if err != nil {
@@ -783,7 +786,7 @@ func (bt *BackTest) loadData(cfg *config.Config, exch gctexchange.IBotExchange, 
 		defer func() {
 			stopErr := bt.databaseManager.Stop()
 			if stopErr != nil {
-				log.Error(common.Setup, stopErr)
+				log.Errorln(common.Setup, stopErr)
 			}
 		}()
 		resp, err = loadDatabaseData(cfg, exch.GetName(), fPair, a, dataType, isUSDTrackingPair)

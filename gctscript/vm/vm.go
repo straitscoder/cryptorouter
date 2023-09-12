@@ -5,7 +5,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/hex"
-	"errors"
 	"os"
 	"path/filepath"
 	"sync/atomic"
@@ -26,7 +25,7 @@ import (
 // NewVM attempts to create a new Virtual Machine firstly from pool
 func (g *GctScriptManager) NewVM() *VM {
 	if !g.IsRunning() {
-		log.Error(log.GCTScriptMgr, Error{
+		log.Errorln(log.GCTScriptMgr, Error{
 			Action: "NewVM",
 			Cause:  ErrScriptingDisabled,
 		})
@@ -34,7 +33,7 @@ func (g *GctScriptManager) NewVM() *VM {
 	}
 	newUUID, err := uuid.NewV4()
 	if err != nil {
-		log.Error(log.GCTScriptMgr, Error{Action: "New: UUID", Cause: err})
+		log.Errorln(log.GCTScriptMgr, Error{Action: "New: UUID", Cause: err})
 		return nil
 	}
 
@@ -44,9 +43,9 @@ func (g *GctScriptManager) NewVM() *VM {
 
 	s, ok := pool.Get().(*tengo.Script)
 	if !ok {
-		log.Error(log.GCTScriptMgr, Error{
+		log.Errorln(log.GCTScriptMgr, Error{
 			Action: "NewVM",
-			Cause:  errors.New("unable to type assert tengo script"),
+			Cause:  common.GetTypeAssertError("*tengo.Script", pool),
 		})
 		return nil
 	}
@@ -144,30 +143,30 @@ func (vm *VM) CompileAndRun() {
 	}
 	err := vm.Compile()
 	if err != nil {
-		log.Error(log.GCTScriptMgr, err)
+		log.Errorln(log.GCTScriptMgr, err)
 		err = vm.unregister()
 		if err != nil {
-			log.Error(log.GCTScriptMgr, err)
+			log.Errorln(log.GCTScriptMgr, err)
 		}
 		return
 	}
 
 	err = vm.RunCtx()
 	if err != nil {
-		log.Error(log.GCTScriptMgr, err)
+		log.Errorln(log.GCTScriptMgr, err)
 		err = vm.unregister()
 		if err != nil {
-			log.Error(log.GCTScriptMgr, err)
+			log.Errorln(log.GCTScriptMgr, err)
 		}
 		return
 	}
 	if vm.Compiled.Get("timer").String() != "" {
 		vm.T, err = time.ParseDuration(vm.Compiled.Get("timer").String())
 		if err != nil {
-			log.Error(log.GCTScriptMgr, err)
+			log.Errorln(log.GCTScriptMgr, err)
 			err = vm.Shutdown()
 			if err != nil {
-				log.Error(log.GCTScriptMgr, err)
+				log.Errorln(log.GCTScriptMgr, err)
 			}
 			return
 		}
@@ -177,12 +176,12 @@ func (vm *VM) CompileAndRun() {
 		}
 
 		if vm.T < 0 {
-			log.Error(log.GCTScriptMgr, "Repeat timer cannot be under 1 nano second")
+			log.Errorln(log.GCTScriptMgr, "Repeat timer cannot be under 1 nano second")
 		}
 	}
 	err = vm.Shutdown()
 	if err != nil {
-		log.Error(log.GCTScriptMgr, err)
+		log.Errorln(log.GCTScriptMgr, err)
 	}
 }
 

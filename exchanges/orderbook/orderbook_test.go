@@ -294,6 +294,34 @@ func TestGetDepth(t *testing.T) {
 	}
 }
 
+func TestBaseGetDepth(t *testing.T) {
+	c, err := currency.NewPairFromStrings("BTC", "UST")
+	if err != nil {
+		t.Error(err)
+	}
+	base := &Base{
+		Pair:     c,
+		Asks:     []Item{{Price: 100, Amount: 10}},
+		Bids:     []Item{{Price: 200, Amount: 10}},
+		Exchange: "Exchange",
+		Asset:    asset.Spot,
+	}
+
+	if _, err = base.GetDepth(); !errors.Is(err, errCannotFindOrderbook) {
+		t.Errorf("expecting %s error but received %v", errCannotFindOrderbook, err)
+	}
+
+	if err = base.Process(); err != nil {
+		t.Error(err)
+	}
+
+	if result, err := base.GetDepth(); err != nil {
+		t.Errorf("failed to get orderbook. Error %s", err)
+	} else if !result.pair.Equal(c) {
+		t.Errorf("Mismatched pairs: %v %v", result.pair, c)
+	}
+}
+
 func TestDeployDepth(t *testing.T) {
 	c, err := currency.NewPairFromStrings("BTC", "USD")
 	if err != nil {
@@ -719,5 +747,28 @@ func BenchmarkCopySlice(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		cpy := make([]Item, len(s))
 		copy(cpy, s)
+	}
+}
+
+func TestCheckAlignment(t *testing.T) {
+	t.Parallel()
+	itemWithFunding := Items{
+		{
+			Amount: 1337,
+			Price:  0,
+			Period: 1337,
+		},
+	}
+	err := checkAlignment(itemWithFunding, true, true, false, dsc, "Bitfinex")
+	if err != nil {
+		t.Error(err)
+	}
+	err = checkAlignment(itemWithFunding, false, true, false, dsc, "Bitfinex")
+	if !errors.Is(err, errPriceNotSet) {
+		t.Fatalf("received: %v but expected: %v", err, errPriceNotSet)
+	}
+	err = checkAlignment(itemWithFunding, true, true, false, dsc, "Binance")
+	if !errors.Is(err, errPriceNotSet) {
+		t.Fatalf("received: %v but expected: %v", err, errPriceNotSet)
 	}
 }

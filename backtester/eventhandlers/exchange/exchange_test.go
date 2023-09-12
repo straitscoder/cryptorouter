@@ -16,6 +16,7 @@ import (
 	"github.com/thrasher-corp/gocryptotrader/backtester/eventtypes/order"
 	"github.com/thrasher-corp/gocryptotrader/backtester/funding"
 	gctcommon "github.com/thrasher-corp/gocryptotrader/common"
+	"github.com/thrasher-corp/gocryptotrader/common/convert"
 	"github.com/thrasher-corp/gocryptotrader/currency"
 	"github.com/thrasher-corp/gocryptotrader/engine"
 	exchange "github.com/thrasher-corp/gocryptotrader/exchanges"
@@ -151,7 +152,7 @@ func TestSetCurrency(t *testing.T) {
 
 func TestEnsureOrderFitsWithinHLV(t *testing.T) {
 	t.Parallel()
-	adjustedPrice, adjustedAmount := ensureOrderFitsWithinHLV(decimal.NewFromInt(123), decimal.NewFromInt(1), decimal.NewFromInt(100), decimal.NewFromInt(99), decimal.NewFromInt(100))
+	adjustedPrice, adjustedAmount := ensureOrderFitsWithinHLV(decimal.NewFromInt(123), decimal.NewFromInt(1), decimal.NewFromInt(100), decimal.NewFromInt(99), decimal.NewFromInt(10))
 	if !adjustedAmount.Equal(decimal.NewFromInt(1)) {
 		t.Error("expected 1")
 	}
@@ -159,7 +160,7 @@ func TestEnsureOrderFitsWithinHLV(t *testing.T) {
 		t.Error("expected 100")
 	}
 
-	adjustedPrice, adjustedAmount = ensureOrderFitsWithinHLV(decimal.NewFromInt(123), decimal.NewFromInt(1), decimal.NewFromInt(100), decimal.NewFromInt(99), decimal.NewFromInt(80))
+	adjustedPrice, adjustedAmount = ensureOrderFitsWithinHLV(decimal.NewFromInt(123), decimal.NewFromInt(1), decimal.NewFromInt(100), decimal.NewFromInt(99), decimal.NewFromFloat(0.8))
 	if !adjustedAmount.Equal(decimal.NewFromFloat(0.799999992)) {
 		t.Errorf("received: %v, expected: %v", adjustedAmount, decimal.NewFromFloat(0.799999992))
 	}
@@ -373,6 +374,18 @@ func TestExecuteOrderBuySellSizeLimit(t *testing.T) {
 	}
 	exch.SetDefaults()
 	exchB := exch.GetBase()
+	exchB.CurrencyPairs = currency.PairsManager{
+		UseGlobalFormat: true,
+		RequestFormat: &currency.PairFormat{
+			Uppercase: true,
+			Delimiter: currency.DashDelimiter,
+		},
+		Pairs: map[asset.Item]*currency.PairStore{
+			asset.Spot: {
+				AssetEnabled: convert.BoolPtr(true),
+			},
+		},
+	}
 	exchB.States = currencystate.NewCurrencyStates()
 	err = em.Add(exch)
 	if !errors.Is(err, nil) {

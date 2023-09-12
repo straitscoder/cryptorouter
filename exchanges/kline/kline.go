@@ -251,6 +251,12 @@ func (k *Item) FormatDates() {
 // durationToWord returns english version of interval
 func durationToWord(in Interval) string {
 	switch in {
+	case HundredMilliseconds:
+		return "hundredmillisec"
+	case ThousandMilliseconds:
+		return "thousandmillisec"
+	case TenSecond:
+		return "tensec"
 	case FifteenSecond:
 		return "fifteensecond"
 	case OneMin:
@@ -291,6 +297,10 @@ func durationToWord(in Interval) string {
 		return "twoweek"
 	case OneMonth:
 		return "onemonth"
+	case ThreeMonth:
+		return "threemonth"
+	case SixMonth:
+		return "sixmonth"
 	case OneYear:
 		return "oneyear"
 	default:
@@ -570,8 +580,8 @@ func (h *IntervalRangeHolder) createDateSummaryRange(start, end time.Time, hasDa
 
 	return fmt.Sprintf("%s data between %s and %s",
 		dataString,
-		start.Format(common.SimpleTimeFormat),
-		end.Format(common.SimpleTimeFormat))
+		start.Format(time.DateTime),
+		end.Format(time.DateTime))
 }
 
 // CreateIntervalTime is a simple helper function to set the time twice

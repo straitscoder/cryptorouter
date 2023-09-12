@@ -17,8 +17,7 @@ func Get(exchange string, p currency.Pair, a asset.Item) (*Base, error) {
 	return service.Retrieve(exchange, p, a)
 }
 
-// GetDepth returns a Depth pointer allowing the caller to stream orderbook
-// changes
+// GetDepth returns a Depth pointer allowing the caller to stream orderbook changes
 func GetDepth(exchange string, p currency.Pair, a asset.Item) (*Depth, error) {
 	return service.GetDepth(exchange, p, a)
 }
@@ -78,8 +77,11 @@ func (s *Service) Update(b *Base) error {
 		book.AssignOptions(b)
 		m3[b.Pair.Quote.Item] = book
 	}
-	book.LoadSnapshot(b.Bids, b.Asks, b.LastUpdateID, b.LastUpdated, true)
+	err := book.LoadSnapshot(b.Bids, b.Asks, b.LastUpdateID, b.LastUpdated, true)
 	s.mu.Unlock()
+	if err != nil {
+		return err
+	}
 	return s.Mux.Publish(book, m1.ID)
 }
 
@@ -167,6 +169,12 @@ func (s *Service) GetDepth(exchange string, p currency.Pair, a asset.Item) (*Dep
 // Retrieve gets orderbook depth data from the associated linked list and
 // returns the base equivalent copy
 func (s *Service) Retrieve(exchange string, p currency.Pair, a asset.Item) (*Base, error) {
+	if p.IsEmpty() {
+		return nil, currency.ErrCurrencyPairEmpty
+	}
+	if !a.IsValid() {
+		return nil, fmt.Errorf("%w %v", asset.ErrNotSupported, a)
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	m1, ok := s.books[strings.ToLower(exchange)]
@@ -194,6 +202,11 @@ func (s *Service) Retrieve(exchange string, p currency.Pair, a asset.Item) (*Bas
 			p.Quote)
 	}
 	return book.Retrieve()
+}
+
+// GetDepth returns the concrete book allowing the caller to stream orderbook changes
+func (b *Base) GetDepth() (*Depth, error) {
+	return service.GetDepth(b.Exchange, b.Pair, b.Asset)
 }
 
 // TotalBidsAmount returns the total amount of bids and the total orderbook
@@ -239,11 +252,11 @@ func (b *Base) Verify() error {
 			len(b.Bids),
 			len(b.Asks))
 	}
-	err := checkAlignment(b.Bids, b.IsFundingRate, b.PriceDuplication, b.IDAlignment, dsc)
+	err := checkAlignment(b.Bids, b.IsFundingRate, b.PriceDuplication, b.IDAlignment, dsc, b.Exchange)
 	if err != nil {
 		return fmt.Errorf(bidLoadBookFailure, b.Exchange, b.Pair, b.Asset, err)
 	}
-	err = checkAlignment(b.Asks, b.IsFundingRate, b.PriceDuplication, b.IDAlignment, asc)
+	err = checkAlignment(b.Asks, b.IsFundingRate, b.PriceDuplication, b.IDAlignment, asc, b.Exchange)
 	if err != nil {
 		return fmt.Errorf(askLoadBookFailure, b.Exchange, b.Pair, b.Asset, err)
 	}
@@ -271,11 +284,16 @@ var dsc = func(current Item, previous Item) error {
 }
 
 // checkAlignment validates full orderbook
-func checkAlignment(depth Items, fundingRate, priceDuplication, isIDAligned bool, c checker) error {
+func checkAlignment(depth Items, fundingRate, priceDuplication, isIDAligned bool, c checker, exch string) error {
 	for i := range depth {
 		if depth[i].Price == 0 {
-			return errPriceNotSet
+			switch {
+			case exch == "Bitfinex" && fundingRate: /* funding rate can be 0 it seems on Bitfinex */
+			default:
+				return errPriceNotSet
+			}
 		}
+
 		if depth[i].Amount <= 0 {
 			return errAmountInvalid
 		}

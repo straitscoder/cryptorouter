@@ -17,6 +17,7 @@ import (
 	"github.com/thrasher-corp/gocryptotrader/exchanges/asset"
 	"github.com/thrasher-corp/gocryptotrader/exchanges/order"
 	"github.com/thrasher-corp/gocryptotrader/exchanges/sharedtestvalues"
+	"github.com/thrasher-corp/gocryptotrader/exchanges/ticker"
 	"github.com/thrasher-corp/gocryptotrader/portfolio/withdraw"
 )
 
@@ -47,6 +48,22 @@ func TestMain(m *testing.M) {
 
 	e.API.AuthenticatedSupport = true
 	e.SetCredentials(APIKey, APISecret, "", "", "", "")
+
+	err = e.UpdateTradablePairs(context.Background(), false)
+	if err != nil {
+		log.Fatal("Exmo UpdateTradablePairs error", err)
+	}
+
+	avail, err := e.GetAvailablePairs(asset.Spot)
+	if err != nil {
+		log.Fatal("Exmo GetAvailablePairs error", err)
+	}
+
+	err = e.CurrencyPairs.StorePairs(asset.Spot, avail, true)
+	if err != nil {
+		log.Fatal("Exmo StorePairs error", err)
+	}
+
 	os.Exit(m.Run())
 }
 
@@ -266,7 +283,7 @@ func TestFormatWithdrawPermissions(t *testing.T) {
 
 func TestGetActiveOrders(t *testing.T) {
 	t.Parallel()
-	var getOrdersRequest = order.GetOrdersRequest{
+	var getOrdersRequest = order.MultiOrderRequest{
 		Type:      order.AnyType,
 		AssetType: asset.Spot,
 		Side:      order.AnySide,
@@ -282,7 +299,7 @@ func TestGetActiveOrders(t *testing.T) {
 
 func TestGetOrderHistory(t *testing.T) {
 	t.Parallel()
-	var getOrdersRequest = order.GetOrdersRequest{
+	var getOrdersRequest = order.MultiOrderRequest{
 		Type:      order.AnyType,
 		AssetType: asset.Spot,
 		Side:      order.AnySide,
@@ -448,6 +465,15 @@ func TestGetDepositAddress(t *testing.T) {
 	}
 }
 
+func TestGetCryptoDepositAddress(t *testing.T) {
+	t.Parallel()
+	sharedtestvalues.SkipTestIfCredentialsUnset(t, e)
+	_, err := e.GetCryptoDepositAddress(context.Background())
+	if err != nil {
+		t.Error(err)
+	}
+}
+
 func TestGetRecentTrades(t *testing.T) {
 	t.Parallel()
 	currencyPair, err := currency.NewPairFromString("BTC_USD")
@@ -486,9 +512,22 @@ func TestUpdateTicker(t *testing.T) {
 }
 
 func TestUpdateTickers(t *testing.T) {
+	t.Parallel()
 	err := e.UpdateTickers(context.Background(), asset.Spot)
 	if err != nil {
 		t.Error(err)
+	}
+
+	avail, err := e.GetAvailablePairs(asset.Spot)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for x := range avail {
+		_, err := ticker.GetTicker(e.Name, avail[x], asset.Spot)
+		if err != nil {
+			t.Error(err)
+		}
 	}
 }
 
@@ -501,7 +540,27 @@ func TestGetCryptoPaymentProvidersList(t *testing.T) {
 }
 
 func TestGetAvailableTransferChains(t *testing.T) {
+	t.Parallel()
 	_, err := e.GetAvailableTransferChains(context.Background(), currency.USDT)
+	if err != nil {
+		t.Error(err)
+	}
+}
+
+func TestGetAccountFundingHistory(t *testing.T) {
+	t.Parallel()
+	sharedtestvalues.SkipTestIfCredentialsUnset(t, e)
+	_, err := e.GetAccountFundingHistory(context.Background())
+	if err != nil {
+		t.Error(err)
+	}
+}
+
+func TestGetWithdrawalsHistory(t *testing.T) {
+	t.Parallel()
+	sharedtestvalues.SkipTestIfCredentialsUnset(t, e)
+
+	_, err := e.GetWithdrawalsHistory(context.Background(), currency.BTC, asset.Spot)
 	if err != nil {
 		t.Error(err)
 	}

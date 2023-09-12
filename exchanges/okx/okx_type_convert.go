@@ -2,7 +2,6 @@ package okx
 
 import (
 	"encoding/json"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -42,6 +41,22 @@ func (a *okxNumericalValue) Float64() float64 { return float64(*a) }
 
 type okxUnixMilliTime int64
 
+type okxAssetType struct {
+	asset.Item
+}
+
+// UnmarshalJSON deserializes JSON, and timestamp information.
+func (a *okxAssetType) UnmarshalJSON(data []byte) error {
+	var t string
+	err := json.Unmarshal(data, &t)
+	if err != nil {
+		return err
+	}
+
+	a.Item = GetAssetTypeFromInstrumentType(strings.ToUpper(t))
+	return nil
+}
+
 // UnmarshalJSON deserializes byte data to okxunixMilliTime instance.
 func (a *okxUnixMilliTime) UnmarshalJSON(data []byte) error {
 	var num string
@@ -65,40 +80,67 @@ func (a *okxUnixMilliTime) Time() time.Time {
 	return time.UnixMilli(int64(*a))
 }
 
-// numbersOnlyRegexp for checking the value is numerics only
-var numbersOnlyRegexp = regexp.MustCompile(`^\d*$`)
+type okxTime struct {
+	time.Time
+}
+
+// UnmarshalJSON deserializes byte data to okxTime instance.
+func (t *okxTime) UnmarshalJSON(data []byte) error {
+	var num string
+	err := json.Unmarshal(data, &num)
+	if err != nil {
+		return err
+	}
+	if num == "" {
+		return nil
+	}
+	value, err := strconv.ParseInt(num, 10, 64)
+	if err != nil {
+		return err
+	}
+	t.Time = time.UnixMilli(value)
+	return nil
+}
 
 // UnmarshalJSON deserializes JSON, and timestamp information.
 func (a *Instrument) UnmarshalJSON(data []byte) error {
 	type Alias Instrument
 	chil := &struct {
 		*Alias
-		ListTime       string `json:"listTime"`
-		ExpTime        string `json:"expTime"`
-		InstrumentType string `json:"instType"`
+		ListTime                        okxTime           `json:"listTime"`
+		ExpTime                         okxTime           `json:"expTime"`
+		InstrumentType                  okxAssetType      `json:"instType"`
+		MaxLeverage                     okxNumericalValue `json:"lever"`
+		TickSize                        okxNumericalValue `json:"tickSz"`
+		LotSize                         okxNumericalValue `json:"lotSz"`
+		MinimumOrderSize                okxNumericalValue `json:"minSz"`
+		MaxQuantityOfSpotLimitOrder     okxNumericalValue `json:"maxLmtSz"`
+		MaxQuantityOfMarketLimitOrder   okxNumericalValue `json:"maxMktSz"`
+		MaxQuantityOfSpotTwapLimitOrder okxNumericalValue `json:"maxTwapSz"`
+		MaxSpotIcebergSize              okxNumericalValue `json:"maxIcebergSz"`
+		MaxTriggerSize                  okxNumericalValue `json:"maxTriggerSz"`
+		MaxStopSize                     okxNumericalValue `json:"maxStopSz"`
 	}{
 		Alias: (*Alias)(a),
 	}
-	err := json.Unmarshal(data, chil)
-	if err != nil {
+	if err := json.Unmarshal(data, chil); err != nil {
 		return err
 	}
-	if numbersOnlyRegexp.MatchString(chil.ListTime) {
-		var val int
-		if val, err = strconv.Atoi(chil.ListTime); err == nil {
-			a.ListTime = time.UnixMilli(int64(val))
-		}
-	}
-	if numbersOnlyRegexp.MatchString(chil.ExpTime) {
-		var val int
-		if val, err = strconv.Atoi(chil.ExpTime); err == nil {
-			a.ExpTime = time.UnixMilli(int64(val))
-		}
-	}
-	chil.InstrumentType = strings.ToUpper(chil.InstrumentType)
-	if a.InstrumentType, err = GetAssetTypeFromInstrumentType(chil.InstrumentType); err != nil {
-		return err
-	}
+
+	a.ListTime = chil.ListTime.Time
+	a.ExpTime = chil.ExpTime.Time
+	a.InstrumentType = chil.InstrumentType.Item
+	a.MaxLeverage = chil.MaxLeverage.Float64()
+	a.TickSize = chil.TickSize.Float64()
+	a.LotSize = chil.LotSize.Float64()
+	a.MinimumOrderSize = chil.MinimumOrderSize.Float64()
+	a.MaxQuantityOfSpotLimitOrder = chil.MaxQuantityOfSpotLimitOrder.Float64()
+	a.MaxQuantityOfMarketLimitOrder = chil.MaxQuantityOfMarketLimitOrder.Float64()
+	a.MaxQuantityOfSpotTwapLimitOrder = chil.MaxQuantityOfSpotTwapLimitOrder.Float64()
+	a.MaxSpotIcebergSize = chil.MaxSpotIcebergSize.Float64()
+	a.MaxTriggerSize = chil.MaxTriggerSize.Float64()
+	a.MaxStopSize = chil.MaxStopSize.Float64()
+
 	return nil
 }
 
@@ -114,30 +156,7 @@ func (a *OpenInterest) UnmarshalJSON(data []byte) error {
 		return err
 	}
 	chil.InstrumentType = strings.ToUpper(chil.InstrumentType)
-	if a.InstrumentType, err = GetAssetTypeFromInstrumentType(chil.InstrumentType); err != nil {
-		return err
-	}
-	return nil
-}
-
-// UnmarshalJSON deserializes JSON, and timestamp information.
-func (a *FundingRateResponse) UnmarshalJSON(data []byte) error {
-	type Alias FundingRateResponse
-	chil := &struct {
-		*Alias
-		InstrumentType string `json:"instType"`
-		FundingRate    string `json:"fundingRate"`
-	}{
-		Alias: (*Alias)(a),
-	}
-	err := json.Unmarshal(data, chil)
-	if err != nil {
-		return err
-	}
-	chil.InstrumentType = strings.ToUpper(chil.InstrumentType)
-	if a.InstrumentType, err = GetAssetTypeFromInstrumentType(chil.InstrumentType); err != nil {
-		return err
-	}
+	a.InstrumentType = GetAssetTypeFromInstrumentType(chil.InstrumentType)
 	return nil
 }
 
@@ -146,119 +165,12 @@ func (a *LimitPriceResponse) UnmarshalJSON(data []byte) error {
 	type Alias LimitPriceResponse
 	chil := &struct {
 		*Alias
-		Timestamp      int64  `json:"ts,string"`
-		InstrumentType string `json:"instType"`
+		Timestamp int64 `json:"ts,string"`
 	}{
 		Alias: (*Alias)(a),
 	}
 	err := json.Unmarshal(data, chil)
 	if err != nil {
-		return err
-	}
-	chil.InstrumentType = strings.ToUpper(chil.InstrumentType)
-	if a.InstrumentType, err = GetAssetTypeFromInstrumentType(chil.InstrumentType); err != nil {
-		return err
-	}
-	return nil
-}
-
-// UnmarshalJSON deserializes the account and position response.
-func (a *TickerResponse) UnmarshalJSON(data []byte) error {
-	type Alias TickerResponse
-	chil := &struct {
-		*Alias
-		InstrumentType string `json:"instType"`
-	}{
-		Alias: (*Alias)(a),
-	}
-	if err := json.Unmarshal(data, chil); err != nil {
-		return err
-	}
-	var err error
-	chil.InstrumentType = strings.ToUpper(chil.InstrumentType)
-	if a.InstrumentType, err = GetAssetTypeFromInstrumentType(chil.InstrumentType); err != nil {
-		return err
-	}
-	return nil
-}
-
-// UnmarshalJSON deserializes JSON, and timestamp information.
-func (a *OptionMarketDataResponse) UnmarshalJSON(data []byte) error {
-	type Alias OptionMarketDataResponse
-	chil := &struct {
-		*Alias
-		InstrumentType string `json:"instType"`
-	}{
-		Alias: (*Alias)(a),
-	}
-	err := json.Unmarshal(data, chil)
-	if err != nil {
-		return err
-	}
-	chil.InstrumentType = strings.ToUpper(chil.InstrumentType)
-	if a.InstrumentType, err = GetAssetTypeFromInstrumentType(chil.InstrumentType); err != nil {
-		return err
-	}
-	return nil
-}
-
-// UnmarshalJSON deserializes JSON, asset item, and timestamp information.
-func (a *DeliveryEstimatedPrice) UnmarshalJSON(data []byte) error {
-	type Alias DeliveryEstimatedPrice
-	chil := &struct {
-		*Alias
-		InstrumentType string `json:"instType"`
-	}{
-		Alias: (*Alias)(a),
-	}
-	err := json.Unmarshal(data, chil)
-	if err != nil {
-		return err
-	}
-	chil.InstrumentType = strings.ToUpper(chil.InstrumentType)
-	if a.InstrumentType, err = GetAssetTypeFromInstrumentType(chil.InstrumentType); err != nil {
-		return err
-	}
-	return nil
-}
-
-// UnmarshalJSON custom Unmarshaler to convert the Instrument type string to an asset.Item instance.
-func (a *LiquidationOrder) UnmarshalJSON(data []byte) error {
-	type Alias LiquidationOrder
-	chil := &struct {
-		*Alias
-		InstrumentType string `json:"instType"`
-	}{
-		Alias: (*Alias)(a),
-	}
-	err := json.Unmarshal(data, chil)
-	if err != nil {
-		return err
-	}
-	chil.InstrumentType = strings.ToUpper(chil.InstrumentType)
-	if a.InstrumentType, err = GetAssetTypeFromInstrumentType(chil.InstrumentType); err != nil {
-		return err
-	}
-	return nil
-}
-
-// UnmarshalJSON unmarshals the timestamp for mark price data
-func (a *MarkPrice) UnmarshalJSON(data []byte) error {
-	type Alias MarkPrice
-	chil := &struct {
-		*Alias
-		InstrumentType string `json:"instType"`
-	}{
-		Alias: (*Alias)(a),
-	}
-	err := json.Unmarshal(data, chil)
-	if err != nil {
-		return err
-	}
-	chil.InstrumentType = strings.ToUpper(chil.InstrumentType)
-	if chil.InstrumentType == "" {
-		a.InstrumentType = asset.Empty
-	} else if a.InstrumentType, err = GetAssetTypeFromInstrumentType(chil.InstrumentType); err != nil {
 		return err
 	}
 	return nil
@@ -269,11 +181,10 @@ func (a *OrderDetail) UnmarshalJSON(data []byte) error {
 	type Alias OrderDetail
 	chil := &struct {
 		*Alias
-		Side           string `json:"side"`
-		UpdateTime     int64  `json:"uTime,string"`
-		CreationTime   int64  `json:"cTime,string"`
-		InstrumentType string `json:"instType"`
-		FillTime       string `json:"fillTime"`
+		Side         string `json:"side"`
+		UpdateTime   int64  `json:"uTime,string"`
+		CreationTime int64  `json:"cTime,string"`
+		FillTime     string `json:"fillTime"`
 	}{
 		Alias: (*Alias)(a),
 	}
@@ -297,10 +208,6 @@ func (a *OrderDetail) UnmarshalJSON(data []byte) error {
 	if err != nil {
 		return err
 	}
-	chil.InstrumentType = strings.ToUpper(chil.InstrumentType)
-	if a.InstrumentType, err = GetAssetTypeFromInstrumentType(chil.InstrumentType); err != nil {
-		return err
-	}
 	return nil
 }
 
@@ -309,10 +216,9 @@ func (a *PendingOrderItem) UnmarshalJSON(data []byte) error {
 	type Alias PendingOrderItem
 	chil := &struct {
 		*Alias
-		Side           string `json:"side"`
-		UpdateTime     string `json:"uTime"`
-		CreationTime   string `json:"cTime"`
-		InstrumentType string `json:"instType"`
+		Side         string `json:"side"`
+		UpdateTime   string `json:"uTime"`
+		CreationTime string `json:"cTime"`
 	}{
 		Alias: (*Alias)(a),
 	}
@@ -332,172 +238,8 @@ func (a *PendingOrderItem) UnmarshalJSON(data []byte) error {
 	if err != nil {
 		return err
 	}
-	chil.InstrumentType = strings.ToUpper(chil.InstrumentType)
-	if a.InstrumentType, err = GetAssetTypeFromInstrumentType(chil.InstrumentType); err != nil {
-		return err
-	}
 	a.CreationTime = time.UnixMilli(cTime)
 	a.UpdateTime = time.UnixMilli(uTime)
-	return nil
-}
-
-// UnmarshalJSON deserializes JSON, and timestamp information.
-func (a *TransactionDetail) UnmarshalJSON(data []byte) error {
-	type Alias TransactionDetail
-	chil := &struct {
-		*Alias
-		InstrumentType string `json:"instType"`
-	}{
-		Alias: (*Alias)(a),
-	}
-	err := json.Unmarshal(data, chil)
-	if err != nil {
-		return err
-	}
-	chil.InstrumentType = strings.ToUpper(chil.InstrumentType)
-	if a.InstrumentType, err = GetAssetTypeFromInstrumentType(chil.InstrumentType); err != nil {
-		return err
-	}
-	return nil
-}
-
-// UnmarshalJSON deserializes JSON, and timestamp information.
-func (a *AlgoOrderResponse) UnmarshalJSON(data []byte) error {
-	type Alias AlgoOrderResponse
-	chil := &struct {
-		*Alias
-		InstrumentType string `json:"instType"`
-	}{
-		Alias: (*Alias)(a),
-	}
-	err := json.Unmarshal(data, chil)
-	if err != nil {
-		return err
-	}
-	chil.InstrumentType = strings.ToUpper(chil.InstrumentType)
-	if a.InstrumentType, err = GetAssetTypeFromInstrumentType(chil.InstrumentType); err != nil {
-		return err
-	}
-	return nil
-}
-
-// UnmarshalJSON deserializes JSON, and timestamp information.
-func (a *PositionData) UnmarshalJSON(data []byte) error {
-	type Alias PositionData
-	chil := &struct {
-		*Alias
-		InstrumentType string `json:"instType"`
-	}{
-		Alias: (*Alias)(a),
-	}
-	err := json.Unmarshal(data, chil)
-	if err != nil {
-		return err
-	}
-	chil.InstrumentType = strings.ToUpper(chil.InstrumentType)
-	if a.InstrumentType, err = GetAssetTypeFromInstrumentType(chil.InstrumentType); err != nil {
-		return err
-	}
-	return nil
-}
-
-// UnmarshalJSON deserializes JSON, and timestamp information.
-func (a *AccountPosition) UnmarshalJSON(data []byte) error {
-	type Alias AccountPosition
-	chil := &struct {
-		*Alias
-		InstrumentType string `json:"instType"`
-	}{
-		Alias: (*Alias)(a),
-	}
-	err := json.Unmarshal(data, chil)
-	if err != nil {
-		return err
-	}
-	chil.InstrumentType = strings.ToUpper(chil.InstrumentType)
-	if a.InstrumentType, err = GetAssetTypeFromInstrumentType(chil.InstrumentType); err != nil {
-		return err
-	}
-	return nil
-}
-
-// UnmarshalJSON deserialises the JSON info, asset item instance, and including the timestamp
-func (a *AccountPositionHistory) UnmarshalJSON(data []byte) error {
-	type Alias AccountPositionHistory
-	chil := &struct {
-		*Alias
-		InstrumentType string `json:"instType"`
-	}{
-		Alias: (*Alias)(a),
-	}
-	err := json.Unmarshal(data, chil)
-	if err != nil {
-		return err
-	}
-	chil.InstrumentType = strings.ToUpper(chil.InstrumentType)
-	if a.InstrumentType, err = GetAssetTypeFromInstrumentType(chil.InstrumentType); err != nil {
-		return err
-	}
-	return nil
-}
-
-// UnmarshalJSON deserializes JSON, and timestamp information.
-func (a *BillsDetailResponse) UnmarshalJSON(data []byte) error {
-	type Alias BillsDetailResponse
-	chil := &struct {
-		*Alias
-		InstrumentType string `json:"instType"`
-	}{
-		Alias: (*Alias)(a),
-	}
-	err := json.Unmarshal(data, chil)
-	if err != nil {
-		return err
-	}
-	chil.InstrumentType = strings.ToUpper(chil.InstrumentType)
-	if a.InstrumentType, err = GetAssetTypeFromInstrumentType(chil.InstrumentType); err != nil {
-		return err
-	}
-	return nil
-}
-
-// UnmarshalJSON deserializes JSON, and timestamp information.
-func (a *TradeFeeRate) UnmarshalJSON(data []byte) error {
-	type Alias TradeFeeRate
-	chil := &struct {
-		*Alias
-		InstrumentType string `json:"instType"`
-	}{
-		Alias: (*Alias)(a),
-	}
-	err := json.Unmarshal(data, chil)
-	if err != nil {
-		return err
-	}
-	chil.InstrumentType = strings.ToUpper(chil.InstrumentType)
-	if a.InstrumentType, err = GetAssetTypeFromInstrumentType(chil.InstrumentType); err != nil {
-		return err
-	}
-	return nil
-}
-
-// UnmarshalJSON deserializes JSON, and timestamp information.
-func (a *PositionBuilderData) UnmarshalJSON(data []byte) error {
-	type Alias PositionBuilderData
-	chil := &struct {
-		*Alias
-		InstrumentType string `json:"instType"`
-	}{
-		Alias: (*Alias)(a),
-	}
-	err := json.Unmarshal(data, chil)
-	if err != nil {
-		return err
-	}
-	chil.InstrumentType = strings.ToUpper(chil.InstrumentType)
-	if a.InstrumentType, err = GetAssetTypeFromInstrumentType(chil.InstrumentType); err != nil {
-		return err
-	}
 	return nil
 }
 
@@ -522,17 +264,12 @@ func (a *BlockTicker) UnmarshalJSON(data []byte) error {
 	type Alias BlockTicker
 	chil := &struct {
 		*Alias
-		Timestamp      int64  `json:"ts,string"`
-		InstrumentType string `json:"instType"`
+		Timestamp int64 `json:"ts,string"`
 	}{
 		Alias: (*Alias)(a),
 	}
 	err := json.Unmarshal(data, chil)
 	if err != nil {
-		return err
-	}
-	chil.InstrumentType = strings.ToUpper(chil.InstrumentType)
-	if a.InstrumentType, err = GetAssetTypeFromInstrumentType(chil.InstrumentType); err != nil {
 		return err
 	}
 	return nil
@@ -578,66 +315,6 @@ func (a *UnitConvertResponse) UnmarshalJSON(data []byte) error {
 		a.ConvertType = 1
 	case 2:
 		a.ConvertType = 2
-	}
-	return nil
-}
-
-// UnmarshalJSON deserializes JSON, and timestamp information.
-func (a *GridAlgoSuborder) UnmarshalJSON(data []byte) error {
-	type Alias GridAlgoSuborder
-	chil := &struct {
-		*Alias
-		InstrumentType string `json:"instType"`
-	}{
-		Alias: (*Alias)(a),
-	}
-	err := json.Unmarshal(data, chil)
-	if err != nil {
-		return err
-	}
-	chil.InstrumentType = strings.ToUpper(chil.InstrumentType)
-	if a.InstrumentType, err = GetAssetTypeFromInstrumentType(chil.InstrumentType); err != nil {
-		return err
-	}
-	return nil
-}
-
-// UnmarshalJSON deserializes JSON, and timestamp information.
-func (a *GridAlgoOrderResponse) UnmarshalJSON(data []byte) error {
-	type Alias GridAlgoOrderResponse
-	chil := &struct {
-		*Alias
-		InstrumentType string `json:"instType"`
-	}{
-		Alias: (*Alias)(a),
-	}
-	err := json.Unmarshal(data, chil)
-	if err != nil {
-		return err
-	}
-	chil.InstrumentType = strings.ToUpper(chil.InstrumentType)
-	if a.InstrumentType, err = GetAssetTypeFromInstrumentType(chil.InstrumentType); err != nil {
-		return err
-	}
-	return nil
-}
-
-// UnmarshalJSON deserializes JSON, and timestamp information.
-func (a *AlgoOrderPosition) UnmarshalJSON(data []byte) error {
-	type Alias AlgoOrderPosition
-	chil := &struct {
-		*Alias
-		InstrumentType string `json:"instType"`
-	}{
-		Alias: (*Alias)(a),
-	}
-	err := json.Unmarshal(data, chil)
-	if err != nil {
-		return err
-	}
-	chil.InstrumentType = strings.ToUpper(chil.InstrumentType)
-	if a.InstrumentType, err = GetAssetTypeFromInstrumentType(chil.InstrumentType); err != nil {
-		return err
 	}
 	return nil
 }

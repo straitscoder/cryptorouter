@@ -53,6 +53,9 @@ type Dispatcher struct {
 
 	// dispatcher write protection
 	m sync.RWMutex
+	// subscriberCount atomically stores the amount of subscription endpoints
+	// to verify whether to send out any jobs
+	subscriberCount int32
 }
 
 // job defines a relaying job associated with a ticket which allows routing to
@@ -72,7 +75,7 @@ type Mux struct {
 // Pipe defines an outbound object to the desired routine
 type Pipe struct {
 	// Channel to get all our lovely information
-	C <-chan interface{}
+	c chan interface{}
 	// ID to tracked system
 	id uuid.UUID
 	// Reference to multiplexer

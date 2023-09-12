@@ -80,13 +80,14 @@ func StartRPCServer(server *GRPCServer) error {
 	opts := []grpc.ServerOption{
 		grpc.Creds(creds),
 		grpc.UnaryInterceptor(grpcauth.UnaryServerInterceptor(server.authenticateClient)),
+		grpc.StreamInterceptor(grpcauth.StreamServerInterceptor(server.authenticateClient)),
 	}
 	s := grpc.NewServer(opts...)
 	btrpc.RegisterBacktesterServiceServer(s, server)
 
 	go func() {
 		if err = s.Serve(lis); err != nil {
-			log.Error(log.GRPCSys, err)
+			log.Errorln(log.GRPCSys, err)
 			return
 		}
 	}()
@@ -133,7 +134,7 @@ func (s *GRPCServer) StartRPCRESTProxy() error {
 		}
 	}()
 
-	log.Debug(log.GRPCSys, "GRPC proxy server started!")
+	log.Debugln(log.GRPCSys, "GRPC proxy server started!")
 	return nil
 }
 

@@ -15,6 +15,8 @@ var (
 	ErrCurrencyNotFound = errors.New("currency code not found in list")
 	// ErrCurrencyPairEmpty defines an error if the currency pair is empty
 	ErrCurrencyPairEmpty = errors.New("currency pair is empty")
+	// ErrCurrencyNotSupported defines an error if the currency pair is not supported
+	ErrCurrencyNotSupported = errors.New("currency not supported")
 	// ErrCurrencyPairsEmpty returns when a currency.Pairs has len == 0
 	ErrCurrencyPairsEmpty = errors.New("currency pairs is empty")
 	// EMPTYCODE is an empty currency code
@@ -187,7 +189,7 @@ func (b *BaseCodes) Register(c string, newRole Role) Code {
 	var format bool
 	// Digits fool upper and lower casing. So find first letter and check case.
 	for x := range c {
-		if !unicode.IsDigit(rune(c[x])) {
+		if unicode.IsLetter(rune(c[x])) {
 			format = unicode.IsUpper(rune(c[x]))
 			break
 		}

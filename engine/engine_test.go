@@ -1,13 +1,28 @@
 package engine
 
 import (
+	"context"
 	"errors"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/thrasher-corp/gocryptotrader/common"
 	"github.com/thrasher-corp/gocryptotrader/config"
+	exchange "github.com/thrasher-corp/gocryptotrader/exchanges"
 )
+
+// blockedCIExchanges are exchanges that are not able to be tested on CI
+var blockedCIExchanges = []string{
+	"binance", // binance API is banned from executing within the US where github Actions is ran
+	"bybit",   // bybit API is banned from executing within the US where github Actions is ran
+}
+
+func isCITest() bool {
+	ci := os.Getenv("CI")
+	return ci == "true" /* github actions */ || ci == "True" /* appveyor */
+}
 
 func TestLoadConfigWithSettings(t *testing.T) {
 	empty := ""
@@ -308,7 +323,7 @@ func TestRegisterWebsocketDataHandler(t *testing.T) {
 		t.Fatalf("received: '%v' but expected: '%v'", err, errNilBot)
 	}
 
-	e = &Engine{websocketRoutineManager: &websocketRoutineManager{}}
+	e = &Engine{WebsocketRoutineManager: &WebsocketRoutineManager{}}
 	err = e.RegisterWebsocketDataHandler(func(_ string, _ interface{}) error { return nil }, false)
 	if !errors.Is(err, nil) {
 		t.Fatalf("received: '%v' but expected: '%v'", err, nil)
@@ -323,7 +338,7 @@ func TestSetDefaultWebsocketDataHandler(t *testing.T) {
 		t.Fatalf("received: '%v' but expected: '%v'", err, errNilBot)
 	}
 
-	e = &Engine{websocketRoutineManager: &websocketRoutineManager{}}
+	e = &Engine{WebsocketRoutineManager: &WebsocketRoutineManager{}}
 	err = e.SetDefaultWebsocketDataHandler()
 	if !errors.Is(err, nil) {
 		t.Fatalf("received: '%v' but expected: '%v'", err, nil)
@@ -337,4 +352,41 @@ func TestSettingsPrint(t *testing.T) {
 
 	s = &Settings{}
 	s.PrintLoadedSettings()
+}
+
+var unsupportedDefaultConfigExchanges = []string{
+	"itbit", // due to unsupported API
+}
+
+func TestGetDefaultConfigurations(t *testing.T) {
+	t.Parallel()
+	em := NewExchangeManager()
+	for i := range exchange.Exchanges {
+		name := strings.ToLower(exchange.Exchanges[i])
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			exch, err := em.NewExchangeByName(name)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if isCITest() && common.StringDataContains(blockedCIExchanges, name) {
+				t.Skipf("skipping %s due to CI test restrictions", name)
+			}
+
+			if common.StringDataContains(unsupportedDefaultConfigExchanges, name) {
+				t.Skipf("skipping %s unsupported", name)
+			}
+
+			defaultCfg, err := exch.GetDefaultConfig(context.Background())
+			if err != nil {
+				// Use Error instead of fatal to allow all issues to arise
+				t.Error(err)
+			}
+
+			if defaultCfg == nil {
+				t.Error("expected config")
+			}
+		})
+	}
 }

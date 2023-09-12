@@ -142,7 +142,7 @@ func (c *Config) CheckClientBankAccounts() {
 			err := c.BankAccounts[i].Validate()
 			if err != nil {
 				c.BankAccounts[i].Enabled = false
-				log.Warn(log.ConfigMgr, err.Error())
+				log.Warnln(log.ConfigMgr, err.Error())
 			}
 		}
 	}
@@ -302,6 +302,10 @@ func (c *Config) CheckCommunicationsConfig() {
 		}
 	}
 
+	if c.Communications.TelegramConfig.AuthorisedClients == nil {
+		c.Communications.TelegramConfig.AuthorisedClients = map[string]int64{"user_example": 0}
+	}
+
 	if c.Communications.SlackConfig.Name != "Slack" ||
 		c.Communications.SMSGlobalConfig.Name != "SMSGlobal" ||
 		c.Communications.SMTPConfig.Name != "SMTP" ||
@@ -334,7 +338,10 @@ func (c *Config) CheckCommunicationsConfig() {
 		}
 	}
 	if c.Communications.TelegramConfig.Enabled {
-		if c.Communications.TelegramConfig.VerificationToken == "" {
+		if _, ok := c.Communications.TelegramConfig.AuthorisedClients["user_example"]; ok ||
+			len(c.Communications.TelegramConfig.AuthorisedClients) == 0 ||
+			c.Communications.TelegramConfig.VerificationToken == "" ||
+			c.Communications.TelegramConfig.VerificationToken == "testest" {
 			c.Communications.TelegramConfig.Enabled = false
 			log.Warnln(log.ConfigMgr, "Telegram enabled in config but variable data not set, disabling.")
 		}
@@ -507,6 +514,10 @@ func (c *Config) CheckPairConsistency(exchName string) error {
 			availPairs, err = c.GetAvailablePairs(exchName, assetTypes[x])
 			if err != nil {
 				return err
+			}
+			if len(availPairs) == 0 {
+				// the other assets may have currency pairs
+				continue
 			}
 
 			var rPair currency.Pair
@@ -685,6 +696,63 @@ func (c *Config) GetAvailablePairs(exchName string, assetType asset.Item) (curre
 	return pairs.Format(pairFormat), nil
 }
 
+// GetDefaultSyncManagerConfig returns a config with default values
+func GetDefaultSyncManagerConfig() SyncManagerConfig {
+	return SyncManagerConfig{
+		Enabled:                 true,
+		SynchronizeTicker:       true,
+		SynchronizeOrderbook:    true,
+		SynchronizeTrades:       false,
+		SynchronizeContinuously: true,
+		TimeoutREST:             DefaultSyncerTimeoutREST,
+		TimeoutWebsocket:        DefaultSyncerTimeoutWebsocket,
+		NumWorkers:              DefaultSyncerWorkers,
+		FiatDisplayCurrency:     currency.USD,
+		PairFormatDisplay: &currency.PairFormat{
+			Delimiter: "-",
+			Uppercase: true,
+		},
+		Verbose:                 false,
+		LogSyncUpdateEvents:     true,
+		LogSwitchProtocolEvents: true,
+		LogInitialSyncEvents:    true,
+	}
+}
+
+// CheckSyncManagerConfig checks config for valid values
+// sets defaults if values are invalid
+func (c *Config) CheckSyncManagerConfig() {
+	m.Lock()
+	defer m.Unlock()
+	if c.SyncManagerConfig == (SyncManagerConfig{}) {
+		c.SyncManagerConfig = GetDefaultSyncManagerConfig()
+		return
+	}
+	if c.SyncManagerConfig.TimeoutWebsocket <= 0 {
+		log.Warnf(log.ConfigMgr, "Invalid sync manager websocket timeout value %v, defaulting to %v\n", c.SyncManagerConfig.TimeoutWebsocket, DefaultSyncerTimeoutWebsocket)
+		c.SyncManagerConfig.TimeoutWebsocket = DefaultSyncerTimeoutWebsocket
+	}
+	if c.SyncManagerConfig.PairFormatDisplay == nil {
+		log.Warnf(log.ConfigMgr, "Invalid sync manager pair format value %v, using default format eg BTC-USD\n", c.SyncManagerConfig.PairFormatDisplay)
+		c.SyncManagerConfig.PairFormatDisplay = &currency.PairFormat{
+			Uppercase: true,
+			Delimiter: currency.DashDelimiter,
+		}
+	}
+	if c.SyncManagerConfig.TimeoutREST <= 0 {
+		log.Warnf(log.ConfigMgr, "Invalid sync manager REST timeout value %v, defaulting to %v\n", c.SyncManagerConfig.TimeoutREST, DefaultSyncerTimeoutREST)
+		c.SyncManagerConfig.TimeoutREST = DefaultSyncerTimeoutREST
+	}
+	if c.SyncManagerConfig.NumWorkers <= 0 {
+		log.Warnf(log.ConfigMgr, "Invalid sync manager worker count value %v, defaulting to %v\n", c.SyncManagerConfig.NumWorkers, DefaultSyncerWorkers)
+		c.SyncManagerConfig.NumWorkers = DefaultSyncerWorkers
+	}
+	if c.SyncManagerConfig.FiatDisplayCurrency.IsEmpty() {
+		log.Warnf(log.ConfigMgr, "Invalid sync manager fiat display currency value, defaulting to %v\n", currency.USD)
+		c.SyncManagerConfig.FiatDisplayCurrency = currency.USD
+	}
+}
+
 // GetEnabledPairs returns a list of currency pairs for a specific exchange
 func (c *Config) GetEnabledPairs(exchName string, assetType asset.Item) (currency.Pairs, error) {
 	exchCfg, err := c.GetExchangeConfig(exchName)
@@ -791,6 +859,8 @@ func (c *Config) CheckExchangeConfigValues() error {
 	for i := range c.Exchanges {
 		if strings.EqualFold(c.Exchanges[i].Name, "GDAX") {
 			c.Exchanges[i].Name = "CoinbasePro"
+		} else if strings.EqualFold(c.Exchanges[i].Name, "OKCOIN International") {
+			c.Exchanges[i].Name = "Okcoin"
 		}
 
 		// Check to see if the old API storage format is used
@@ -1047,7 +1117,7 @@ func (c *Config) CheckBankAccountConfig() {
 			err := c.BankAccounts[x].Validate()
 			if err != nil {
 				c.BankAccounts[x].Enabled = false
-				log.Warn(log.ConfigMgr, err.Error())
+				log.Warnln(log.ConfigMgr, err.Error())
 			}
 		}
 	}
@@ -1559,7 +1629,7 @@ func readEncryptedConfWithKey(reader *bufio.Reader, keyProvider func() ([]byte, 
 		var c *Config
 		c, err = readEncryptedConf(bytes.NewReader(fileData), key)
 		if err != nil {
-			log.Error(log.ConfigMgr, "Could not decrypt and deserialise data with given key. Invalid password?", err)
+			log.Errorln(log.ConfigMgr, "Could not decrypt and deserialise data with given key. Invalid password?", err)
 			continue
 		}
 		return c, nil
@@ -1594,7 +1664,7 @@ func (c *Config) SaveConfigToFile(configPath string) error {
 		if writer != nil {
 			err = writer.Close()
 			if err != nil {
-				log.Error(log.ConfigMgr, err)
+				log.Errorln(log.ConfigMgr, err)
 			}
 		}
 	}()
@@ -1717,6 +1787,7 @@ func (c *Config) CheckConfig() error {
 	c.CheckClientBankAccounts()
 	c.CheckBankAccountConfig()
 	c.CheckRemoteControlConfig()
+	c.CheckSyncManagerConfig()
 
 	err = c.CheckCurrencyConfigValues()
 	if err != nil {

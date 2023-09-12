@@ -263,6 +263,14 @@ func TestOrderSides(t *testing.T) {
 	}
 }
 
+func TestTitle(t *testing.T) {
+	t.Parallel()
+	orderType := Limit
+	if orderType.Title() != "Limit" {
+		t.Errorf("received '%v' expected 'Limit'", orderType.Title())
+	}
+}
+
 func TestOrderTypes(t *testing.T) {
 	t.Parallel()
 
@@ -873,6 +881,8 @@ func TestStringToOrderType(t *testing.T) {
 		{"trigger", Trigger, nil},
 		{"TRIGGER", Trigger, nil},
 		{"tRiGgEr", Trigger, nil},
+		{"conDitiOnal", ConditionalStop, nil},
+		{"oCo", OCO, nil},
 		{"woahMan", UnknownType, errUnrecognisedOrderType},
 	}
 	for i := range cases {
@@ -1091,6 +1101,7 @@ func TestUpdateOrderFromDetail(t *testing.T) {
 		OrderID:           "1",
 		AccountID:         "1",
 		ClientID:          "1",
+		ClientOrderID:     "DukeOfWombleton",
 		WalletAddress:     "1",
 		Type:              1,
 		Side:              1,
@@ -1164,6 +1175,9 @@ func TestUpdateOrderFromDetail(t *testing.T) {
 		t.Error("Failed to update")
 	}
 	if od.ClientID != "1" {
+		t.Error("Failed to update")
+	}
+	if od.ClientOrderID != "DukeOfWombleton" {
 		t.Error("Failed to update")
 	}
 	if od.WalletAddress != "1" {
@@ -1260,11 +1274,11 @@ func TestUpdateOrderFromDetail(t *testing.T) {
 
 func TestClassificationError_Error(t *testing.T) {
 	class := ClassificationError{OrderID: "1337", Exchange: "test", Err: errors.New("test error")}
-	if class.Error() != "test - OrderID: 1337 classification error: test error" {
+	if class.Error() != "Exchange test: OrderID: 1337 classification error: test error" {
 		t.Fatal("unexpected output")
 	}
 	class.OrderID = ""
-	if class.Error() != "test - classification error: test error" {
+	if class.Error() != "Exchange test: classification error: test error" {
 		t.Fatal("unexpected output")
 	}
 }
@@ -1312,13 +1326,13 @@ func TestValidationOnOrderTypes(t *testing.T) {
 		t.Fatal("should return nil")
 	}
 
-	var getOrders *GetOrdersRequest
+	var getOrders *MultiOrderRequest
 	err = getOrders.Validate()
 	if !errors.Is(err, ErrGetOrdersRequestIsNil) {
 		t.Fatalf("received: '%v' but expected: '%v'", err, ErrGetOrdersRequestIsNil)
 	}
 
-	getOrders = new(GetOrdersRequest)
+	getOrders = new(MultiOrderRequest)
 	err = getOrders.Validate()
 	if !errors.Is(err, asset.ErrNotSupported) {
 		t.Fatalf("received: '%v' but expected: '%v'", err, asset.ErrNotSupported)
@@ -1893,7 +1907,7 @@ func TestDeriveCancel(t *testing.T) {
 }
 
 func TestGetOrdersRequest_Filter(t *testing.T) {
-	request := new(GetOrdersRequest)
+	request := new(MultiOrderRequest)
 	request.AssetType = asset.Spot
 	request.Type = AnyType
 	request.Side = AnySide
@@ -1957,5 +1971,77 @@ func TestIsValidOrderSubmissionSide(t *testing.T) {
 	}
 	if IsValidOrderSubmissionSide(CouldNotBuy) {
 		t.Error("expected false")
+	}
+}
+
+func TestAdjustBaseAmount(t *testing.T) {
+	t.Parallel()
+
+	var s *SubmitResponse
+	err := s.AdjustBaseAmount(0)
+	if !errors.Is(err, errOrderSubmitResponseIsNil) {
+		t.Fatalf("received: '%v' but expected: '%v'", err, errOrderSubmitResponseIsNil)
+	}
+
+	s = &SubmitResponse{}
+	err = s.AdjustBaseAmount(0)
+	if !errors.Is(err, errAmountIsZero) {
+		t.Fatalf("received: '%v' but expected: '%v'", err, errAmountIsZero)
+	}
+
+	s.Amount = 1.7777777777
+	err = s.AdjustBaseAmount(1.7777777777)
+	if !errors.Is(err, nil) {
+		t.Fatalf("received: '%v' but expected: '%v'", err, nil)
+	}
+
+	if s.Amount != 1.7777777777 {
+		t.Fatalf("received: '%v' but expected: '%v'", s.Amount, 1.7777777777)
+	}
+
+	s.Amount = 1.7777777777
+	err = s.AdjustBaseAmount(1.777)
+	if !errors.Is(err, nil) {
+		t.Fatalf("received: '%v' but expected: '%v'", err, nil)
+	}
+
+	if s.Amount != 1.777 {
+		t.Fatalf("received: '%v' but expected: '%v'", s.Amount, 1.777)
+	}
+}
+
+func TestAdjustQuoteAmount(t *testing.T) {
+	t.Parallel()
+
+	var s *SubmitResponse
+	err := s.AdjustQuoteAmount(0)
+	if !errors.Is(err, errOrderSubmitResponseIsNil) {
+		t.Fatalf("received: '%v' but expected: '%v'", err, errOrderSubmitResponseIsNil)
+	}
+
+	s = &SubmitResponse{}
+	err = s.AdjustQuoteAmount(0)
+	if !errors.Is(err, errAmountIsZero) {
+		t.Fatalf("received: '%v' but expected: '%v'", err, errAmountIsZero)
+	}
+
+	s.QuoteAmount = 5.222222222222
+	err = s.AdjustQuoteAmount(5.222222222222)
+	if !errors.Is(err, nil) {
+		t.Fatalf("received: '%v' but expected: '%v'", err, nil)
+	}
+
+	if s.QuoteAmount != 5.222222222222 {
+		t.Fatalf("received: '%v' but expected: '%v'", s.Amount, 5.222222222222)
+	}
+
+	s.QuoteAmount = 5.222222222222
+	err = s.AdjustQuoteAmount(5.22222222)
+	if !errors.Is(err, nil) {
+		t.Fatalf("received: '%v' but expected: '%v'", err, nil)
+	}
+
+	if s.QuoteAmount != 5.22222222 {
+		t.Fatalf("received: '%v' but expected: '%v'", s.Amount, 5.22222222)
 	}
 }

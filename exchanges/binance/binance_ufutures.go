@@ -388,7 +388,7 @@ func (b *Binance) UGetFundingHistory(ctx context.Context, symbol currency.Pair, 
 		}
 		params.Set("symbol", symbolValue)
 	}
-	if limit > 0 && limit < 1000 {
+	if limit > 0 {
 		params.Set("limit", strconv.FormatInt(limit, 10))
 	}
 	if !startTime.IsZero() && !endTime.IsZero() {
@@ -1098,27 +1098,6 @@ func (b *Binance) GetPerpMarkets(ctx context.Context) (PerpsExchangeInfo, error)
 	return resp, b.SendHTTPRequest(ctx, exchange.RestUSDTMargined, perpExchangeInfo, uFuturesDefaultRate, &resp)
 }
 
-// FundingRates gets funding rate history for perpetual contracts
-func (b *Binance) FundingRates(ctx context.Context, symbol currency.Pair, limit string, startTime, endTime time.Time) ([]FundingRateData, error) {
-	var resp []FundingRateData
-	params := url.Values{}
-	symbolValue, err := b.FormatSymbol(symbol, asset.USDTMarginedFutures)
-	if err != nil {
-		return resp, err
-	}
-	params.Set("symbol", symbolValue)
-	if limit != "" {
-		params.Set("limit", limit)
-	}
-	if !startTime.IsZero() {
-		params.Set("startTime", strconv.FormatInt(startTime.UnixMilli(), 10))
-	}
-	if !endTime.IsZero() {
-		params.Set("endTime", strconv.FormatInt(endTime.UnixMilli(), 10))
-	}
-	return resp, b.SendHTTPRequest(ctx, exchange.RestUSDTMargined, fundingRate+params.Encode(), uFuturesDefaultRate, &resp)
-}
-
 // FetchUSDTMarginExchangeLimits fetches USDT margined order execution limits
 func (b *Binance) FetchUSDTMarginExchangeLimits(ctx context.Context) ([]order.MinMaxLevel, error) {
 	usdtFutures, err := b.UExchangeInfo(ctx)
@@ -1145,8 +1124,8 @@ func (b *Binance) FetchUSDTMarginExchangeLimits(ctx context.Context) ([]order.Mi
 			MinPrice:                usdtFutures.Symbols[x].Filters[0].MinPrice,
 			MaxPrice:                usdtFutures.Symbols[x].Filters[0].MaxPrice,
 			PriceStepIncrementSize:  usdtFutures.Symbols[x].Filters[0].TickSize,
-			MaxAmount:               usdtFutures.Symbols[x].Filters[1].MaxQty,
-			MinAmount:               usdtFutures.Symbols[x].Filters[1].MinQty,
+			MaximumBaseAmount:       usdtFutures.Symbols[x].Filters[1].MaxQty,
+			MinimumBaseAmount:       usdtFutures.Symbols[x].Filters[1].MinQty,
 			AmountStepIncrementSize: usdtFutures.Symbols[x].Filters[1].StepSize,
 			MarketMinQty:            usdtFutures.Symbols[x].Filters[2].MinQty,
 			MarketMaxQty:            usdtFutures.Symbols[x].Filters[2].MaxQty,
