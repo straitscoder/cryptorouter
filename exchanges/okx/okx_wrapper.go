@@ -2,7 +2,6 @@ package okx
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"math"
 	"sort"
@@ -853,9 +852,10 @@ func (ok *Okx) ModifyOrder(ctx context.Context, action *order.Modify) (*order.Mo
 		return nil, err
 	}
 	var err error
-	if math.Trunc(action.Amount) != action.Amount {
-		return nil, errors.New("okx contract amount can not be decimal")
-	}
+	/*
+		if math.Trunc(action.Amount) != action.Amount {
+			return nil, errors.New("okx contract amount can not be decimal")
+		}*/
 	format, err := ok.GetPairFormat(action.AssetType, false)
 	if err != nil {
 		return nil, err
@@ -870,6 +870,7 @@ func (ok *Okx) ModifyOrder(ctx context.Context, action *order.Modify) (*order.Mo
 	amendRequest := AmendOrderRequestParams{
 		InstrumentID:          instrumentID,
 		NewQuantity:           action.Amount,
+		NewPrice:              action.Price,
 		OrderID:               action.OrderID,
 		ClientSuppliedOrderID: action.ClientOrderID,
 	}

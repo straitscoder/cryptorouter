@@ -1045,18 +1045,21 @@ func (ok *Okx) wsProcessOrders(respRaw []byte) error {
 			return err
 		}
 		ok.Websocket.DataHandler <- &order.Detail{
-			Price:           response.Data[x].Price,
-			Amount:          response.Data[x].Size,
-			ExecutedAmount:  response.Data[x].LastFilledSize.Float64(),
-			RemainingAmount: response.Data[x].AccumulatedFillSize.Float64() - response.Data[x].LastFilledSize.Float64(),
-			Exchange:        ok.Name,
-			OrderID:         response.Data[x].OrderID,
-			Type:            orderType,
-			Side:            response.Data[x].Side,
-			Status:          orderStatus,
-			AssetType:       a,
-			Date:            response.Data[x].CreationTime,
-			Pair:            pair,
+			Price:                response.Data[x].Price,
+			Amount:               response.Data[x].Size,
+			ExecutedAmount:       response.Data[x].LastFilledSize.Float64(),
+			RemainingAmount:      response.Data[x].AccumulatedFillSize.Float64() - response.Data[x].LastFilledSize.Float64(),
+			Exchange:             ok.Name,
+			OrderID:              response.Data[x].OrderID,
+			Type:                 orderType,
+			Side:                 response.Data[x].Side,
+			Status:               orderStatus,
+			AssetType:            a,
+			Date:                 response.Data[x].CreationTime,
+			Pair:                 pair,
+			ClientOrderID:        response.Data[x].ClientSupplierOrderID,
+			LastExecutedPrice:    response.Data[x].LastFilledPrice.Float64(),
+			LastExecutedQuantity: response.Data[x].LastFilledSize.Float64(),
 		}
 	}
 	return nil
