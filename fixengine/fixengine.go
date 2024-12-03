@@ -131,8 +131,8 @@ var newEngineMutex sync.Mutex
 // overarching type across this code base.
 type FixEngine struct {
 	Config *config.Config
-	//apiServer               *apiServerManager
-	//connectionManager       *connectionManager
+	// apiServer               *apiServerManager
+	// connectionManager       *connectionManager
 	currencyPairSyncer      *syncManager
 	ExchangeManager         *ExchangeManager
 	websocketRoutineManager *websocketRoutineManager
@@ -148,9 +148,9 @@ func New() (*FixEngine, error) {
 	newEngineMutex.Lock()
 	defer newEngineMutex.Unlock()
 	var b FixEngine
-	b.Config = &config.Cfg
+	b.Config = config.GetConfig()
 
-	err := b.Config.LoadConfig("", false)
+	err := b.Config.LoadConfig("~/.gocryptotrader/config.json", false)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load config. Err: %s", err)
 	}
@@ -552,17 +552,7 @@ func (fixengine *FixEngine) LoadExchange(name string, wg *sync.WaitGroup) error 
 		}
 	}
 
-	if wg != nil {
-		return exch.Start(context.TODO(), wg)
-	}
-
-	tempWG := sync.WaitGroup{}
-	err = exch.Start(context.TODO(), &tempWG)
-	if err != nil {
-		return err
-	}
-	tempWG.Wait()
-	return nil
+	return exchange.Bootstrap(context.TODO(), exch)
 }
 
 // SetupExchanges sets up the exchanges used by the fixengine

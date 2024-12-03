@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"os"
 	"path"
 	"runtime"
@@ -85,7 +85,7 @@ func (a *Application) Start() error {
 		return fmt.Errorf("Error opening %v, %v\n", cfgFileName, err)
 	}
 	defer cfg.Close()
-	stringData, readErr := ioutil.ReadAll(cfg)
+	stringData, readErr := io.ReadAll(cfg)
 	if readErr != nil {
 		return fmt.Errorf("Error reading cfg: %s,", readErr)
 	}
@@ -96,14 +96,14 @@ func (a *Application) Start() error {
 	}
 
 	logFactory := quickfix.NewScreenLogFactory()
-	//logFactory, err := quickfix.NewFileLogFactory(settings)
+	// logFactory, err := quickfix.NewFileLogFactory(settings)
 	if err != nil {
 		return fmt.Errorf("Unable to create logger: %s\n", err)
 	}
 	a.logFactory = &logFactory
 
 	a.storeFactory = quickfix.NewMemoryStoreFactory()
-	//a.storeFactory = quickfix.NewFileStoreFactory(a.settings)
+	// a.storeFactory = quickfix.NewFileStoreFactory(a.settings)
 	a.acceptor, err = quickfix.NewAcceptor(a, a.storeFactory, a.settings, logFactory)
 	if err != nil {
 		return fmt.Errorf("Unable to create Acceptor: %s\n", err)
@@ -250,7 +250,7 @@ func (a *Application) onNewOrderSingle(msg newordersingle.NewOrderSingle, sessio
 	}
 
 	exch, e := a.exchangeManager.GetExchangeByName(submission.Exchange)
-	if err != nil {
+	if e != nil {
 		a.RejectOrderRequest(submission, e.Error())
 	}
 
@@ -435,7 +435,7 @@ func (a *Application) WebsocketDataHandler(exchName string, data interface{}) er
 
 	switch d := data.(type) {
 	case string:
-		//log.Infoln(log.WebsocketMgr, d)
+		// log.Infoln(log.WebsocketMgr, d)
 	case error:
 		return fmt.Errorf("exchange %s websocket error - %s", exchName, data)
 	case *ticker.Price:
@@ -693,8 +693,8 @@ func (a *Application) UpdateOrder(msg *order.Detail, status enum.OrdStatus) {
 	switch status {
 	case enum.OrdStatus_FILLED, enum.OrdStatus_PARTIALLY_FILLED:
 		execReport.SetExecType(enum.ExecType_TRADE)
-		execReport.SetLastPx(decimal.NewFromFloat(msg.LastExecutedPrice), 8)
-		execReport.SetLastShares(decimal.NewFromFloat(msg.LastExecutedQuantity), 8)
+		execReport.SetLastPx(decimal.NewFromFloat(msg.AverageExecutedPrice), 8)
+		execReport.SetLastShares(decimal.NewFromFloat(msg.ExecutedAmount), 8)
 	}
 
 	for _, sessionID := range a.sessions {
