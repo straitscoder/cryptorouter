@@ -8,7 +8,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/thrasher-corp/gocryptotrader/common"
@@ -18,6 +17,8 @@ import (
 	"github.com/thrasher-corp/gocryptotrader/exchanges/account"
 	"github.com/thrasher-corp/gocryptotrader/exchanges/asset"
 	"github.com/thrasher-corp/gocryptotrader/exchanges/deposit"
+	"github.com/thrasher-corp/gocryptotrader/exchanges/fundingrate"
+	"github.com/thrasher-corp/gocryptotrader/exchanges/futures"
 	"github.com/thrasher-corp/gocryptotrader/exchanges/kline"
 	"github.com/thrasher-corp/gocryptotrader/exchanges/order"
 	"github.com/thrasher-corp/gocryptotrader/exchanges/orderbook"
@@ -32,29 +33,6 @@ import (
 )
 
 var errFailedToConvertToCandle = errors.New("cannot convert time series data to kline.Candle, insufficient data")
-
-// GetDefaultConfig returns a default exchange config
-func (b *BTCMarkets) GetDefaultConfig(ctx context.Context) (*config.Exchange, error) {
-	b.SetDefaults()
-	exchCfg := new(config.Exchange)
-	exchCfg.Name = b.Name
-	exchCfg.HTTPTimeout = exchange.DefaultHTTPTimeout
-	exchCfg.BaseCurrencies = b.BaseCurrencies
-
-	err := b.SetupDefaults(exchCfg)
-	if err != nil {
-		return nil, err
-	}
-
-	if b.Features.Supports.RESTCapabilities.AutoPairUpdates {
-		err = b.UpdateTradablePairs(ctx, true)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	return exchCfg, nil
-}
 
 // SetDefaults sets basic defaults
 func (b *BTCMarkets) SetDefaults() {
@@ -137,7 +115,7 @@ func (b *BTCMarkets) SetDefaults() {
 
 	b.Requester, err = request.New(b.Name,
 		common.NewHTTPClientWithTimeout(exchange.DefaultHTTPTimeout),
-		request.WithLimiter(SetRateLimit()))
+		request.WithLimiter(GetRateLimit()))
 	if err != nil {
 		log.Errorln(log.ExchangeSys, err)
 	}
@@ -149,7 +127,7 @@ func (b *BTCMarkets) SetDefaults() {
 	if err != nil {
 		log.Errorln(log.ExchangeSys, err)
 	}
-	b.Websocket = stream.New()
+	b.Websocket = stream.NewWebsocket()
 	b.WebsocketResponseMaxLimit = exchange.DefaultWebsocketResponseMaxLimit
 	b.WebsocketResponseCheckTimeout = exchange.DefaultWebsocketResponseCheckTimeout
 	b.WebsocketOrderbookBufferLimit = exchange.DefaultWebsocketOrderbookBufferLimit
@@ -176,15 +154,14 @@ func (b *BTCMarkets) Setup(exch *config.Exchange) error {
 	}
 
 	err = b.Websocket.Setup(&stream.WebsocketSetup{
-		ExchangeConfig:         exch,
-		DefaultURL:             btcMarketsWSURL,
-		RunningURL:             wsURL,
-		Connector:              b.WsConnect,
-		Subscriber:             b.Subscribe,
-		Unsubscriber:           b.Unsubscribe,
-		GenerateSubscriptions:  b.generateDefaultSubscriptions,
-		ConnectionMonitorDelay: exch.ConnectionMonitorDelay,
-		Features:               &b.Features.Supports.WebsocketCapabilities,
+		ExchangeConfig:        exch,
+		DefaultURL:            btcMarketsWSURL,
+		RunningURL:            wsURL,
+		Connector:             b.WsConnect,
+		Subscriber:            b.Subscribe,
+		Unsubscriber:          b.Unsubscribe,
+		GenerateSubscriptions: b.generateDefaultSubscriptions,
+		Features:              &b.Features.Supports.WebsocketCapabilities,
 		OrderbookBufferConfig: buffer.Config{
 			SortBuffer:          true,
 			UpdateIDProgression: true,
@@ -195,99 +172,10 @@ func (b *BTCMarkets) Setup(exch *config.Exchange) error {
 		return err
 	}
 
-	return b.Websocket.SetupNewConnection(stream.ConnectionSetup{
+	return b.Websocket.SetupNewConnection(&stream.ConnectionSetup{
 		ResponseCheckTimeout: exch.WebsocketResponseCheckTimeout,
 		ResponseMaxLimit:     exch.WebsocketResponseMaxLimit,
 	})
-}
-
-// Start starts the BTC Markets go routine
-func (b *BTCMarkets) Start(ctx context.Context, wg *sync.WaitGroup) error {
-	if wg == nil {
-		return fmt.Errorf("%T %w", wg, common.ErrNilPointer)
-	}
-	wg.Add(1)
-	go func() {
-		b.Run(ctx)
-		wg.Done()
-	}()
-	return nil
-}
-
-// Run implements the BTC Markets wrapper
-func (b *BTCMarkets) Run(ctx context.Context) {
-	if b.Verbose {
-		log.Debugf(log.ExchangeSys,
-			"%s Websocket: %s (url: %s).\n",
-			b.Name,
-			common.IsEnabled(b.Websocket.IsEnabled()),
-			btcMarketsWSURL)
-		b.PrintEnabledPairs()
-	}
-
-	forceUpdate := false
-	pairs, err := b.GetEnabledPairs(asset.Spot)
-	if err != nil {
-		log.Errorf(log.ExchangeSys,
-			"%s Failed to update enabled currencies Err:%s\n",
-			b.Name,
-			err)
-		return
-	}
-	format, err := b.GetPairFormat(asset.Spot, false)
-	if err != nil {
-		log.Errorf(log.ExchangeSys,
-			"%s Failed to update enabled currencies.\n",
-			b.Name)
-		return
-	}
-
-	avail, err := b.GetAvailablePairs(asset.Spot)
-	if err != nil {
-		log.Errorf(log.ExchangeSys,
-			"%s Failed to update enabled currencies.\n",
-			b.Name)
-		return
-	}
-
-	if !common.StringDataContains(pairs.Strings(), format.Delimiter) ||
-		!common.StringDataContains(avail.Strings(), format.Delimiter) {
-		forceUpdate = true
-	}
-	if forceUpdate {
-		enabledPairs := currency.Pairs{currency.Pair{
-			Base:      currency.BTC.Lower(),
-			Quote:     currency.AUD.Lower(),
-			Delimiter: format.Delimiter,
-		},
-		}
-		log.Warnf(log.ExchangeSys, exchange.ResetConfigPairsWarningMessage, b.Name, asset.Spot, enabledPairs)
-		err = b.UpdatePairs(enabledPairs, asset.Spot, true, true)
-		if err != nil {
-			log.Errorf(log.ExchangeSys,
-				"%s Failed to update enabled currencies.\n",
-				b.Name)
-		}
-	}
-
-	err = b.UpdateOrderExecutionLimits(ctx, asset.Spot)
-	if err != nil {
-		log.Errorf(log.ExchangeSys,
-			"%s Failed to update order execution limits. Error: %v\n",
-			b.Name, err)
-	}
-
-	if !b.GetEnabledFeatures().AutoPairUpdates && !forceUpdate {
-		return
-	}
-
-	err = b.UpdateTradablePairs(ctx, forceUpdate)
-	if err != nil {
-		log.Errorf(log.ExchangeSys,
-			"%s failed to update tradable pairs. Err: %s",
-			b.Name,
-			err)
-	}
 }
 
 // FetchTradablePairs returns a list of the exchanges tradable pairs
@@ -426,17 +314,17 @@ func (b *BTCMarkets) UpdateOrderbook(ctx context.Context, p currency.Pair, asset
 		return book, err
 	}
 
-	book.Bids = make(orderbook.Items, len(tempResp.Bids))
+	book.Bids = make(orderbook.Tranches, len(tempResp.Bids))
 	for x := range tempResp.Bids {
-		book.Bids[x] = orderbook.Item{
+		book.Bids[x] = orderbook.Tranche{
 			Amount: tempResp.Bids[x].Volume,
 			Price:  tempResp.Bids[x].Price,
 		}
 	}
 
-	book.Asks = make(orderbook.Items, len(tempResp.Asks))
+	book.Asks = make(orderbook.Tranches, len(tempResp.Asks))
 	for y := range tempResp.Asks {
-		book.Asks[y] = orderbook.Item{
+		book.Asks[y] = orderbook.Tranche{
 			Amount: tempResp.Asks[y].Volume,
 			Price:  tempResp.Asks[y].Price,
 		}
@@ -576,7 +464,7 @@ func (b *BTCMarkets) GetHistoricTrades(_ context.Context, _ currency.Pair, _ ass
 
 // SubmitOrder submits a new order
 func (b *BTCMarkets) SubmitOrder(ctx context.Context, s *order.Submit) (*order.SubmitResponse, error) {
-	if err := s.Validate(); err != nil {
+	if err := s.Validate(b.GetTradingRequirements()); err != nil {
 		return nil, err
 	}
 
@@ -725,7 +613,7 @@ func (b *BTCMarkets) CancelBatchOrders(ctx context.Context, o []order.Cancel) (*
 
 // CancelAllOrders cancels all orders associated with a currency pair
 func (b *BTCMarkets) CancelAllOrders(ctx context.Context, _ *order.Cancel) (order.CancelAllResponse, error) {
-	var resp order.CancelAllResponse
+	resp := order.CancelAllResponse{Status: map[string]string{}}
 	orders, err := b.GetOrders(ctx, "", -1, -1, -1, true)
 	if err != nil {
 		return resp, err
@@ -735,21 +623,18 @@ func (b *BTCMarkets) CancelAllOrders(ctx context.Context, _ *order.Cancel) (orde
 	for x := range orders {
 		orderIDs[x] = orders[x].OrderID
 	}
-	splitOrders := common.SplitStringSliceByLimit(orderIDs, 20)
-	tempMap := make(map[string]string)
-	for z := range splitOrders {
-		tempResp, err := b.CancelBatch(ctx, splitOrders[z])
+	for _, batch := range common.Batch(orderIDs, 20) {
+		cancelResp, err := b.CancelBatch(ctx, batch)
 		if err != nil {
 			return resp, err
 		}
-		for y := range tempResp.CancelOrders {
-			tempMap[tempResp.CancelOrders[y].OrderID] = "Success"
+		for _, r := range cancelResp.CancelOrders {
+			resp.Status[r.OrderID] = "Success"
 		}
-		for z := range tempResp.UnprocessedRequests {
-			tempMap[tempResp.UnprocessedRequests[z].RequestID] = "Cancellation Failed"
+		for _, r := range cancelResp.UnprocessedRequests {
+			resp.Status[r.RequestID] = "Cancellation Failed"
 		}
 	}
-	resp.Status = tempMap
 	return resp, nil
 }
 
@@ -995,9 +880,8 @@ func (b *BTCMarkets) GetOrderHistory(ctx context.Context, req *order.MultiOrderR
 			tempArray = append(tempArray, orders[z].OrderID)
 		}
 	}
-	splitOrders := common.SplitStringSliceByLimit(tempArray, 50)
-	for x := range splitOrders {
-		tempData, err := b.GetBatchTrades(ctx, splitOrders[x])
+	for _, batch := range common.Batch(tempArray, 50) {
+		tempData, err := b.GetBatchTrades(ctx, batch)
 		if err != nil {
 			return resp, err
 		}
@@ -1218,4 +1102,24 @@ func convertToKlineCandle(candle *[6]string) (kline.Candle, error) {
 		return elem, err
 	}
 	return elem, nil
+}
+
+// GetFuturesContractDetails returns all contracts from the exchange by asset type
+func (b *BTCMarkets) GetFuturesContractDetails(context.Context, asset.Item) ([]futures.Contract, error) {
+	return nil, common.ErrFunctionNotSupported
+}
+
+// GetLatestFundingRates returns the latest funding rates data
+func (b *BTCMarkets) GetLatestFundingRates(context.Context, *fundingrate.LatestRateRequest) ([]fundingrate.LatestRateResponse, error) {
+	return nil, common.ErrFunctionNotSupported
+}
+
+// GetCurrencyTradeURL returns the URL to the exchange's trade page for the given asset and currency pair
+func (b *BTCMarkets) GetCurrencyTradeURL(_ context.Context, a asset.Item, cp currency.Pair) (string, error) {
+	_, err := b.CurrencyPairs.IsPairEnabled(cp, a)
+	if err != nil {
+		return "", err
+	}
+	cp.Delimiter = currency.DashDelimiter
+	return tradeBaseURL + cp.Base.Upper().String(), nil
 }

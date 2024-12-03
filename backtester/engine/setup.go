@@ -32,6 +32,7 @@ import (
 	"github.com/thrasher-corp/gocryptotrader/backtester/report"
 	gctcommon "github.com/thrasher-corp/gocryptotrader/common"
 	"github.com/thrasher-corp/gocryptotrader/common/convert"
+	"github.com/thrasher-corp/gocryptotrader/common/key"
 	gctconfig "github.com/thrasher-corp/gocryptotrader/config"
 	"github.com/thrasher-corp/gocryptotrader/currency"
 	gctdatabase "github.com/thrasher-corp/gocryptotrader/database"
@@ -144,14 +145,16 @@ func (bt *BackTest) SetupFromConfig(cfg *config.Config, templatePath, output str
 				if err != nil {
 					return err
 				}
-				exch.SetDefaults()
-				exchBase := exch.GetBase()
-				exchBase.Verbose = cfg.DataSettings.VerboseExchangeRequests
+
 				var dc *gctconfig.Exchange
-				dc, err = exch.GetDefaultConfig(context.TODO())
+				dc, err = gctexchange.GetDefaultConfig(context.TODO(), exch)
 				if err != nil {
 					return err
 				}
+
+				exchBase := exch.GetBase()
+				exchBase.Verbose = cfg.DataSettings.VerboseExchangeRequests
+
 				err = exch.Setup(dc)
 				if err != nil {
 					return err
@@ -192,7 +195,7 @@ func (bt *BackTest) SetupFromConfig(cfg *config.Config, templatePath, output str
 	}
 
 	portfolioRisk := &risk.Risk{
-		CurrencySettings: make(map[string]map[asset.Item]map[*currency.Item]map[*currency.Item]*risk.CurrencySettings),
+		CurrencySettings: make(map[key.ExchangePairAsset]*risk.CurrencySettings),
 	}
 
 	bt.Funding = funds
@@ -205,13 +208,11 @@ func (bt *BackTest) SetupFromConfig(cfg *config.Config, templatePath, output str
 		}
 	}
 
-	bt.orderManager, err = engine.SetupOrderManager(
-		bt.exchangeManager,
-		&engine.CommunicationManager{},
-		&sync.WaitGroup{},
-		verbose,
-		trackFuturesPositions,
-		0)
+	bt.orderManager, err = engine.SetupOrderManager(bt.exchangeManager, &engine.CommunicationManager{}, &sync.WaitGroup{}, &gctconfig.OrderManager{
+		Verbose:                       verbose,
+		ActivelyTrackFuturesPositions: trackFuturesPositions,
+		RespectOrderHistoryLimits:     convert.BoolPtr(true),
+	})
 	if err != nil {
 		return err
 	}
@@ -222,9 +223,6 @@ func (bt *BackTest) SetupFromConfig(cfg *config.Config, templatePath, output str
 	}
 
 	for i := range cfg.CurrencySettings {
-		if portfolioRisk.CurrencySettings[cfg.CurrencySettings[i].ExchangeName] == nil {
-			portfolioRisk.CurrencySettings[cfg.CurrencySettings[i].ExchangeName] = make(map[asset.Item]map[*currency.Item]map[*currency.Item]*risk.CurrencySettings)
-		}
 		a := cfg.CurrencySettings[i].Asset
 		if !a.IsValid() {
 			return fmt.Errorf(
@@ -236,12 +234,10 @@ func (bt *BackTest) SetupFromConfig(cfg *config.Config, templatePath, output str
 				cfg.CurrencySettings[i].Quote,
 				err)
 		}
-		if portfolioRisk.CurrencySettings[cfg.CurrencySettings[i].ExchangeName][a] == nil {
-			portfolioRisk.CurrencySettings[cfg.CurrencySettings[i].ExchangeName][a] = make(map[*currency.Item]map[*currency.Item]*risk.CurrencySettings)
+		if portfolioRisk.CurrencySettings == nil {
+			portfolioRisk.CurrencySettings = make(map[key.ExchangePairAsset]*risk.CurrencySettings)
 		}
-		if portfolioRisk.CurrencySettings[cfg.CurrencySettings[i].ExchangeName][a][cfg.CurrencySettings[i].Base.Item] == nil {
-			portfolioRisk.CurrencySettings[cfg.CurrencySettings[i].ExchangeName][a][cfg.CurrencySettings[i].Base.Item] = make(map[*currency.Item]*risk.CurrencySettings)
-		}
+
 		var curr currency.Pair
 		var b, q currency.Code
 		b = cfg.CurrencySettings[i].Base
@@ -266,7 +262,12 @@ func (bt *BackTest) SetupFromConfig(cfg *config.Config, templatePath, output str
 			portSet.MaximumOrdersWithLeverageRatio = cfg.CurrencySettings[i].FuturesDetails.Leverage.MaximumOrdersWithLeverageRatio
 			portSet.MaxLeverageRate = cfg.CurrencySettings[i].FuturesDetails.Leverage.MaximumOrderLeverageRate
 		}
-		portfolioRisk.CurrencySettings[cfg.CurrencySettings[i].ExchangeName][a][curr.Base.Item][curr.Quote.Item] = portSet
+		portfolioRisk.CurrencySettings[key.ExchangePairAsset{
+			Exchange: cfg.CurrencySettings[i].ExchangeName,
+			Base:     cfg.CurrencySettings[i].Base.Item,
+			Quote:    cfg.CurrencySettings[i].Quote.Item,
+			Asset:    a,
+		}] = portSet
 		if cfg.CurrencySettings[i].MakerFee != nil &&
 			cfg.CurrencySettings[i].TakerFee != nil &&
 			cfg.CurrencySettings[i].MakerFee.GreaterThan(*cfg.CurrencySettings[i].TakerFee) {
@@ -398,7 +399,7 @@ func (bt *BackTest) SetupFromConfig(cfg *config.Config, templatePath, output str
 		StrategyNickname:            cfg.Nickname,
 		StrategyDescription:         bt.Strategy.Description(),
 		StrategyGoal:                cfg.Goal,
-		ExchangeAssetPairStatistics: make(map[string]map[asset.Item]map[*currency.Item]map[*currency.Item]*statistics.CurrencyPairStatistic),
+		ExchangeAssetPairStatistics: make(map[key.ExchangePairAsset]*statistics.CurrencyPairStatistic),
 		RiskFreeRate:                cfg.StatisticSettings.RiskFreeRate,
 		CandleInterval:              cfg.DataSettings.Interval,
 		FundManager:                 bt.Funding,
@@ -842,7 +843,7 @@ func (bt *BackTest) loadData(cfg *config.Config, exch gctexchange.IBotExchange, 
 				cfg.DataSettings.Interval)
 		}
 		err = bt.exchangeManager.Add(exch)
-		if err != nil {
+		if err != nil && !errors.Is(err, engine.ErrExchangeAlreadyLoaded) {
 			return nil, err
 		}
 		err = bt.LiveDataHandler.AppendDataSource(&liveDataSourceSetup{
@@ -859,7 +860,7 @@ func (bt *BackTest) loadData(cfg *config.Config, exch gctexchange.IBotExchange, 
 		return nil, err
 	}
 	if resp == nil {
-		return nil, fmt.Errorf("processing error, response returned nil")
+		return nil, errors.New("processing error, response returned nil")
 	}
 
 	resp.Item.UnderlyingPair = underlyingPair
@@ -954,7 +955,8 @@ func setExchangeCredentials(cfg *config.Config, base *gctexchange.Base) error {
 			cfg.DataSettings.LiveData.ExchangeCredentials[i].Keys.IsEmpty() {
 			return fmt.Errorf("%v %w, please review your live, real order config", base.GetName(), gctexchange.ErrCredentialsAreEmpty)
 		}
-
+		base.API.AuthenticatedSupport = true
+		base.API.AuthenticatedWebsocketSupport = true
 		base.SetCredentials(
 			cfg.DataSettings.LiveData.ExchangeCredentials[i].Keys.Key,
 			cfg.DataSettings.LiveData.ExchangeCredentials[i].Keys.Secret,
@@ -963,10 +965,9 @@ func setExchangeCredentials(cfg *config.Config, base *gctexchange.Base) error {
 			cfg.DataSettings.LiveData.ExchangeCredentials[i].Keys.PEMKey,
 			cfg.DataSettings.LiveData.ExchangeCredentials[i].Keys.OneTimePassword,
 		)
-		validated := base.AreCredentialsValid(context.TODO())
-		base.API.AuthenticatedSupport = validated
-		if !validated {
-			return fmt.Errorf("%v %w", base.GetName(), errInvalidCredentials)
+		_, err := base.GetCredentials(context.TODO())
+		if err != nil {
+			return err
 		}
 	}
 

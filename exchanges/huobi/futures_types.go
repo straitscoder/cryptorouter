@@ -9,8 +9,10 @@ type FContractInfoData struct {
 		ContractSize   float64 `json:"contract_size"`
 		PriceTick      float64 `json:"price_tick"`
 		DeliveryDate   string  `json:"delivery_date"`
+		DeliveryTime   int64   `json:"delivery_time,string"`
 		CreateDate     string  `json:"create_date"`
 		ContractStatus int64   `json:"contract_status"`
+		SettlementTime int64   `json:"settlement_time,string"`
 	}
 }
 
@@ -37,14 +39,23 @@ type FContractPriceLimits struct {
 
 // FContractOIData stores open interest data for futures contracts
 type FContractOIData struct {
-	Data []struct {
-		Symbol       string  `json:"symbol"`
-		ContractType string  `json:"contract_type"`
-		Volume       float64 `json:"volume"`
-		Amount       float64 `json:"amount"`
-		ContractCode string  `json:"contract_code"`
-	} `json:"data"`
-	Timestamp int64 `json:"ts"`
+	Data      []UContractOpenInterest `json:"data"`
+	Timestamp int64                   `json:"ts"`
+}
+
+// UContractOpenInterest stores open interest data for futures contracts
+type UContractOpenInterest struct {
+	Volume        float64 `json:"volume"`
+	Amount        float64 `json:"amount"`
+	Symbol        string  `json:"symbol"`
+	Value         float64 `json:"value"`
+	ContractCode  string  `json:"contract_code"`
+	TradeAmount   float64 `json:"trade_amount"`
+	TradeVolume   float64 `json:"trade_volume"`
+	TradeTurnover float64 `json:"trade_turnover"`
+	BusinessType  string  `json:"business_type"`
+	Pair          string  `json:"pair"`
+	ContractType  string  `json:"contract_type"`
 }
 
 // FEstimatedDeliveryPriceInfo stores estimated delivery price data for futures

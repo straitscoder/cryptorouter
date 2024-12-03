@@ -12,12 +12,14 @@ import (
 	"github.com/thrasher-corp/gocryptotrader/common/crypto"
 	"github.com/thrasher-corp/gocryptotrader/currency"
 	exchange "github.com/thrasher-corp/gocryptotrader/exchanges"
+	"github.com/thrasher-corp/gocryptotrader/exchanges/nonce"
 	"github.com/thrasher-corp/gocryptotrader/exchanges/request"
 )
 
 const (
 	apiPublicURL                  = "https://yobit.net/api"
 	apiPrivateURL                 = "https://yobit.net/tapi"
+	tradeBaseURL                  = "https://yobit.net/en/trade/"
 	apiPublicVersion              = "3"
 	publicInfo                    = "info"
 	publicTicker                  = "ticker"
@@ -302,7 +304,7 @@ func (y *Yobit) SendAuthenticatedHTTPRequest(ctx context.Context, ep exchange.UR
 	}
 
 	return y.SendPayload(ctx, request.Unset, func() (*request.Item, error) {
-		n := y.Requester.GetNonce(false).String()
+		n := y.Requester.GetNonce(nonce.Unix).String()
 
 		params.Set("nonce", n)
 		params.Set("method", path)
@@ -390,7 +392,7 @@ func getInternationalBankWithdrawalFee(c currency.Code, amount float64, bankTran
 			fee = 0.03 * amount
 		}
 	case exchange.Qiwi:
-		if c == currency.RUR {
+		if c.Equal(currency.RUR) {
 			fee = 0.04 * amount
 		}
 	case exchange.Capitalist:
@@ -425,7 +427,7 @@ func getInternationalBankDepositFee(c currency.Code, bankTransactionType exchang
 			fee = 0
 		}
 	case exchange.Qiwi:
-		if c == currency.RUR {
+		if c.Equal(currency.RUR) {
 			fee = 0
 		}
 	case exchange.Capitalist:

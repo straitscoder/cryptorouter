@@ -27,10 +27,34 @@ import (
 	exchange "github.com/thrasher-corp/gocryptotrader/exchanges"
 	"github.com/thrasher-corp/gocryptotrader/exchanges/account"
 	"github.com/thrasher-corp/gocryptotrader/exchanges/asset"
+	"github.com/thrasher-corp/gocryptotrader/exchanges/binance"
+	"github.com/thrasher-corp/gocryptotrader/exchanges/binanceus"
+	"github.com/thrasher-corp/gocryptotrader/exchanges/bitfinex"
+	"github.com/thrasher-corp/gocryptotrader/exchanges/bitflyer"
+	"github.com/thrasher-corp/gocryptotrader/exchanges/bithumb"
+	"github.com/thrasher-corp/gocryptotrader/exchanges/bitmex"
+	"github.com/thrasher-corp/gocryptotrader/exchanges/bitstamp"
+	"github.com/thrasher-corp/gocryptotrader/exchanges/btcmarkets"
+	"github.com/thrasher-corp/gocryptotrader/exchanges/btse"
+	"github.com/thrasher-corp/gocryptotrader/exchanges/bybit"
+	"github.com/thrasher-corp/gocryptotrader/exchanges/coinbasepro"
+	"github.com/thrasher-corp/gocryptotrader/exchanges/coinut"
 	"github.com/thrasher-corp/gocryptotrader/exchanges/deposit"
+	"github.com/thrasher-corp/gocryptotrader/exchanges/deribit"
+	"github.com/thrasher-corp/gocryptotrader/exchanges/exmo"
+	"github.com/thrasher-corp/gocryptotrader/exchanges/gateio"
+	"github.com/thrasher-corp/gocryptotrader/exchanges/gemini"
+	"github.com/thrasher-corp/gocryptotrader/exchanges/hitbtc"
+	"github.com/thrasher-corp/gocryptotrader/exchanges/huobi"
+	"github.com/thrasher-corp/gocryptotrader/exchanges/kraken"
+	"github.com/thrasher-corp/gocryptotrader/exchanges/kucoin"
+	"github.com/thrasher-corp/gocryptotrader/exchanges/lbank"
+	"github.com/thrasher-corp/gocryptotrader/exchanges/okx"
 	"github.com/thrasher-corp/gocryptotrader/exchanges/orderbook"
+	"github.com/thrasher-corp/gocryptotrader/exchanges/poloniex"
 	"github.com/thrasher-corp/gocryptotrader/exchanges/stats"
 	"github.com/thrasher-corp/gocryptotrader/exchanges/ticker"
+	"github.com/thrasher-corp/gocryptotrader/exchanges/yobit"
 	"github.com/thrasher-corp/gocryptotrader/gctscript/vm"
 	"github.com/thrasher-corp/gocryptotrader/log"
 )
@@ -82,7 +106,7 @@ func (bot *Engine) GetRPCEndpoints() (map[string]RPCEndpoint, error) {
 		},
 		grpcProxyName: {
 			Started:    bot.Settings.EnableGRPCProxy,
-			ListenAddr: "http://" + bot.Config.RemoteControl.GRPC.GRPCProxyListenAddress,
+			ListenAddr: "https://" + bot.Config.RemoteControl.GRPC.GRPCProxyListenAddress,
 		},
 		DeprecatedName: {
 			Started:    bot.Settings.EnableDeprecatedRPC,
@@ -133,13 +157,7 @@ func (bot *Engine) SetSubsystem(subSystemName string, enable bool) error {
 	case OrderManagerName:
 		if enable {
 			if bot.OrderManager == nil {
-				bot.OrderManager, err = SetupOrderManager(
-					bot.ExchangeManager,
-					bot.CommunicationsManager,
-					&bot.ServicesWG,
-					bot.Config.OrderManager.Verbose,
-					bot.Config.OrderManager.ActivelyTrackFuturesPositions,
-					bot.Config.OrderManager.FuturesTrackingSeekDuration)
+				bot.OrderManager, err = SetupOrderManager(bot.ExchangeManager, bot.CommunicationsManager, &bot.ServicesWG, &bot.Config.OrderManager)
 				if err != nil {
 					return err
 				}
@@ -204,7 +222,7 @@ func (bot *Engine) SetSubsystem(subSystemName string, enable bool) error {
 					bot.Settings.SyncWorkersCount != config.DefaultSyncerWorkers {
 					cfg.NumWorkers = bot.Settings.SyncWorkersCount
 				}
-				bot.currencyPairSyncer, err = setupSyncManager(
+				bot.currencyPairSyncer, err = SetupSyncManager(
 					&cfg,
 					bot.ExchangeManager,
 					&bot.Config.RemoteControl,
@@ -620,7 +638,7 @@ func GetCollatedExchangeAccountInfoByCoin(accounts []account.Holdings) map[curre
 func GetExchangeHighestPriceByCurrencyPair(p currency.Pair, a asset.Item) (string, error) {
 	result := stats.SortExchangesByPrice(p, a, true)
 	if len(result) == 0 {
-		return "", fmt.Errorf("no stats for supplied currency pair and asset type")
+		return "", errors.New("no stats for supplied currency pair and asset type")
 	}
 
 	return result[0].Exchange, nil
@@ -631,7 +649,7 @@ func GetExchangeHighestPriceByCurrencyPair(p currency.Pair, a asset.Item) (strin
 func GetExchangeLowestPriceByCurrencyPair(p currency.Pair, assetType asset.Item) (string, error) {
 	result := stats.SortExchangesByPrice(p, assetType, false)
 	if len(result) == 0 {
-		return "", fmt.Errorf("no stats for supplied currency pair and asset type")
+		return "", errors.New("no stats for supplied currency pair and asset type")
 	}
 
 	return result[0].Exchange, nil
@@ -735,7 +753,7 @@ func (bot *Engine) GetAllExchangeCryptocurrencyDepositAddresses() map[string]map
 					}
 					if len(availChains) > 0 {
 						// store the default non-chain specified address for a specified crypto
-						chainContainsItself := common.StringDataCompareInsensitive(availChains, cryptocurrency)
+						chainContainsItself := common.StringSliceCompareInsensitive(availChains, cryptocurrency)
 						if !chainContainsItself && !requiresChainSet {
 							depositAddr, err := exch.GetDepositAddress(context.TODO(), currency.NewCode(cryptocurrency), "", "")
 							if err != nil {
@@ -943,7 +961,7 @@ func genCert(targetDir string) error {
 
 	certData := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: derBytes})
 	if certData == nil {
-		return fmt.Errorf("cert data is nil")
+		return errors.New("cert data is nil")
 	}
 
 	b, err := x509.MarshalECPrivateKey(privKey)
@@ -953,7 +971,7 @@ func genCert(targetDir string) error {
 
 	keyData := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: b})
 	if keyData == nil {
-		return fmt.Errorf("key pem data is nil")
+		return errors.New("key pem data is nil")
 	}
 
 	err = file.Write(filepath.Join(targetDir, "key.pem"), keyData)
@@ -968,4 +986,81 @@ func genCert(targetDir string) error {
 
 	log.Infof(log.Global, "gRPC TLS key.pem and cert.pem files written to %s\n", targetDir)
 	return nil
+}
+
+// NewSupportedExchangeByName helps create a new exchange to be loaded that is
+// supported by GCT. This function will return an error if the exchange is not
+// supported.
+func NewSupportedExchangeByName(name string) (exchange.IBotExchange, error) {
+	switch strings.ToLower(name) {
+	case "binanceus":
+		return new(binanceus.Binanceus), nil
+	case "binance":
+		return new(binance.Binance), nil
+	case "bitfinex":
+		return new(bitfinex.Bitfinex), nil
+	case "bitflyer":
+		return new(bitflyer.Bitflyer), nil
+	case "bithumb":
+		return new(bithumb.Bithumb), nil
+	case "bitmex":
+		return new(bitmex.Bitmex), nil
+	case "bitstamp":
+		return new(bitstamp.Bitstamp), nil
+	case "btc markets":
+		return new(btcmarkets.BTCMarkets), nil
+	case "btse":
+		return new(btse.BTSE), nil
+	case "bybit":
+		return new(bybit.Bybit), nil
+	case "coinut":
+		return new(coinut.COINUT), nil
+	case "deribit":
+		return new(deribit.Deribit), nil
+	case "exmo":
+		return new(exmo.EXMO), nil
+	case "coinbasepro":
+		return new(coinbasepro.CoinbasePro), nil
+	case "gateio":
+		return new(gateio.Gateio), nil
+	case "gemini":
+		return new(gemini.Gemini), nil
+	case "hitbtc":
+		return new(hitbtc.HitBTC), nil
+	case "huobi":
+		return new(huobi.HUOBI), nil
+	case "kraken":
+		return new(kraken.Kraken), nil
+	case "kucoin":
+		return new(kucoin.Kucoin), nil
+	case "lbank":
+		return new(lbank.Lbank), nil
+	case "okx":
+		return new(okx.Okx), nil
+	case "poloniex":
+		return new(poloniex.Poloniex), nil
+	case "yobit":
+		return new(yobit.Yobit), nil
+	default:
+		return nil, fmt.Errorf("'%s', %w", name, ErrExchangeNotFound)
+	}
+}
+
+// NewExchangeByNameWithDefaults returns a defaulted exchange by its name if it
+// exists. This will allocate a new exchange and setup the default config for it.
+// This will automatically fetch available pairs.
+func NewExchangeByNameWithDefaults(ctx context.Context, name string) (exchange.IBotExchange, error) {
+	exch, err := NewSupportedExchangeByName(name)
+	if err != nil {
+		return nil, err
+	}
+	defaultConfig, err := exchange.GetDefaultConfig(ctx, exch)
+	if err != nil {
+		return nil, err
+	}
+	err = exch.Setup(defaultConfig)
+	if err != nil {
+		return nil, err
+	}
+	return exch, nil
 }

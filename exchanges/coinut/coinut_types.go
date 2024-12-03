@@ -125,8 +125,8 @@ type OrderResponse struct {
 
 // Commission holds trade commission structure
 type Commission struct {
-	Currency currency.Pair `json:"currency"`
-	Amount   float64       `json:"amount,string"`
+	Currency string  `json:"currency"`
+	Amount   float64 `json:"amount,string"`
 }
 
 // OrderFilledResponse contains order filled response
@@ -545,8 +545,8 @@ type WsOrderData struct {
 
 // WsOrderFilledCommissionData ws response data
 type WsOrderFilledCommissionData struct {
-	Amount   float64       `json:"amount,string"`
-	Currency currency.Pair `json:"currency"`
+	Amount   float64 `json:"amount,string"`
+	Currency string  `json:"currency"`
 }
 
 // WsOrderRejectedResponse ws response
@@ -594,8 +594,8 @@ type WsTradeHistoryResponse struct {
 
 // WsTradeHistoryCommissionData ws response data
 type WsTradeHistoryCommissionData struct {
-	Amount   float64       `json:"amount,string"`
-	Currency currency.Pair `json:"currency"`
+	Amount   float64 `json:"amount,string"`
+	Currency string  `json:"currency"`
 }
 
 // WsTradeHistoryTradeData ws response data
@@ -606,6 +606,15 @@ type WsTradeHistoryTradeData struct {
 	FillQuantity  float64                      `json:"fill_qty,string"`
 	Timestamp     int64                        `json:"timestamp"`
 	TransactionID int64                        `json:"trans_id"`
+}
+
+// WsLoginReq Login request message
+type WsLoginReq struct {
+	Request   string `json:"request"`
+	Username  string `json:"username"`
+	Nonce     int64  `json:"nonce"`
+	Hmac      string `json:"hmac_sha256"`
+	Timestamp int64  `json:"timestamp"`
 }
 
 // WsLoginResponse ws response data

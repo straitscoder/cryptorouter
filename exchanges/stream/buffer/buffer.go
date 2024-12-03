@@ -6,6 +6,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/thrasher-corp/gocryptotrader/common/key"
 	"github.com/thrasher-corp/gocryptotrader/config"
 	"github.com/thrasher-corp/gocryptotrader/currency"
 	"github.com/thrasher-corp/gocryptotrader/exchanges/asset"
@@ -60,7 +61,7 @@ func (w *Orderbook) Setup(exchangeConfig *config.Exchange, c *Config, dataHandle
 	w.updateEntriesByID = c.UpdateEntriesByID
 	w.exchangeName = exchangeConfig.Name
 	w.dataHandler = dataHandler
-	w.ob = make(map[Key]*orderbookHolder)
+	w.ob = make(map[key.PairAsset]*orderbookHolder)
 	w.verbose = exchangeConfig.Verbose
 
 	// set default publish period if missing
@@ -86,14 +87,14 @@ func (w *Orderbook) validate(u *orderbook.Update) error {
 }
 
 // Update updates a stored pointer to an orderbook.Depth struct containing a
-// linked list, this switches between the usage of a buffered update
+// bid and ask Tranches, this switches between the usage of a buffered update
 func (w *Orderbook) Update(u *orderbook.Update) error {
 	if err := w.validate(u); err != nil {
 		return err
 	}
 	w.mtx.Lock()
 	defer w.mtx.Unlock()
-	book, ok := w.ob[Key{Base: u.Pair.Base.Item, Quote: u.Pair.Quote.Item, Asset: u.Asset}]
+	book, ok := w.ob[key.PairAsset{Base: u.Pair.Base.Item, Quote: u.Pair.Quote.Item, Asset: u.Asset}]
 	if !ok {
 		return fmt.Errorf("%w for Exchange %s CurrencyPair: %s AssetType: %s",
 			errDepthNotFound,
@@ -169,20 +170,6 @@ func (w *Orderbook) Update(u *orderbook.Update) error {
 		}
 	}
 
-	var ret *orderbook.Base
-	if book.ob.VerifyOrderbook {
-		// This is used here so as to not retrieve book if verification is off.
-		// On every update, this will retrieve and verify orderbook depth.
-		ret, err = book.ob.Retrieve()
-		if err != nil {
-			return err
-		}
-		err = ret.Verify()
-		if err != nil {
-			return book.ob.Invalidate(err)
-		}
-	}
-
 	// Publish all state changes, disregarding verbosity or sync requirements.
 	book.ob.Publish()
 
@@ -239,15 +226,17 @@ func (w *Orderbook) processBufferUpdate(o *orderbookHolder, u *orderbook.Update)
 	return true, nil
 }
 
-// processObUpdate processes updates either by its corresponding id or by
-// price level
+// processObUpdate processes updates either by its corresponding id or by price level
 func (w *Orderbook) processObUpdate(o *orderbookHolder, u *orderbook.Update) error {
+	// Both update methods require post processing to ensure the orderbook is in a valid state.
 	if w.updateEntriesByID {
-		return o.updateByIDAndAction(u)
-	}
-	err := o.updateByPrice(u)
-	if err != nil {
-		return err
+		if err := o.updateByIDAndAction(u); err != nil {
+			return err
+		}
+	} else {
+		if err := o.updateByPrice(u); err != nil {
+			return err
+		}
 	}
 	if w.checksum != nil {
 		compare, err := o.ob.Retrieve()
@@ -259,6 +248,15 @@ func (w *Orderbook) processObUpdate(o *orderbookHolder, u *orderbook.Update) err
 			return o.ob.Invalidate(err)
 		}
 		o.updateID = u.UpdateID
+	} else if o.ob.VerifyOrderbook() {
+		compare, err := o.ob.Retrieve()
+		if err != nil {
+			return err
+		}
+		err = compare.Verify()
+		if err != nil {
+			return o.ob.Invalidate(err)
+		}
 	}
 	return nil
 }
@@ -276,24 +274,24 @@ func (o *orderbookHolder) updateByIDAndAction(updts *orderbook.Update) error {
 	case orderbook.Amend:
 		err := o.ob.UpdateBidAskByID(updts)
 		if err != nil {
-			return fmt.Errorf("%v %w", errAmendFailure, err)
+			return fmt.Errorf("%w %w", errAmendFailure, err)
 		}
 	case orderbook.Delete:
 		// edge case for Bitfinex as their streaming endpoint duplicates deletes
 		bypassErr := o.ob.GetName() == "Bitfinex" && o.ob.IsFundingRate()
 		err := o.ob.DeleteBidAskByID(updts, bypassErr)
 		if err != nil {
-			return fmt.Errorf("%v %w", errDeleteFailure, err)
+			return fmt.Errorf("%w %w", errDeleteFailure, err)
 		}
 	case orderbook.Insert:
 		err := o.ob.InsertBidAskByID(updts)
 		if err != nil {
-			return fmt.Errorf("%v %w", errInsertFailure, err)
+			return fmt.Errorf("%w %w", errInsertFailure, err)
 		}
 	case orderbook.UpdateInsert:
 		err := o.ob.UpdateInsertByID(updts)
 		if err != nil {
-			return fmt.Errorf("%v %w", errUpdateInsertFailure, err)
+			return fmt.Errorf("%w %w", errUpdateInsertFailure, err)
 		}
 	default:
 		return fmt.Errorf("%w [%d]", errInvalidAction, updts.Action)
@@ -303,7 +301,7 @@ func (o *orderbookHolder) updateByIDAndAction(updts *orderbook.Update) error {
 
 // LoadSnapshot loads initial snapshot of orderbook data from websocket
 func (w *Orderbook) LoadSnapshot(book *orderbook.Base) error {
-	// Checks if book can deploy to linked list
+	// Checks if book can deploy to depth
 	err := book.Verify()
 	if err != nil {
 		return err
@@ -311,7 +309,7 @@ func (w *Orderbook) LoadSnapshot(book *orderbook.Base) error {
 
 	w.mtx.Lock()
 	defer w.mtx.Unlock()
-	holder, ok := w.ob[Key{Base: book.Pair.Base.Item, Quote: book.Pair.Quote.Item, Asset: book.Asset}]
+	holder, ok := w.ob[key.PairAsset{Base: book.Pair.Base.Item, Quote: book.Pair.Quote.Item, Asset: book.Asset}]
 	if !ok {
 		// Associate orderbook pointer with local exchange depth map
 		var depth *orderbook.Depth
@@ -327,32 +325,14 @@ func (w *Orderbook) LoadSnapshot(book *orderbook.Base) error {
 			ticker = time.NewTicker(w.publishPeriod)
 		}
 		holder = &orderbookHolder{ob: depth, buffer: &buffer, ticker: ticker}
-		w.ob[Key{Base: book.Pair.Base.Item, Quote: book.Pair.Quote.Item, Asset: book.Asset}] = holder
+		w.ob[key.PairAsset{Base: book.Pair.Base.Item, Quote: book.Pair.Quote.Item, Asset: book.Asset}] = holder
 	}
 
 	holder.updateID = book.LastUpdateID
 
-	err = holder.ob.LoadSnapshot(book.Bids,
-		book.Asks,
-		book.LastUpdateID,
-		book.LastUpdated,
-		false)
+	err = holder.ob.LoadSnapshot(book.Bids, book.Asks, book.LastUpdateID, book.LastUpdated, book.UpdatePushedAt, false)
 	if err != nil {
 		return err
-	}
-
-	if holder.ob.VerifyOrderbook {
-		// This is used here so as to not retrieve book if verification is off.
-		// Checks to see if orderbook snapshot that was deployed has not been
-		// altered in any way
-		book, err = holder.ob.Retrieve()
-		if err != nil {
-			return err
-		}
-		err = book.Verify()
-		if err != nil {
-			return holder.ob.Invalidate(err)
-		}
 	}
 
 	holder.ob.Publish()
@@ -364,7 +344,7 @@ func (w *Orderbook) LoadSnapshot(book *orderbook.Base) error {
 func (w *Orderbook) GetOrderbook(p currency.Pair, a asset.Item) (*orderbook.Base, error) {
 	w.mtx.Lock()
 	defer w.mtx.Unlock()
-	book, ok := w.ob[Key{Base: p.Base.Item, Quote: p.Quote.Item, Asset: a}]
+	book, ok := w.ob[key.PairAsset{Base: p.Base.Item, Quote: p.Quote.Item, Asset: a}]
 	if !ok {
 		return nil, fmt.Errorf("%s %s %s %w", w.exchangeName, p, a, errDepthNotFound)
 	}
@@ -375,7 +355,7 @@ func (w *Orderbook) GetOrderbook(p currency.Pair, a asset.Item) (*orderbook.Base
 // connection is lost and reconnected
 func (w *Orderbook) FlushBuffer() {
 	w.mtx.Lock()
-	w.ob = make(map[Key]*orderbookHolder)
+	w.ob = make(map[key.PairAsset]*orderbookHolder)
 	w.mtx.Unlock()
 }
 
@@ -383,7 +363,7 @@ func (w *Orderbook) FlushBuffer() {
 func (w *Orderbook) FlushOrderbook(p currency.Pair, a asset.Item) error {
 	w.mtx.Lock()
 	defer w.mtx.Unlock()
-	book, ok := w.ob[Key{Base: p.Base.Item, Quote: p.Quote.Item, Asset: a}]
+	book, ok := w.ob[key.PairAsset{Base: p.Base.Item, Quote: p.Quote.Item, Asset: a}]
 	if !ok {
 		return fmt.Errorf("cannot flush orderbook %s %s %s %w",
 			w.exchangeName,

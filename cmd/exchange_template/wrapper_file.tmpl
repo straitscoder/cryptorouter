@@ -3,8 +3,6 @@ package {{.Name}}
 
 import (
 	"context"
-	"fmt"
-	"sync"
 	"time"
 
 	"github.com/thrasher-corp/gocryptotrader/common"
@@ -14,6 +12,8 @@ import (
 	"github.com/thrasher-corp/gocryptotrader/exchanges/account"
 	"github.com/thrasher-corp/gocryptotrader/exchanges/asset"
 	"github.com/thrasher-corp/gocryptotrader/exchanges/deposit"
+	"github.com/thrasher-corp/gocryptotrader/exchanges/fundingrate"
+	"github.com/thrasher-corp/gocryptotrader/exchanges/futures"
 	"github.com/thrasher-corp/gocryptotrader/exchanges/kline"
 	"github.com/thrasher-corp/gocryptotrader/exchanges/order"
 	"github.com/thrasher-corp/gocryptotrader/exchanges/orderbook"
@@ -25,25 +25,6 @@ import (
 	"github.com/thrasher-corp/gocryptotrader/log"
 	"github.com/thrasher-corp/gocryptotrader/portfolio/withdraw"
 )
-
-// GetDefaultConfig returns a default exchange config
-func ({{.Variable}} *{{.CapitalName}}) GetDefaultConfig(ctx context.Context) (*config.Exchange, error) {
-	{{.Variable}}.SetDefaults()
-	exchCfg := new(config.Exchange)
-	exchCfg.Name = {{.Variable}}.Name
-	exchCfg.HTTPTimeout = exchange.DefaultHTTPTimeout
-	exchCfg.BaseCurrencies = {{.Variable}}.BaseCurrencies
-
-	{{.Variable}}.SetupDefaults(exchCfg)
-
-	if {{.Variable}}.Features.Supports.RESTCapabilities.AutoPairUpdates {
-		err := {{.Variable}}.UpdateTradablePairs(ctx, true)
-		if err != nil {
-			return nil, err
-		}
-	}
-	return exchCfg, nil
-}
 
 // SetDefaults sets the basic defaults for {{.CapitalName}}
 func ({{.Variable}} *{{.CapitalName}}) SetDefaults() {
@@ -125,7 +106,7 @@ func ({{.Variable}} *{{.CapitalName}}) SetDefaults() {
 		exchange.RestSpot:  {{.Name}}APIURL,
 		// exchange.WebsocketSpot: {{.Name}}WSAPIURL,
 	})
-	{{.Variable}}.Websocket = stream.New()
+	{{.Variable}}.Websocket = stream.NewWebsocket()
 	{{.Variable}}.WebsocketResponseMaxLimit = exchange.DefaultWebsocketResponseMaxLimit
 	{{.Variable}}.WebsocketResponseCheckTimeout = exchange.DefaultWebsocketResponseCheckTimeout
 	{{.Variable}}.WebsocketOrderbookBufferLimit = exchange.DefaultWebsocketOrderbookBufferLimit
@@ -178,42 +159,6 @@ func ({{.Variable}} *{{.CapitalName}}) Setup(exch *config.Exchange) error {
 	}
 	*/
 	return nil
-}
-
-// Start starts the {{.CapitalName}} go routine
-func ({{.Variable}} *{{.CapitalName}}) Start(ctx context.Context, wg *sync.WaitGroup) error {
-	if wg == nil {
-		return fmt.Errorf("%T %w", wg, common.ErrNilPointer)
-	}
-	wg.Add(1)
-	go func() {
-		{{.Variable}}.Run(ctx)
-		wg.Done()
-	}()
-	return nil
-}
-
-// Run implements the {{.CapitalName}} wrapper
-func ({{.Variable}} *{{.CapitalName}}) Run(ctx context.Context) {
-	if {{.Variable}}.Verbose {
-	{{ if .WS }} log.Debugf(log.ExchangeSys,
-			"%s Websocket: %s.",
-			{{.Variable}}.Name,
-			common.IsEnabled({{.Variable}}.Websocket.IsEnabled())) {{ end }}
-		{{.Variable}}.PrintEnabledPairs()
-	}
-
-	if !{{.Variable}}.GetEnabledFeatures().AutoPairUpdates {
-		return
-	}
-
-	err := {{.Variable}}.UpdateTradablePairs(ctx, false)
-	if err != nil {
-		log.Errorf(log.ExchangeSys,
-			"%s failed to update tradable pairs. Err: %s",
-			{{.Variable}}.Name,
-			err)
-	}
 }
 
 // FetchTradablePairs returns a list of the exchanges tradable pairs
@@ -336,17 +281,17 @@ func ({{.Variable}} *{{.CapitalName}}) UpdateOrderbook(ctx context.Context, pair
 		return book, err
 	}
 
-	book.Bids = make([]orderbook.Item, len(orderbookNew.Bids))
+	book.Bids = make([]orderbook.Tranche, len(orderbookNew.Bids))
 	for x := range orderbookNew.Bids {
-		book.Bids[x] = orderbook.Item{
+		book.Bids[x] = orderbook.Tranche{
 			Amount: orderbookNew.Bids[x].Quantity, 
 			Price: orderbookNew.Bids[x].Price,
 		}
 	}
 
-	book.Asks = make([]orderbook.Item, len(orderbookNew.Asks))
+	book.Asks = make([]orderbook.Tranche, len(orderbookNew.Asks))
 	for x := range orderbookNew.Asks {
-		book.Asks[x] = orderbook.Item{
+		book.Asks[x] = orderbook.Tranche{
 			Amount: orderBookNew.Asks[x].Quantity,
 			Price: orderBookNew.Asks[x].Price,
 		}
@@ -413,7 +358,7 @@ func ({{.Variable}} *{{.CapitalName}}) GetServerTime(ctx context.Context, a asse
 
 // SubmitOrder submits a new order
 func ({{.Variable}} *{{.CapitalName}}) SubmitOrder(ctx context.Context, s *order.Submit) (*order.SubmitResponse, error) {
-	if err := s.Validate(); err != nil {
+	if err := s.Validate({{.Variable}}.GetTradingRequirements()); err != nil {
 		return nil, err
 	}
 	// When an order has been submitted you can use this helpful constructor to
@@ -539,6 +484,21 @@ func ({{.Variable}} *{{.CapitalName}}) GetHistoricCandles(ctx context.Context, p
 // GetHistoricCandlesExtended returns candles between a time period for a set time interval
 func ({{.Variable}} *{{.CapitalName}}) GetHistoricCandlesExtended(ctx context.Context, pair currency.Pair, a asset.Item, interval kline.Interval, start, end time.Time) (*kline.Item, error) {
 	return nil, common.ErrNotYetImplemented
+}
+
+// GetFuturesContractDetails returns all contracts from the exchange by asset type
+func ({{.Variable}} *{{.CapitalName}}) GetFuturesContractDetails(context.Context, asset.Item) ([]futures.Contract, error) {
+	return nil, common.ErrNotYetImplemented
+}
+
+// GetLatestFundingRates returns the latest funding rates data
+func ({{.Variable}} *{{.CapitalName}}) GetLatestFundingRates(_ context.Context, _ *fundingrate.LatestRateRequest) ([]fundingrate.LatestRateResponse, error) {
+	return nil, common.ErrNotYetImplemented
+}
+
+// UpdateOrderExecutionLimits updates order execution limits
+func ({{.Variable}} *{{.CapitalName}}) UpdateOrderExecutionLimits(_ context.Context, _ asset.Item) error {
+	return common.ErrNotYetImplemented
 }
 
 {{end}}

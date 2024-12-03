@@ -10,49 +10,32 @@ import (
 	"github.com/thrasher-corp/gocryptotrader/exchanges/asset"
 )
 
+// Public errors for order limits
 var (
-	// ErrExchangeLimitNotLoaded defines if an exchange does not have minmax
-	// values
-	ErrExchangeLimitNotLoaded = errors.New("exchange limits not loaded")
-	// ErrPriceBelowMin is when the price is lower than the minimum price
-	// limit accepted by the exchange
-	ErrPriceBelowMin = errors.New("price below minimum limit")
-	// ErrPriceExceedsMax is when the price is higher than the maximum price
-	// limit accepted by the exchange
-	ErrPriceExceedsMax = errors.New("price exceeds maximum limit")
-	// ErrPriceExceedsStep is when the price is not divisible by its step
-	ErrPriceExceedsStep = errors.New("price exceeds step limit")
-	// ErrAmountBelowMin is when the amount is lower than the minimum amount
-	// limit accepted by the exchange
-	ErrAmountBelowMin = errors.New("amount below minimum limit")
-	// ErrAmountExceedsMax is when the amount is higher than the maximum amount
-	// limit accepted by the exchange
-	ErrAmountExceedsMax = errors.New("amount exceeds maximum limit")
-	// ErrAmountExceedsStep is when the amount is not divisible by its step
-	ErrAmountExceedsStep = errors.New("amount exceeds step limit")
-	// ErrNotionalValue is when the notional value does not exceed currency pair
-	// requirements
-	ErrNotionalValue = errors.New("total notional value is under minimum limit")
-	// ErrMarketAmountBelowMin is when the amount is lower than the minimum
-	// amount limit accepted by the exchange for a market order
-	ErrMarketAmountBelowMin = errors.New("market order amount below minimum limit")
-	// ErrMarketAmountExceedsMax is when the amount is higher than the maximum
-	// amount limit accepted by the exchange for a market order
-	ErrMarketAmountExceedsMax = errors.New("market order amount exceeds maximum limit")
-	// ErrMarketAmountExceedsStep is when the amount is not divisible by its
-	// step for a market order
-	ErrMarketAmountExceedsStep = errors.New("market order amount exceeds step limit")
+	ErrLoadLimitsFailed            = errors.New("failed to load exchange limits")
+	ErrExchangeLimitNotLoaded      = errors.New("exchange limits not loaded")
+	ErrPriceBelowMin               = errors.New("price below minimum limit")
+	ErrPriceExceedsMax             = errors.New("price exceeds maximum limit")
+	ErrPriceExceedsStep            = errors.New("price exceeds step limit") // price is not divisible by its step
+	ErrAmountBelowMin              = errors.New("amount below minimum limit")
+	ErrAmountExceedsMax            = errors.New("amount exceeds maximum limit")
+	ErrAmountExceedsStep           = errors.New("amount exceeds step limit") // amount is not divisible by its step
+	ErrNotionalValue               = errors.New("total notional value is under minimum limit")
+	ErrMarketAmountBelowMin        = errors.New("market order amount below minimum limit")
+	ErrMarketAmountExceedsMax      = errors.New("market order amount exceeds maximum limit")
+	ErrMarketAmountExceedsStep     = errors.New("market order amount exceeds step limit") // amount is not divisible by its step for a market order
+	ErrCannotValidateAsset         = errors.New("cannot check limit, asset not loaded")
+	ErrCannotValidateBaseCurrency  = errors.New("cannot check limit, base currency not loaded")
+	ErrCannotValidateQuoteCurrency = errors.New("cannot check limit, quote currency not loaded")
+)
 
-	errCannotValidateAsset         = errors.New("cannot check limit, asset not loaded")
-	errCannotValidateBaseCurrency  = errors.New("cannot check limit, base currency not loaded")
-	errCannotValidateQuoteCurrency = errors.New("cannot check limit, quote currency not loaded")
-	errExchangeLimitAsset          = errors.New("exchange limits not found for asset")
-	errExchangeLimitBase           = errors.New("exchange limits not found for base currency")
-	errExchangeLimitQuote          = errors.New("exchange limits not found for quote currency")
-	errCannotLoadLimit             = errors.New("cannot load limit, levels not supplied")
-	errInvalidPriceLevels          = errors.New("invalid price levels, cannot load limits")
-	errInvalidAmountLevels         = errors.New("invalid amount levels, cannot load limits")
-	errInvalidQuoteLevels          = errors.New("invalid quote levels, cannot load limits")
+var (
+	errExchangeLimitBase   = errors.New("exchange limits not found for base currency")
+	errExchangeLimitQuote  = errors.New("exchange limits not found for quote currency")
+	errCannotLoadLimit     = errors.New("cannot load limit, levels not supplied")
+	errInvalidPriceLevels  = errors.New("invalid price levels, cannot load limits")
+	errInvalidAmountLevels = errors.New("invalid amount levels, cannot load limits")
+	errInvalidQuoteLevels  = errors.New("invalid quote levels, cannot load limits")
 )
 
 // ExecutionLimits defines minimum and maximum values in relation to
@@ -103,9 +86,7 @@ func (e *ExecutionLimits) LoadLimits(levels []MinMaxLevel) error {
 
 	for x := range levels {
 		if !levels[x].Asset.IsValid() {
-			return fmt.Errorf("cannot load levels for '%s': %w",
-				levels[x].Asset,
-				asset.ErrNotSupported)
+			return fmt.Errorf("cannot load levels for '%s': %w", levels[x].Asset, asset.ErrNotSupported)
 		}
 		m1, ok := e.m[levels[x].Asset]
 		if !ok {
@@ -171,7 +152,7 @@ func (e *ExecutionLimits) GetOrderExecutionLimits(a asset.Item, cp currency.Pair
 
 	m1, ok := e.m[a]
 	if !ok {
-		return MinMaxLevel{}, fmt.Errorf("%w %v", errExchangeLimitAsset, a)
+		return MinMaxLevel{}, fmt.Errorf("%w %v", ErrCannotValidateAsset, a)
 	}
 
 	m2, ok := m1[cp.Base.Item]
@@ -200,17 +181,17 @@ func (e *ExecutionLimits) CheckOrderExecutionLimits(a asset.Item, cp currency.Pa
 
 	m1, ok := e.m[a]
 	if !ok {
-		return errCannotValidateAsset
+		return ErrCannotValidateAsset
 	}
 
 	m2, ok := m1[cp.Base.Item]
 	if !ok {
-		return errCannotValidateBaseCurrency
+		return ErrCannotValidateBaseCurrency
 	}
 
 	limit, ok := m2[cp.Quote.Item]
 	if !ok {
-		return errCannotValidateQuoteCurrency
+		return ErrCannotValidateQuoteCurrency
 	}
 
 	err := limit.Conforms(price, amount, orderType)

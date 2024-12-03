@@ -6,7 +6,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/thrasher-corp/gocryptotrader/common"
@@ -16,6 +15,8 @@ import (
 	"github.com/thrasher-corp/gocryptotrader/exchanges/account"
 	"github.com/thrasher-corp/gocryptotrader/exchanges/asset"
 	"github.com/thrasher-corp/gocryptotrader/exchanges/deposit"
+	"github.com/thrasher-corp/gocryptotrader/exchanges/fundingrate"
+	"github.com/thrasher-corp/gocryptotrader/exchanges/futures"
 	"github.com/thrasher-corp/gocryptotrader/exchanges/kline"
 	"github.com/thrasher-corp/gocryptotrader/exchanges/order"
 	"github.com/thrasher-corp/gocryptotrader/exchanges/orderbook"
@@ -26,29 +27,6 @@ import (
 	"github.com/thrasher-corp/gocryptotrader/log"
 	"github.com/thrasher-corp/gocryptotrader/portfolio/withdraw"
 )
-
-// GetDefaultConfig returns a default exchange config
-func (b *Bitflyer) GetDefaultConfig(ctx context.Context) (*config.Exchange, error) {
-	b.SetDefaults()
-	exchCfg := new(config.Exchange)
-	exchCfg.Name = b.Name
-	exchCfg.HTTPTimeout = exchange.DefaultHTTPTimeout
-	exchCfg.BaseCurrencies = b.BaseCurrencies
-
-	err := b.SetupDefaults(exchCfg)
-	if err != nil {
-		return nil, err
-	}
-
-	if b.Features.Supports.RESTCapabilities.AutoPairUpdates {
-		err = b.UpdateTradablePairs(ctx, true)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	return exchCfg, nil
-}
 
 // SetDefaults sets the basic defaults for Bitflyer
 func (b *Bitflyer) SetDefaults() {
@@ -96,7 +74,7 @@ func (b *Bitflyer) SetDefaults() {
 
 	b.Requester, err = request.New(b.Name,
 		common.NewHTTPClientWithTimeout(exchange.DefaultHTTPTimeout),
-		request.WithLimiter(SetRateLimit()))
+		request.WithLimiter(GetRateLimit()))
 	if err != nil {
 		log.Errorln(log.ExchangeSys, err)
 	}
@@ -122,61 +100,28 @@ func (b *Bitflyer) Setup(exch *config.Exchange) error {
 	return b.SetupDefaults(exch)
 }
 
-// Start starts the Bitflyer go routine
-func (b *Bitflyer) Start(ctx context.Context, wg *sync.WaitGroup) error {
-	if wg == nil {
-		return fmt.Errorf("%T %w", wg, common.ErrNilPointer)
-	}
-	wg.Add(1)
-	go func() {
-		b.Run(ctx)
-		wg.Done()
-	}()
-	return nil
-}
-
-// Run implements the Bitflyer wrapper
-func (b *Bitflyer) Run(ctx context.Context) {
-	if b.Verbose {
-		b.PrintEnabledPairs()
-	}
-
-	if !b.GetEnabledFeatures().AutoPairUpdates {
-		return
-	}
-
-	err := b.UpdateTradablePairs(ctx, false)
-	if err != nil {
-		log.Errorf(log.ExchangeSys, "%s failed to update tradable pairs. Err: %s", b.Name, err)
-	}
-}
-
 // FetchTradablePairs returns a list of the exchanges tradable pairs
 func (b *Bitflyer) FetchTradablePairs(ctx context.Context, a asset.Item) (currency.Pairs, error) {
 	symbols, err := b.GetMarkets(ctx)
 	if err != nil {
 		return nil, err
 	}
-	format, err := b.GetPairFormat(a, false)
-	if err != nil {
-		return nil, err
-	}
 	pairs := make([]currency.Pair, 0, len(symbols))
 	for i := range symbols {
 		var pair currency.Pair
-		if symbols[i].Alias != "" && a == asset.Futures {
-			pair, err = currency.NewPairFromString(symbols[i].Alias)
-			if err != nil {
-				return nil, err
-			}
-			pairs = append(pairs, pair)
-		} else if symbols[i].Alias == "" &&
-			a == asset.Spot &&
-			strings.Contains(symbols[i].ProductCode, format.Delimiter) {
+		if a == asset.Spot && symbols[i].MarketType == "Spot" {
 			pair, err = currency.NewPairFromString(symbols[i].ProductCode)
 			if err != nil {
 				return nil, err
 			}
+			pairs = append(pairs, pair)
+		} else if a == asset.Futures && symbols[i].MarketType == "FX" {
+			splitter := strings.Split(symbols[i].ProductCode, currency.UnderscoreDelimiter)
+			if len(splitter) != 3 {
+				return nil, fmt.Errorf("%w %s", errUnhandledCurrency, symbols[i].ProductCode)
+			}
+			pair = currency.NewPair(currency.NewCode(splitter[0]+splitter[1]), currency.NewCode(splitter[2]))
+			pair.Delimiter = currency.UnderscoreDelimiter
 			pairs = append(pairs, pair)
 		}
 	}
@@ -187,13 +132,12 @@ func (b *Bitflyer) FetchTradablePairs(ctx context.Context, a asset.Item) (curren
 // them in the exchanges config
 func (b *Bitflyer) UpdateTradablePairs(ctx context.Context, forceUpdate bool) error {
 	assets := b.CurrencyPairs.GetAssetTypes(false)
-	for x := range assets {
-		pairs, err := b.FetchTradablePairs(ctx, assets[x])
+	for _, a := range assets {
+		pairs, err := b.FetchTradablePairs(ctx, a)
 		if err != nil {
 			return err
 		}
-
-		err = b.UpdatePairs(pairs, assets[x], false, forceUpdate)
+		err = b.UpdatePairs(pairs, a, false, forceUpdate)
 		if err != nil {
 			return err
 		}
@@ -300,17 +244,17 @@ func (b *Bitflyer) UpdateOrderbook(ctx context.Context, p currency.Pair, assetTy
 		return book, err
 	}
 
-	book.Asks = make(orderbook.Items, len(orderbookNew.Asks))
+	book.Asks = make(orderbook.Tranches, len(orderbookNew.Asks))
 	for x := range orderbookNew.Asks {
-		book.Asks[x] = orderbook.Item{
+		book.Asks[x] = orderbook.Tranche{
 			Price:  orderbookNew.Asks[x].Price,
 			Amount: orderbookNew.Asks[x].Size,
 		}
 	}
 
-	book.Bids = make(orderbook.Items, len(orderbookNew.Bids))
+	book.Bids = make(orderbook.Tranches, len(orderbookNew.Bids))
 	for x := range orderbookNew.Bids {
-		book.Bids[x] = orderbook.Item{
+		book.Bids[x] = orderbook.Tranche{
 			Price:  orderbookNew.Bids[x].Price,
 			Amount: orderbookNew.Bids[x].Size,
 		}
@@ -497,4 +441,29 @@ func (b *Bitflyer) GetHistoricCandles(_ context.Context, _ currency.Pair, _ asse
 // GetHistoricCandlesExtended returns candles between a time period for a set time interval
 func (b *Bitflyer) GetHistoricCandlesExtended(_ context.Context, _ currency.Pair, _ asset.Item, _ kline.Interval, _, _ time.Time) (*kline.Item, error) {
 	return nil, common.ErrFunctionNotSupported
+}
+
+// GetFuturesContractDetails returns all contracts from the exchange by asset type
+func (b *Bitflyer) GetFuturesContractDetails(context.Context, asset.Item) ([]futures.Contract, error) {
+	return nil, common.ErrFunctionNotSupported
+}
+
+// GetLatestFundingRates returns the latest funding rates data
+func (b *Bitflyer) GetLatestFundingRates(context.Context, *fundingrate.LatestRateRequest) ([]fundingrate.LatestRateResponse, error) {
+	return nil, common.ErrFunctionNotSupported
+}
+
+// UpdateOrderExecutionLimits updates order execution limits
+func (b *Bitflyer) UpdateOrderExecutionLimits(_ context.Context, _ asset.Item) error {
+	return common.ErrNotYetImplemented
+}
+
+// GetCurrencyTradeURL returns the URL to the exchange's trade page for the given asset and currency pair
+func (b *Bitflyer) GetCurrencyTradeURL(_ context.Context, a asset.Item, cp currency.Pair) (string, error) {
+	_, err := b.CurrencyPairs.IsPairEnabled(cp, a)
+	if err != nil {
+		return "", err
+	}
+	cp.Delimiter = ""
+	return tradeBaseURL + cp.Lower().String(), nil
 }

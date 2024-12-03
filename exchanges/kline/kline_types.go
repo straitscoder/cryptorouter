@@ -11,6 +11,7 @@ import (
 
 // Consts here define basic time intervals
 const (
+	Raw                  = Interval(-1)
 	HundredMilliseconds  = Interval(100 * time.Millisecond)
 	ThousandMilliseconds = 10 * HundredMilliseconds
 	TenSecond            = Interval(10 * time.Second)
@@ -27,6 +28,7 @@ const (
 	ThreeHour            = 3 * OneHour
 	FourHour             = 4 * OneHour
 	SixHour              = 6 * OneHour
+	SevenHour            = 7 * OneHour
 	EightHour            = 8 * OneHour
 	TwelveHour           = 12 * OneHour
 	OneDay               = 24 * OneHour
@@ -36,9 +38,11 @@ const (
 	FifteenDay           = 15 * OneDay
 	OneWeek              = 7 * OneDay
 	TwoWeek              = 2 * OneWeek
+	ThreeWeek            = 3 * OneWeek
 	OneMonth             = 30 * OneDay
 	ThreeMonth           = 90 * OneDay
 	SixMonth             = 2 * ThreeMonth
+	NineMonth            = 3 * ThreeMonth
 	OneYear              = 365 * OneDay
 	FiveDay              = 5 * OneDay
 )
@@ -101,6 +105,7 @@ var (
 		ThreeHour,
 		FourHour,
 		SixHour,
+		SevenHour,
 		EightHour,
 		TwelveHour,
 		OneDay,

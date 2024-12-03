@@ -6,7 +6,7 @@
 [![Build Status](https://github.com/thrasher-corp/gocryptotrader/actions/workflows/tests.yml/badge.svg?branch=master)](https://github.com/thrasher-corp/gocryptotrader/actions/workflows/tests.yml)
 [![Software License](https://img.shields.io/badge/License-MIT-orange.svg?style=flat-square)](https://github.com/thrasher-corp/gocryptotrader/blob/master/LICENSE)
 [![GoDoc](https://godoc.org/github.com/thrasher-corp/gocryptotrader?status.svg)](https://godoc.org/github.com/thrasher-corp/gocryptotrader/config)
-[![Coverage Status](http://codecov.io/github/thrasher-corp/gocryptotrader/coverage.svg?branch=master)](http://codecov.io/github/thrasher-corp/gocryptotrader?branch=master)
+[![Coverage Status](https://codecov.io/gh/thrasher-corp/gocryptotrader/graph/badge.svg?token=41784B23TS)](https://codecov.io/gh/thrasher-corp/gocryptotrader)
 [![Go Report Card](https://goreportcard.com/badge/github.com/thrasher-corp/gocryptotrader)](https://goreportcard.com/report/github.com/thrasher-corp/gocryptotrader)
 
 
@@ -14,7 +14,7 @@ This config package is part of the GoCryptoTrader codebase.
 
 ## This is still in active development
 
-You can track ideas, planned features and what's in progress on this Trello board: [https://trello.com/b/ZAhMhpOy/gocryptotrader](https://trello.com/b/ZAhMhpOy/gocryptotrader).
+You can track ideas, planned features and what's in progress on our [GoCryptoTrader Kanban board](https://github.com/orgs/thrasher-corp/projects/3).
 
 Join our slack to discuss all things related to GoCryptoTrader! [GoCryptoTrader Slack](https://join.slack.com/t/gocryptotrader/shared_invite/enQtNTQ5NDAxMjA2Mjc5LTc5ZDE1ZTNiOGM3ZGMyMmY1NTAxYWZhODE0MWM5N2JlZDk1NDU0YTViYzk4NTk3OTRiMDQzNGQ1YTc4YmRlMTk)
 
@@ -24,21 +24,21 @@ Join our slack to discuss all things related to GoCryptoTrader! [GoCryptoTrader 
 
  + Contains configurations for:
 
-	- Exchanges for utilisation of a broad or minimal amount of enabled
-	exchanges [Example](#enable-exchange-via-config-example) for
-	enabling an exchange.
+	- Enable/Disable Exchanges. [See Example](#enable-exchange-via-config-example)
 
 	- Bank accounts for withdrawal and depositing FIAT between exchange and
-	your personal accounts [Example](#enable-bank-accounts-via-config-example).
+	your personal accounts. [See Example](#enable-bank-accounts-via-config-example)
 
-	- Portfolio to monitor online and offline accounts [Example](#enable-portfolio-via-config-example).
+	- Portfolio to monitor online and offline accounts. [See Example](#enable-portfolio-via-config-example)
 
 	- Currency configurations to set your foreign exchange provider accounts,
 	your preferred display currency, suitable FIAT currency and suitable
-	cryptocurrency [Example](#enable-currency-via-config-example).
+	cryptocurrency. [See Example](#enable-currency-via-config-example)
 
 	- Communication for utilisation of supported communication mediums e.g.
-	email events direct to your personal account [Example](#enable-communications-via-config-example).
+	email events direct to your personal account. [See Example](#enable-communications-via-config-example)
+
+    - Websocket subscription channels. [See Example](#configure-exchange-websocket-subscriptions)
 
 # Config Examples
 
@@ -210,6 +210,38 @@ comm method and add in your contact list if available.
   }
  ]
 },
+```
+
+## Configure exchange websocket subscriptions
+
++ Websocket subscriptions provide a stream of data from an exchange.
+Whilst subscriptions are specific to each exchange, some common examples are: candles, orderbook, ticker and allTrades.
+You can configure any supported channels in your exchange, but most likely you just want to disable some of the defaults, or change the default intervals.
+You cannot configure an empty list of subscriptions, instead set all of the subscriptions to enabled: false.
+
+See the section `exchange.features.enabled.subscriptions` for configuring subscriptions:
+
+```js
+"subscriptions": [
+ {
+  "enabled": true,
+  "channel": "ticker"
+ },
+ {
+  "enabled": false,
+  "channel": "allTrades"
+ },
+ {
+  "enabled": true,
+  "channel": "candles",
+  "interval": "1m"
+ },
+ {
+  "enabled": true,
+  "channel": "orderbook",
+  "interval": "100ms"
+ }
+]
 ```
 
 

@@ -3,7 +3,7 @@
 [![Build Status](https://github.com/thrasher-corp/gocryptotrader/actions/workflows/tests.yml/badge.svg?branch=master)](https://github.com/thrasher-corp/gocryptotrader/actions/workflows/tests.yml)
 [![Software License](https://img.shields.io/badge/License-MIT-orange.svg?style=flat-square)](https://github.com/thrasher-corp/gocryptotrader/blob/master/LICENSE)
 [![GoDoc](https://godoc.org/github.com/thrasher-corp/gocryptotrader?status.svg)](https://godoc.org/github.com/thrasher-corp/gocryptotrader)
-[![Coverage Status](http://codecov.io/github/thrasher-corp/gocryptotrader/coverage.svg?branch=master)](http://codecov.io/github/thrasher-corp/gocryptotrader?branch=master)
+[![Coverage Status](https://codecov.io/gh/thrasher-corp/gocryptotrader/graph/badge.svg?token=41784B23TS)](https://codecov.io/gh/thrasher-corp/gocryptotrader)
 [![Go Report Card](https://goreportcard.com/badge/github.com/thrasher-corp/gocryptotrader)](https://goreportcard.com/report/github.com/thrasher-corp/gocryptotrader)
 
 A cryptocurrency trading bot supporting multiple exchanges written in Golang.
@@ -26,25 +26,23 @@ Join our slack to discuss all things related to GoCryptoTrader! [GoCryptoTrader 
 | Bithumb | Yes  | Yes       | NA  |
 | BitMEX | Yes | Yes | NA |
 | Bitstamp | Yes  | Yes       | No  |
-| Bittrex | Yes | Yes | NA |
 | BTCMarkets | Yes | Yes       | NA  |
 | BTSE | Yes | Yes | NA |
 | Bybit | Yes | Yes | NA |
 | CoinbasePro | Yes | Yes | No|
 | COINUT | Yes | Yes | NA |
+| Deribit | Yes | Yes | No |
 | Exmo | Yes | NA | NA |
 | GateIO | Yes | Yes | NA |
 | Gemini | Yes | Yes | No |
 | HitBTC | Yes | Yes | No |
 | Huobi.Pro | Yes | Yes | NA |
-| ItBit | Yes | NA | No |
 | Kraken | Yes | Yes | NA |
+| Kucoin | Yes | Yes | NA |
 | Lbank | Yes | No | NA |
-| Okcoin | Yes | Yes | No |
 | Okx | Yes | Yes | NA |
 | Poloniex | Yes | Yes | NA |
 | Yobit | Yes | NA | NA |
-| ZB.COM | Yes | Yes | NA |
 
 We are aiming to support the top 30 exchanges sorted by average liquidity as [ranked by CoinMarketCap](https://coinmarketcap.com/rankings/exchanges/). 
 However, we welcome pull requests for any exchange which does not match this criterion. If you need help with this, please join us on [Slack](https://join.slack.com/t/gocryptotrader/shared_invite/enQtNTQ5NDAxMjA2Mjc5LTc5ZDE1ZTNiOGM3ZGMyMmY1NTAxYWZhODE0MWM5N2JlZDk1NDU0YTViYzk4NTk3OTRiMDQzNGQ1YTc4YmRlMTk).
@@ -80,9 +78,16 @@ However, we welcome pull requests for any exchange which does not match this cri
 + Exchange HTTP mock testing. See [mock](/exchanges/mock/README.md).
 + Exchange multichain deposits and withdrawals for specific exchanges. See [multichain transfer support](/docs/MULTICHAIN_TRANSFER_SUPPORT.md).
 
-## Planned Features
+## Development Tracking
 
-Planned features can be found on our [community Trello page](https://trello.com/b/ZAhMhpOy/gocryptotrader).
+Our [Kanban board](https://github.com/orgs/thrasher-corp/projects/3) provides updates on:
+
++ New feature development
++ Bug fixes in progress
++ Recently completed work
++ Contribution opportunities
+
+Follow our progress as we continuously improve GoCryptoTrader.
 
 ## Contribution
 
@@ -143,45 +148,45 @@ Binaries will be published once the codebase reaches a stable condition.
 
 |User|Contribution Amount|
 |--|--|
-| [thrasher-](https://github.com/thrasher-) | 682 |
-| [shazbert](https://github.com/shazbert) | 299 |
-| [gloriousCode](https://github.com/gloriousCode) | 217 |
-| [dependabot[bot]](https://github.com/apps/dependabot) | 202 |
+| [thrasher-](https://github.com/thrasher-) | 700 |
+| [shazbert](https://github.com/shazbert) | 345 |
+| [dependabot[bot]](https://github.com/apps/dependabot) | 317 |
+| [gloriousCode](https://github.com/gloriousCode) | 234 |
+| [gbjk](https://github.com/gbjk) | 93 |
 | [dependabot-preview[bot]](https://github.com/apps/dependabot-preview) | 88 |
 | [xtda](https://github.com/xtda) | 47 |
 | [lrascao](https://github.com/lrascao) | 27 |
-| [gbjk](https://github.com/gbjk) | 26 |
+| [Beadko](https://github.com/Beadko) | 17 |
 | [Rots](https://github.com/Rots) | 15 |
 | [vazha](https://github.com/vazha) | 15 |
 | [ydm](https://github.com/ydm) | 15 |
 | [ermalguni](https://github.com/ermalguni) | 14 |
 | [MadCozBadd](https://github.com/MadCozBadd) | 13 |
+| [samuael](https://github.com/samuael) | 10 |
 | [vadimzhukck](https://github.com/vadimzhukck) | 10 |
 | [140am](https://github.com/140am) | 8 |
 | [marcofranssen](https://github.com/marcofranssen) | 8 |
 | [geseq](https://github.com/geseq) | 8 |
-| [Beadko](https://github.com/Beadko) | 6 |
 | [TaltaM](https://github.com/TaltaM) | 6 |
+| [cranktakular](https://github.com/cranktakular) | 6 |
 | [dackroyd](https://github.com/dackroyd) | 5 |
-| [cranktakular](https://github.com/cranktakular) | 5 |
 | [khcchiu](https://github.com/khcchiu) | 5 |
-| [samuael](https://github.com/samuael) | 5 |
+| [yangrq1018](https://github.com/yangrq1018) | 4 |
 | [woshidama323](https://github.com/woshidama323) | 3 |
-| [yangrq1018](https://github.com/yangrq1018) | 3 |
 | [crackcomm](https://github.com/crackcomm) | 3 |
-| [azhang](https://github.com/azhang) | 2 |
+| [mshogin](https://github.com/mshogin) | 2 |
+| [herenow](https://github.com/herenow) | 2 |
+| [tk42](https://github.com/tk42) | 2 |
+| [soxipy](https://github.com/soxipy) | 2 |
 | [andreygrehov](https://github.com/andreygrehov) | 2 |
+| [azhang](https://github.com/azhang) | 2 |
 | [bretep](https://github.com/bretep) | 2 |
 | [Christian-Achilli](https://github.com/Christian-Achilli) | 2 |
 | [cornelk](https://github.com/cornelk) | 2 |
 | [gam-phon](https://github.com/gam-phon) | 2 |
-| [herenow](https://github.com/herenow) | 2 |
 | [if1live](https://github.com/if1live) | 2 |
 | [lozdog245](https://github.com/lozdog245) | 2 |
 | [MarkDzulko](https://github.com/MarkDzulko) | 2 |
-| [mshogin](https://github.com/mshogin) | 2 |
-| [soxipy](https://github.com/soxipy) | 2 |
-| [tk42](https://github.com/tk42) | 2 |
 | [blombard](https://github.com/blombard) | 1 |
 | [cavapoo2](https://github.com/cavapoo2) | 1 |
 | [CodeLingoTeam](https://github.com/CodeLingoTeam) | 1 |

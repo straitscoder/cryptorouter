@@ -2,8 +2,11 @@ package bitstamp
 
 import (
 	"encoding/json"
+	"fmt"
 	"strconv"
 	"strings"
+
+	"github.com/thrasher-corp/gocryptotrader/exchanges/order"
 )
 
 // UnmarshalJSON deserializes JSON, and timestamp information.
@@ -26,4 +29,27 @@ func (p *TradingPair) UnmarshalJSON(data []byte) error {
 	}
 	p.MinimumOrder, err = strconv.ParseFloat(minOrderStr, 64)
 	return err
+}
+
+type orderSide order.Side
+
+func (s *orderSide) UnmarshalJSON(data []byte) error {
+	var i int64
+	if err := json.Unmarshal(data, &i); err != nil {
+		return err
+	}
+	switch i {
+	case 0:
+		*s = orderSide(order.Buy)
+	case 1:
+		*s = orderSide(order.Sell)
+	default:
+		return fmt.Errorf("invalid value for order side: %v", i)
+	}
+
+	return nil
+}
+
+func (s *orderSide) Side() order.Side {
+	return order.Side(*s)
 }

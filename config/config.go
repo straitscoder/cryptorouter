@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -49,7 +50,7 @@ func (c *Config) GetExchangeBankAccounts(exchangeName, id, depositingCurrency st
 		if strings.EqualFold(c.Exchanges[x].Name, exchangeName) {
 			for y := range c.Exchanges[x].BankAccounts {
 				if strings.EqualFold(c.Exchanges[x].BankAccounts[y].ID, id) {
-					if common.StringDataCompareInsensitive(
+					if common.StringSliceCompareInsensitive(
 						strings.Split(c.Exchanges[x].BankAccounts[y].SupportedCurrencies, ","),
 						depositingCurrency) {
 						return &c.Exchanges[x].BankAccounts[y], nil
@@ -448,22 +449,9 @@ func (c *Config) CheckPairConfigFormats(exchName string) error {
 			}
 
 			for y := range loadedPairs {
-				if pairFmt.Delimiter != "" && pairFmt.Index != "" {
-					return fmt.Errorf(
-						"exchange %s %s %s cannot have an index and delimiter set at the same time",
-						exchName, pairsType, assetType)
-				}
 				if pairFmt.Delimiter != "" {
 					if !strings.Contains(loadedPairs[y].String(), pairFmt.Delimiter) {
-						return fmt.Errorf(
-							"exchange %s %s %s pairs does not contain delimiter",
-							exchName, pairsType, assetType)
-					}
-				}
-				if pairFmt.Index != "" {
-					if !strings.Contains(loadedPairs[y].String(), pairFmt.Index) {
-						return fmt.Errorf("exchange %s %s %s pairs does not contain an index",
-							exchName, pairsType, assetType)
+						return fmt.Errorf("exchange %s %s %s pairs does not contain delimiter", exchName, pairsType, assetType)
 					}
 				}
 			}
@@ -952,6 +940,10 @@ func (c *Config) CheckExchangeConfigValues() error {
 			c.Exchanges[i].AvailablePairs = nil
 			c.Exchanges[i].EnabledPairs = nil
 		} else {
+			if err := c.Exchanges[i].CurrencyPairs.SetDelimitersFromConfig(); err != nil {
+				return fmt.Errorf("%s: %w", c.Exchanges[i].Name, err)
+			}
+
 			assets := c.Exchanges[i].CurrencyPairs.GetAssetTypes(false)
 			if len(assets) == 0 {
 				c.Exchanges[i].Enabled = false
@@ -1048,23 +1040,23 @@ func (c *Config) CheckExchangeConfigValues() error {
 				log.Warnf(log.ConfigMgr,
 					"Exchange %s Websocket response check timeout value not set, defaulting to %v.",
 					c.Exchanges[i].Name,
-					defaultWebsocketResponseCheckTimeout)
-				c.Exchanges[i].WebsocketResponseCheckTimeout = defaultWebsocketResponseCheckTimeout
+					DefaultWebsocketResponseCheckTimeout)
+				c.Exchanges[i].WebsocketResponseCheckTimeout = DefaultWebsocketResponseCheckTimeout
 			}
 
 			if c.Exchanges[i].WebsocketResponseMaxLimit <= 0 {
 				log.Warnf(log.ConfigMgr,
 					"Exchange %s Websocket response max limit value not set, defaulting to %v.",
 					c.Exchanges[i].Name,
-					defaultWebsocketResponseMaxLimit)
-				c.Exchanges[i].WebsocketResponseMaxLimit = defaultWebsocketResponseMaxLimit
+					DefaultWebsocketResponseMaxLimit)
+				c.Exchanges[i].WebsocketResponseMaxLimit = DefaultWebsocketResponseMaxLimit
 			}
 			if c.Exchanges[i].WebsocketTrafficTimeout <= 0 {
 				log.Warnf(log.ConfigMgr,
 					"Exchange %s Websocket response traffic timeout value not set, defaulting to %v.",
 					c.Exchanges[i].Name,
-					defaultWebsocketTrafficTimeout)
-				c.Exchanges[i].WebsocketTrafficTimeout = defaultWebsocketTrafficTimeout
+					DefaultWebsocketTrafficTimeout)
+				c.Exchanges[i].WebsocketTrafficTimeout = DefaultWebsocketTrafficTimeout
 			}
 			if c.Exchanges[i].Orderbook.WebsocketBufferLimit <= 0 {
 				log.Warnf(log.ConfigMgr,
@@ -1171,7 +1163,7 @@ func (c *Config) CheckCurrencyConfigValues() error {
 	}
 
 	for i := range c.Currency.ForexProviders {
-		if !common.StringDataContainsInsensitive(supported, c.Currency.ForexProviders[i].Name) {
+		if !common.StringSliceContainsInsensitive(supported, c.Currency.ForexProviders[i].Name) {
 			log.Warnf(log.ConfigMgr,
 				"%s forex provider not supported, please remove from config.\n",
 				c.Currency.ForexProviders[i].Name)
@@ -1316,7 +1308,7 @@ func (c *Config) checkDatabaseConfig() error {
 		return nil
 	}
 
-	if !common.StringDataCompare(database.SupportedDrivers, c.Database.Driver) {
+	if !slices.Contains(database.SupportedDrivers, c.Database.Driver) {
 		c.Database.Enabled = false
 		return fmt.Errorf("unsupported database driver %v, database disabled", c.Database.Driver)
 	}
@@ -1426,6 +1418,9 @@ func (c *Config) CheckOrderManagerConfig() {
 	if c.OrderManager.Enabled == nil {
 		c.OrderManager.Enabled = convert.BoolPtr(true)
 		c.OrderManager.ActivelyTrackFuturesPositions = true
+	}
+	if c.OrderManager.RespectOrderHistoryLimits == nil {
+		c.OrderManager.RespectOrderHistoryLimits = convert.BoolPtr(true)
 	}
 	if c.OrderManager.ActivelyTrackFuturesPositions && c.OrderManager.FuturesTrackingSeekDuration >= 0 {
 		// one isn't likely to have a perpetual futures order open
@@ -1548,7 +1543,7 @@ func migrateConfig(configFile, targetDir string) (string, error) {
 // ReadConfigFromFile reads the configuration from the given file
 // if target file is encrypted, prompts for encryption key
 // Also - if not in dryrun mode - it checks if the configuration needs to be encrypted
-// and stores the file as encrypted, if necessary (prompting for enryption key)
+// and stores the file as encrypted, if necessary (prompting for encryption key)
 func (c *Config) ReadConfigFromFile(configPath string, dryrun bool) error {
 	defaultPath, _, err := GetFilePath(configPath)
 	if err != nil {
@@ -1619,7 +1614,7 @@ func readEncryptedConfWithKey(reader *bufio.Reader, keyProvider func() ([]byte, 
 	if err != nil {
 		return nil, err
 	}
-	for errCounter := 0; errCounter < maxAuthFailures; errCounter++ {
+	for range maxAuthFailures {
 		key, err := keyProvider()
 		if err != nil {
 			log.Errorf(log.ConfigMgr, "PromptForConfigKey err: %s", err)
@@ -1814,7 +1809,6 @@ func (c *Config) LoadConfig(configPath string, dryrun bool) error {
 	if err != nil {
 		return fmt.Errorf(ErrFailureOpeningConfig, configPath, err)
 	}
-
 	return c.CheckConfig()
 }
 
@@ -1844,9 +1838,18 @@ func (c *Config) UpdateConfig(configPath string, newCfg *Config, dryrun bool) er
 	return c.LoadConfig(configPath, dryrun)
 }
 
-// GetConfig returns a pointer to a configuration object
+// GetConfig returns the global shared config instance
 func GetConfig() *Config {
-	return &Cfg
+	m.Lock()
+	defer m.Unlock()
+	return &cfg
+}
+
+// SetConfig sets the global shared config instance
+func SetConfig(c *Config) {
+	m.Lock()
+	defer m.Unlock()
+	cfg = *c
 }
 
 // RemoveExchange removes an exchange config

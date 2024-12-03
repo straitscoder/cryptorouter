@@ -26,6 +26,7 @@ const (
 	bitmexAPIVersion    = "v1"
 	bitmexAPIURL        = "https://www.bitmex.com/api/v1"
 	bitmexAPItestnetURL = "https://testnet.bitmex.com/api/v1"
+	tradeBaseURL        = "https://www.bitmex.com/app/trade/"
 
 	// Public endpoints
 	bitmexEndpointAnnouncement              = "/announcement"
@@ -232,11 +233,21 @@ func (b *Bitmex) GetAccountExecutionTradeHistory(ctx context.Context, params *Ge
 func (b *Bitmex) GetFullFundingHistory(ctx context.Context, symbol, count, filter, columns, start string, reverse bool, startTime, endTime time.Time) ([]Funding, error) {
 	var fundingHistory []Funding
 	params := url.Values{}
-	params.Set("symbol", symbol)
-	params.Set("count", count)
-	params.Set("filter", filter)
-	params.Set("columns", columns)
-	params.Set("start", start)
+	if symbol != "" {
+		params.Set("symbol", symbol)
+	}
+	if count != "" {
+		params.Set("count", count)
+	}
+	if filter != "" {
+		params.Set("filter", filter)
+	}
+	if columns != "" {
+		params.Set("columns", columns)
+	}
+	if !startTime.IsZero() {
+		params.Set("start", start)
+	}
 	params.Set("reverse", "true")
 	if !reverse {
 		params.Set("reverse", "false")
@@ -251,6 +262,15 @@ func (b *Bitmex) GetFullFundingHistory(ctx context.Context, symbol, count, filte
 	return fundingHistory, b.SendHTTPRequest(ctx, exchange.RestSpot, bitmexEndpointFundingHistory+params.Encode(),
 		nil,
 		&fundingHistory)
+}
+
+// GetInstrument returns instrument data
+func (b *Bitmex) GetInstrument(ctx context.Context, params *GenericRequestParams) ([]Instrument, error) {
+	var instruments []Instrument
+
+	return instruments, b.SendHTTPRequest(ctx, exchange.RestSpot, bitmexEndpointInstruments,
+		params,
+		&instruments)
 }
 
 // GetInstruments returns instrument data
@@ -672,7 +692,7 @@ func (b *Bitmex) ConfirmWithdrawal(ctx context.Context, token string) (Transacti
 		&info)
 }
 
-// GetCryptoDepositAddress returns a deposit address for a cryptocurency
+// GetCryptoDepositAddress returns a deposit address for a cryptocurrency
 func (b *Bitmex) GetCryptoDepositAddress(ctx context.Context, cryptoCurrency string) (string, error) {
 	var address string
 	if !strings.EqualFold(cryptoCurrency, currency.XBT.String()) {
@@ -840,7 +860,7 @@ func (b *Bitmex) SendHTTPRequest(ctx context.Context, ep exchange.URL, path stri
 		HTTPRecording: b.HTTPRecording,
 	}
 
-	err = b.SendPayload(ctx, request.Unset, func() (*request.Item, error) {
+	err = b.SendPayload(ctx, request.UnAuth, func() (*request.Item, error) {
 		return item, nil
 	}, request.UnauthenticatedRequest)
 	if err != nil {
@@ -956,7 +976,7 @@ func getOfflineTradeFee(price, amount float64) float64 {
 	return 0.000750 * price * amount
 }
 
-// calculateTradingFee returns the fee for trading any currency on Bittrex
+// calculateTradingFee returns the fee for trading any currency on Bitmex
 func calculateTradingFee(purchasePrice, amount float64, isMaker bool) float64 {
 	var fee = 0.000750
 	if isMaker {

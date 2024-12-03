@@ -2,19 +2,22 @@ package sharedtestvalues
 
 import (
 	"context"
-	"sync"
 	"time"
 
+	"github.com/thrasher-corp/gocryptotrader/common"
 	"github.com/thrasher-corp/gocryptotrader/config"
 	"github.com/thrasher-corp/gocryptotrader/currency"
 	exchange "github.com/thrasher-corp/gocryptotrader/exchanges"
 	"github.com/thrasher-corp/gocryptotrader/exchanges/account"
 	"github.com/thrasher-corp/gocryptotrader/exchanges/asset"
 	"github.com/thrasher-corp/gocryptotrader/exchanges/deposit"
+	"github.com/thrasher-corp/gocryptotrader/exchanges/fundingrate"
+	"github.com/thrasher-corp/gocryptotrader/exchanges/futures"
 	"github.com/thrasher-corp/gocryptotrader/exchanges/kline"
 	"github.com/thrasher-corp/gocryptotrader/exchanges/order"
 	"github.com/thrasher-corp/gocryptotrader/exchanges/orderbook"
 	"github.com/thrasher-corp/gocryptotrader/exchanges/stream"
+	"github.com/thrasher-corp/gocryptotrader/exchanges/subscription"
 	"github.com/thrasher-corp/gocryptotrader/exchanges/ticker"
 	"github.com/thrasher-corp/gocryptotrader/exchanges/trade"
 	"github.com/thrasher-corp/gocryptotrader/portfolio/withdraw"
@@ -27,11 +30,6 @@ type CustomEx struct {
 
 // Setup is a mock method for CustomEx
 func (c *CustomEx) Setup(_ *config.Exchange) error {
-	return nil
-}
-
-// Start is a mock method for CustomEx
-func (c *CustomEx) Start(_ context.Context, _ *sync.WaitGroup) error {
 	return nil
 }
 
@@ -264,12 +262,7 @@ func (c *CustomEx) SupportsREST() bool {
 }
 
 // GetSubscriptions is a mock method for CustomEx
-func (c *CustomEx) GetSubscriptions() ([]stream.ChannelSubscription, error) {
-	return nil, nil
-}
-
-// GetDefaultConfig is a mock method for CustomEx
-func (c *CustomEx) GetDefaultConfig(_ context.Context) (*config.Exchange, error) {
+func (c *CustomEx) GetSubscriptions() (subscription.List, error) {
 	return nil, nil
 }
 
@@ -319,12 +312,12 @@ func (c *CustomEx) SupportsWebsocket() bool {
 }
 
 // SubscribeToWebsocketChannels is a mock method for CustomEx
-func (c *CustomEx) SubscribeToWebsocketChannels(_ []stream.ChannelSubscription) error {
+func (c *CustomEx) SubscribeToWebsocketChannels(_ subscription.List) error {
 	return nil
 }
 
 // UnsubscribeToWebsocketChannels is a mock method for CustomEx
-func (c *CustomEx) UnsubscribeToWebsocketChannels(_ []stream.ChannelSubscription) error {
+func (c *CustomEx) UnsubscribeToWebsocketChannels(_ subscription.List) error {
 	return nil
 }
 
@@ -356,4 +349,19 @@ func (c *CustomEx) CheckOrderExecutionLimits(_ asset.Item, _ currency.Pair, _, _
 // UpdateOrderExecutionLimits is a mock method for CustomEx
 func (c *CustomEx) UpdateOrderExecutionLimits(_ context.Context, _ asset.Item) error {
 	return nil
+}
+
+// GetHistoricalFundingRates returns funding rates for a given asset and currency for a time period
+func (c *CustomEx) GetHistoricalFundingRates(_ context.Context, _ *fundingrate.HistoricalRatesRequest) (*fundingrate.HistoricalRates, error) {
+	return nil, nil
+}
+
+// GetLatestFundingRates returns the latest funding rates data
+func (c *CustomEx) GetLatestFundingRates(_ context.Context, _ *fundingrate.LatestRateRequest) ([]fundingrate.LatestRateResponse, error) {
+	return nil, nil
+}
+
+// GetFuturesContractDetails returns all contracts from the exchange by asset type
+func (c *CustomEx) GetFuturesContractDetails(context.Context, asset.Item) ([]futures.Contract, error) {
+	return nil, common.ErrFunctionNotSupported
 }

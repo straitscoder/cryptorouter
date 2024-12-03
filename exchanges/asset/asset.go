@@ -7,11 +7,11 @@ import (
 	"strings"
 )
 
+// Public errors related to assets
 var (
-	// ErrNotSupported is an error for an unsupported asset type
 	ErrNotSupported = errors.New("unsupported asset type")
-	// ErrNotEnabled is an error for an asset not enabled
-	ErrNotEnabled = errors.New("asset type not enabled")
+	ErrNotEnabled   = errors.New("asset type not enabled")
+	ErrInvalidAsset = errors.New("asset is invalid")
 )
 
 // Item stores the asset type
@@ -20,37 +20,44 @@ type Item uint32
 // Items stores a list of assets types
 type Items []Item
 
-// Const vars for asset package
+// Supported Assets
 const (
-	Empty Item = 0
-	Spot  Item = 1 << iota
+	Empty Item = iota
+	Spot
 	Margin
 	CrossMargin
 	MarginFunding
 	Index
 	Binary
+	// Futures asset consts must come below this comment for method `IsFutures`
+	Futures
 	PerpetualContract
 	PerpetualSwap
-	Futures
 	DeliveryFutures
 	UpsideProfitContract
 	DownsideProfitContract
 	CoinMarginedFutures
 	USDTMarginedFutures
 	USDCMarginedFutures
+	FutureCombo
+	LinearContract
+	// Options asset consts must come below this comment for method `IsOptions`
 	Options
+	OptionCombo
+	// All asset const must come immediately after all valid assets for method `IsValid`
+	All
+)
 
-	futuresFlag   = PerpetualContract | PerpetualSwap | Futures | DeliveryFutures | UpsideProfitContract | DownsideProfitContract | CoinMarginedFutures | USDTMarginedFutures | USDCMarginedFutures
-	supportedFlag = Spot | Margin | CrossMargin | MarginFunding | Index | Binary | PerpetualContract | PerpetualSwap | Futures | DeliveryFutures | UpsideProfitContract | DownsideProfitContract | CoinMarginedFutures | USDTMarginedFutures | USDCMarginedFutures | Options
-
+const (
 	spot                   = "spot"
 	margin                 = "margin"
-	crossMargin            = "cross_margin" // for Gateio exchange
+	crossMargin            = "cross_margin"
 	marginFunding          = "marginfunding"
 	index                  = "index"
 	binary                 = "binary"
 	perpetualContract      = "perpetualcontract"
 	perpetualSwap          = "perpetualswap"
+	swap                   = "swap"
 	futures                = "futures"
 	deliveryFutures        = "delivery"
 	upsideProfitContract   = "upsideprofitcontract"
@@ -59,10 +66,14 @@ const (
 	usdtMarginedFutures    = "usdtmarginedfutures"
 	usdcMarginedFutures    = "usdcmarginedfutures"
 	options                = "options"
+	optionCombo            = "option_combo"
+	futureCombo            = "future_combo"
+	linearContract         = "linearcontract"
+	all                    = "all"
 )
 
 var (
-	supportedList = Items{Spot, Margin, CrossMargin, MarginFunding, Index, Binary, PerpetualContract, PerpetualSwap, Futures, DeliveryFutures, UpsideProfitContract, DownsideProfitContract, CoinMarginedFutures, USDTMarginedFutures, USDCMarginedFutures, Options}
+	supportedList = Items{Spot, Margin, CrossMargin, MarginFunding, Index, Binary, PerpetualContract, PerpetualSwap, Futures, DeliveryFutures, UpsideProfitContract, DownsideProfitContract, CoinMarginedFutures, USDTMarginedFutures, USDCMarginedFutures, Options, LinearContract, OptionCombo, FutureCombo}
 )
 
 // Supported returns a list of supported asset types
@@ -105,6 +116,14 @@ func (a Item) String() string {
 		return usdcMarginedFutures
 	case Options:
 		return options
+	case OptionCombo:
+		return optionCombo
+	case FutureCombo:
+		return futureCombo
+	case LinearContract:
+		return linearContract
+	case All:
+		return all
 	default:
 		return ""
 	}
@@ -138,13 +157,22 @@ func (a Items) JoinToString(separator string) string {
 	return strings.Join(a.Strings(), separator)
 }
 
-// IsValid returns whether or not the supplied asset type is valid or
-// not
+// IsValid returns whether or not the supplied asset type is valid or not
 func (a Item) IsValid() bool {
-	return a != Empty && supportedFlag&a == a
+	return a > Empty && a < All
 }
 
-// UnmarshalJSON comforms type to the umarshaler interface
+// IsFutures checks if the asset type is a futures contract based asset
+func (a Item) IsFutures() bool {
+	return a >= Futures && a < Options
+}
+
+// IsOptions checks if the asset type is options contract based asset
+func (a Item) IsOptions() bool {
+	return a >= Options && a < All
+}
+
+// UnmarshalJSON conforms type to the umarshaler interface
 func (a *Item) UnmarshalJSON(d []byte) error {
 	var assetString string
 	err := json.Unmarshal(d, &assetString)
@@ -165,7 +193,7 @@ func (a *Item) UnmarshalJSON(d []byte) error {
 	return nil
 }
 
-// MarshalJSON comforms type to the marshaller interface
+// MarshalJSON conforms type to the marshaller interface
 func (a Item) MarshalJSON() ([]byte, error) {
 	return json.Marshal(a.String())
 }
@@ -190,7 +218,7 @@ func New(input string) (Item, error) {
 		return Binary, nil
 	case perpetualContract:
 		return PerpetualContract, nil
-	case perpetualSwap:
+	case perpetualSwap, swap:
 		return PerpetualSwap, nil
 	case futures:
 		return Futures, nil
@@ -206,20 +234,20 @@ func New(input string) (Item, error) {
 		return USDCMarginedFutures, nil
 	case options, "option":
 		return Options, nil
+	case optionCombo:
+		return OptionCombo, nil
+	case futureCombo:
+		return FutureCombo, nil
+	case linearContract:
+		return LinearContract, nil
+	case all:
+		return All, nil
 	default:
-		return 0, fmt.Errorf("%w '%v', only supports %s",
-			ErrNotSupported,
-			input,
-			supportedList)
+		return 0, fmt.Errorf("%w '%v', only supports %s", ErrNotSupported, input, supportedList)
 	}
 }
 
 // UseDefault returns default asset type
 func UseDefault() Item {
 	return Spot
-}
-
-// IsFutures checks if the asset type is a futures contract based asset
-func (a Item) IsFutures() bool {
-	return a != Empty && futuresFlag&a == a
 }

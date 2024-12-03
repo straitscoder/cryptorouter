@@ -6,7 +6,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/thrasher-corp/gocryptotrader/common"
@@ -16,6 +15,8 @@ import (
 	"github.com/thrasher-corp/gocryptotrader/exchanges/account"
 	"github.com/thrasher-corp/gocryptotrader/exchanges/asset"
 	"github.com/thrasher-corp/gocryptotrader/exchanges/deposit"
+	"github.com/thrasher-corp/gocryptotrader/exchanges/fundingrate"
+	"github.com/thrasher-corp/gocryptotrader/exchanges/futures"
 	"github.com/thrasher-corp/gocryptotrader/exchanges/kline"
 	"github.com/thrasher-corp/gocryptotrader/exchanges/order"
 	"github.com/thrasher-corp/gocryptotrader/exchanges/orderbook"
@@ -28,28 +29,6 @@ import (
 	"github.com/thrasher-corp/gocryptotrader/log"
 	"github.com/thrasher-corp/gocryptotrader/portfolio/withdraw"
 )
-
-// GetDefaultConfig returns a default exchange config
-func (bi *Binanceus) GetDefaultConfig(ctx context.Context) (*config.Exchange, error) {
-	bi.SetDefaults()
-	exchCfg := new(config.Exchange)
-	exchCfg.Name = bi.Name
-	exchCfg.HTTPTimeout = exchange.DefaultHTTPTimeout
-	exchCfg.BaseCurrencies = bi.BaseCurrencies
-
-	err := bi.SetupDefaults(exchCfg)
-	if err != nil {
-		return nil, err
-	}
-
-	if bi.Features.Supports.RESTCapabilities.AutoPairUpdates {
-		err := bi.UpdateTradablePairs(ctx, true)
-		if err != nil {
-			return nil, err
-		}
-	}
-	return exchCfg, nil
-}
 
 // SetDefaults sets the basic defaults for Binanceus
 func (bi *Binanceus) SetDefaults() {
@@ -145,7 +124,7 @@ func (bi *Binanceus) SetDefaults() {
 	}
 	bi.Requester, err = request.New(bi.Name,
 		common.NewHTTPClientWithTimeout(exchange.DefaultHTTPTimeout),
-		request.WithLimiter(SetRateLimit()))
+		request.WithLimiter(GetRateLimit()))
 	if err != nil {
 		log.Errorln(log.ExchangeSys, err)
 	}
@@ -161,7 +140,7 @@ func (bi *Binanceus) SetDefaults() {
 			"%s setting default endpoints error %v",
 			bi.Name, err)
 	}
-	bi.Websocket = stream.New()
+	bi.Websocket = stream.NewWebsocket()
 	bi.WebsocketResponseMaxLimit = exchange.DefaultWebsocketResponseMaxLimit
 	bi.WebsocketResponseCheckTimeout = exchange.DefaultWebsocketResponseCheckTimeout
 	bi.WebsocketOrderbookBufferLimit = exchange.DefaultWebsocketOrderbookBufferLimit
@@ -188,15 +167,14 @@ func (bi *Binanceus) Setup(exch *config.Exchange) error {
 	}
 
 	err = bi.Websocket.Setup(&stream.WebsocketSetup{
-		ExchangeConfig:         exch,
-		DefaultURL:             binanceusDefaultWebsocketURL,
-		RunningURL:             ePoint,
-		Connector:              bi.WsConnect,
-		Subscriber:             bi.Subscribe,
-		Unsubscriber:           bi.Unsubscribe,
-		GenerateSubscriptions:  bi.GenerateSubscriptions,
-		ConnectionMonitorDelay: exch.ConnectionMonitorDelay,
-		Features:               &bi.Features.Supports.WebsocketCapabilities,
+		ExchangeConfig:        exch,
+		DefaultURL:            binanceusDefaultWebsocketURL,
+		RunningURL:            ePoint,
+		Connector:             bi.WsConnect,
+		Subscriber:            bi.Subscribe,
+		Unsubscriber:          bi.Unsubscribe,
+		GenerateSubscriptions: bi.GenerateSubscriptions,
+		Features:              &bi.Features.Supports.WebsocketCapabilities,
 		OrderbookBufferConfig: buffer.Config{
 			SortBuffer:            true,
 			SortBufferByUpdateIDs: true,
@@ -207,47 +185,11 @@ func (bi *Binanceus) Setup(exch *config.Exchange) error {
 		return err
 	}
 
-	return bi.Websocket.SetupNewConnection(stream.ConnectionSetup{
+	return bi.Websocket.SetupNewConnection(&stream.ConnectionSetup{
 		ResponseCheckTimeout: exch.WebsocketResponseCheckTimeout,
 		ResponseMaxLimit:     exch.WebsocketResponseMaxLimit,
-		RateLimit:            wsRateLimitMilliseconds,
+		RateLimit:            request.NewWeightedRateLimitByDuration(300 * time.Millisecond),
 	})
-}
-
-// Start starts the Binanceus go routine
-func (bi *Binanceus) Start(ctx context.Context, wg *sync.WaitGroup) error {
-	if wg == nil {
-		return fmt.Errorf("%T %w", wg, common.ErrNilPointer)
-	}
-	wg.Add(1)
-	go func() {
-		bi.Run(ctx)
-		wg.Done()
-	}()
-	return nil
-}
-
-// Run implements the Binanceus wrapper
-func (bi *Binanceus) Run(ctx context.Context) {
-	if bi.Verbose {
-		log.Debugf(log.ExchangeSys,
-			"%s Websocket: %s.",
-			bi.Name,
-			common.IsEnabled(bi.Websocket.IsEnabled()))
-		bi.PrintEnabledPairs()
-	}
-
-	if !bi.GetEnabledFeatures().AutoPairUpdates {
-		return
-	}
-
-	err := bi.UpdateTradablePairs(ctx, false)
-	if err != nil {
-		log.Errorf(log.ExchangeSys,
-			"%s failed to update tradable pairs. Err: %s",
-			bi.Name,
-			err)
-	}
 }
 
 // FetchTradablePairs returns a list of the exchanges tradable pairs
@@ -415,16 +357,16 @@ func (bi *Binanceus) UpdateOrderbook(ctx context.Context, pair currency.Pair, as
 	if err != nil {
 		return book, err
 	}
-	book.Bids = make([]orderbook.Item, len(orderbookNew.Bids))
+	book.Bids = make([]orderbook.Tranche, len(orderbookNew.Bids))
 	for x := range orderbookNew.Bids {
-		book.Bids[x] = orderbook.Item{
+		book.Bids[x] = orderbook.Tranche{
 			Amount: orderbookNew.Bids[x].Quantity,
 			Price:  orderbookNew.Bids[x].Price,
 		}
 	}
-	book.Asks = make([]orderbook.Item, len(orderbookNew.Asks))
+	book.Asks = make([]orderbook.Tranche, len(orderbookNew.Asks))
 	for x := range orderbookNew.Asks {
-		book.Asks[x] = orderbook.Item{
+		book.Asks[x] = orderbook.Tranche{
 			Amount: orderbookNew.Asks[x].Quantity,
 			Price:  orderbookNew.Asks[x].Price,
 		}
@@ -507,7 +449,7 @@ func (bi *Binanceus) GetWithdrawalsHistory(ctx context.Context, c currency.Code,
 			return nil, err
 		}
 		resp[i] = exchange.WithdrawalHistory{
-			Status:          fmt.Sprint(withdrawals[i].Status),
+			Status:          strconv.FormatInt(withdrawals[i].Status, 10),
 			TransferID:      withdrawals[i].ID,
 			Currency:        withdrawals[i].Coin,
 			Amount:          withdrawals[i].Amount,
@@ -537,7 +479,7 @@ func (bi *Binanceus) GetRecentTrades(ctx context.Context, p currency.Pair, asset
 	resp := make([]trade.Data, len(tradeData))
 	for i := range tradeData {
 		resp[i] = trade.Data{
-			TID:          fmt.Sprint(tradeData[i].ID),
+			TID:          strconv.FormatInt(tradeData[i].ID, 10),
 			Exchange:     bi.Name,
 			AssetType:    assetType,
 			CurrencyPair: p,
@@ -588,7 +530,7 @@ func (bi *Binanceus) SubmitOrder(ctx context.Context, s *order.Submit) (*order.S
 	var submitOrderResponse order.SubmitResponse
 	var timeInForce RequestParamsTimeForceType
 	var sideType string
-	err := s.Validate()
+	err := s.Validate(bi.GetTradingRequirements())
 	if err != nil {
 		return nil, err
 	}
@@ -986,4 +928,32 @@ func (bi *Binanceus) GetAvailableTransferChains(ctx context.Context, cryptocurre
 		}
 	}
 	return availableChains, nil
+}
+
+// GetFuturesContractDetails returns all contracts from the exchange by asset type
+func (bi *Binanceus) GetFuturesContractDetails(context.Context, asset.Item) ([]futures.Contract, error) {
+	return nil, common.ErrFunctionNotSupported
+}
+
+// GetLatestFundingRates returns the latest funding rates data
+func (bi *Binanceus) GetLatestFundingRates(context.Context, *fundingrate.LatestRateRequest) ([]fundingrate.LatestRateResponse, error) {
+	return nil, common.ErrFunctionNotSupported
+}
+
+// UpdateOrderExecutionLimits updates order execution limits
+func (bi *Binanceus) UpdateOrderExecutionLimits(_ context.Context, _ asset.Item) error {
+	return common.ErrNotYetImplemented
+}
+
+// GetCurrencyTradeURL returns the URL to the exchange's trade page for the given asset and currency pair
+func (bi *Binanceus) GetCurrencyTradeURL(_ context.Context, a asset.Item, cp currency.Pair) (string, error) {
+	_, err := bi.CurrencyPairs.IsPairEnabled(cp, a)
+	if err != nil {
+		return "", err
+	}
+	symbol, err := bi.FormatSymbol(cp, a)
+	if err != nil {
+		return "", err
+	}
+	return tradeBaseURL + symbol, nil
 }

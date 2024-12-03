@@ -24,6 +24,7 @@ import (
 	"github.com/thrasher-corp/gocryptotrader/common/crypto"
 	"github.com/thrasher-corp/gocryptotrader/common/file"
 	"github.com/thrasher-corp/gocryptotrader/common/file/archive"
+	"github.com/thrasher-corp/gocryptotrader/common/key"
 	"github.com/thrasher-corp/gocryptotrader/common/timeperiods"
 	"github.com/thrasher-corp/gocryptotrader/currency"
 	"github.com/thrasher-corp/gocryptotrader/database"
@@ -34,7 +35,9 @@ import (
 	exchange "github.com/thrasher-corp/gocryptotrader/exchanges"
 	"github.com/thrasher-corp/gocryptotrader/exchanges/account"
 	"github.com/thrasher-corp/gocryptotrader/exchanges/asset"
+	"github.com/thrasher-corp/gocryptotrader/exchanges/collateral"
 	"github.com/thrasher-corp/gocryptotrader/exchanges/fundingrate"
+	"github.com/thrasher-corp/gocryptotrader/exchanges/futures"
 	"github.com/thrasher-corp/gocryptotrader/exchanges/kline"
 	"github.com/thrasher-corp/gocryptotrader/exchanges/margin"
 	"github.com/thrasher-corp/gocryptotrader/exchanges/order"
@@ -64,20 +67,19 @@ var (
 	errExchangeNameUnset       = errors.New("exchange name unset")
 	errCurrencyPairUnset       = errors.New("currency pair unset")
 	errInvalidTimes            = errors.New("invalid start and end times")
-	errAssetTypeDisabled       = errors.New("asset type is disabled")
 	errAssetTypeUnset          = errors.New("asset type unset")
 	errDispatchSystem          = errors.New("dispatch system offline")
 	errCurrencyNotEnabled      = errors.New("currency not enabled")
 	errCurrencyNotSpecified    = errors.New("a currency must be specified")
 	errCurrencyPairInvalid     = errors.New("currency provided is not found in the available pairs list")
 	errNoTrades                = errors.New("no trades returned from supplied params")
-	errUnexpectedResponseSize  = errors.New("unexpected slice size")
 	errNilRequestData          = errors.New("nil request data received, cannot continue")
 	errNoAccountInformation    = errors.New("account information does not exist")
 	errShutdownNotAllowed      = errors.New("shutting down this bot instance is not allowed via gRPC, please enable by command line flag --grpcshutdown or config.json field grpcAllowBotShutdown")
 	errGRPCShutdownSignalIsNil = errors.New("cannot shutdown, gRPC shutdown channel is nil")
 	errInvalidStrategy         = errors.New("invalid strategy")
 	errSpecificPairNotEnabled  = errors.New("specified pair is not enabled")
+	errPairNotEnabled          = errors.New("pair is not enabled")
 )
 
 // RPCServer struct
@@ -89,21 +91,21 @@ type RPCServer struct {
 func (s *RPCServer) authenticateClient(ctx context.Context) (context.Context, error) {
 	md, ok := metadata.FromIncomingContext(ctx)
 	if !ok {
-		return ctx, fmt.Errorf("unable to extract metadata")
+		return ctx, errors.New("unable to extract metadata")
 	}
 
 	authStr, ok := md["authorization"]
 	if !ok {
-		return ctx, fmt.Errorf("authorization header missing")
+		return ctx, errors.New("authorization header missing")
 	}
 
 	if !strings.Contains(authStr[0], "Basic") {
-		return ctx, fmt.Errorf("basic not found in authorization header")
+		return ctx, errors.New("basic not found in authorization header")
 	}
 
 	decoded, err := crypto.Base64Decode(strings.Split(authStr[0], " ")[1])
 	if err != nil {
-		return ctx, fmt.Errorf("unable to base64 decode authorization header")
+		return ctx, errors.New("unable to base64 decode authorization header")
 	}
 
 	cred := strings.Split(string(decoded), ":")
@@ -112,7 +114,7 @@ func (s *RPCServer) authenticateClient(ctx context.Context) (context.Context, er
 
 	if username != s.Config.RemoteControl.Username ||
 		password != s.Config.RemoteControl.Password {
-		return ctx, fmt.Errorf("username/password mismatch")
+		return ctx, errors.New("username/password mismatch")
 	}
 	ctx, err = account.ParseCredentialsMetadata(ctx, md)
 	if err != nil {
@@ -170,12 +172,14 @@ func StartRPCServer(engine *Engine) {
 
 // StartRPCRESTProxy starts a gRPC proxy
 func (s *RPCServer) StartRPCRESTProxy() {
-	log.Debugf(log.GRPCSys, "gRPC proxy server support enabled. Starting gRPC proxy server on http://%v.\n", s.Config.RemoteControl.GRPC.GRPCProxyListenAddress)
+	log.Debugf(log.GRPCSys, "gRPC proxy server support enabled. Starting gRPC proxy server on https://%v.\n", s.Config.RemoteControl.GRPC.GRPCProxyListenAddress)
 
 	targetDir := utils.GetTLSDir(s.Settings.DataDir)
-	creds, err := credentials.NewClientTLSFromFile(filepath.Join(targetDir, "cert.pem"), "")
+	certFile := filepath.Join(targetDir, "cert.pem")
+	keyFile := filepath.Join(targetDir, "key.pem")
+	creds, err := credentials.NewClientTLSFromFile(certFile, "")
 	if err != nil {
-		log.Errorf(log.GRPCSys, "Unabled to start gRPC proxy. Err: %s\n", err)
+		log.Errorf(log.GRPCSys, "Unable to start gRPC proxy. Err: %s\n", err)
 		return
 	}
 
@@ -198,14 +202,29 @@ func (s *RPCServer) StartRPCRESTProxy() {
 			Addr:              s.Config.RemoteControl.GRPC.GRPCProxyListenAddress,
 			ReadHeaderTimeout: time.Minute,
 			ReadTimeout:       time.Minute,
+			Handler:           s.authClient(mux),
 		}
 
-		if err = server.ListenAndServe(); err != nil {
-			log.Errorf(log.GRPCSys, "GRPC proxy failed to server: %s\n", err)
+		if err = server.ListenAndServeTLS(certFile, keyFile); err != nil {
+			log.Errorf(log.GRPCSys, "gRPC proxy server failed to serve: %s\n", err)
+			return
 		}
 	}()
 
 	log.Debugln(log.GRPCSys, "gRPC proxy server started!")
+}
+
+func (s *RPCServer) authClient(handler http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		username, password, ok := r.BasicAuth()
+		if !ok || username != s.Config.RemoteControl.Username || password != s.Config.RemoteControl.Password {
+			w.Header().Set("WWW-Authenticate", `Basic realm="restricted"`)
+			http.Error(w, "Access denied", http.StatusUnauthorized)
+			log.Warnf(log.GRPCSys, "gRPC proxy server unauthorised access attempt. IP: %s Path: %s\n", r.RemoteAddr, r.URL.Path)
+			return
+		}
+		handler.ServeHTTP(w, r)
+	})
 }
 
 // GetInfo returns info about the current GoCryptoTrader session
@@ -308,7 +327,7 @@ func (s *RPCServer) DisableExchange(_ context.Context, r *gctrpc.GenericExchange
 
 // EnableExchange enables an exchange
 func (s *RPCServer) EnableExchange(_ context.Context, r *gctrpc.GenericExchangeNameRequest) (*gctrpc.GenericResponse, error) {
-	err := s.LoadExchange(r.Exchange, nil)
+	err := s.LoadExchange(r.Exchange)
 	if err != nil {
 		return nil, err
 	}
@@ -859,7 +878,7 @@ func (s *RPCServer) RemovePortfolioAddress(_ context.Context, r *gctrpc.RemovePo
 func (s *RPCServer) GetForexProviders(_ context.Context, _ *gctrpc.GetForexProvidersRequest) (*gctrpc.GetForexProvidersResponse, error) {
 	providers := s.Config.GetForexProviders()
 	if len(providers) == 0 {
-		return nil, fmt.Errorf("forex providers is empty")
+		return nil, errors.New("forex providers is empty")
 	}
 
 	forexProviders := make([]*gctrpc.ForexProvider, len(providers))
@@ -885,7 +904,7 @@ func (s *RPCServer) GetForexRates(_ context.Context, _ *gctrpc.GetForexRatesRequ
 	}
 
 	if len(rates) == 0 {
-		return nil, fmt.Errorf("forex rates is empty")
+		return nil, errors.New("forex rates is empty")
 	}
 
 	forexRates := make([]*gctrpc.ForexRatesConversion, 0, len(rates))
@@ -959,21 +978,21 @@ func (s *RPCServer) GetOrders(ctx context.Context, r *gctrpc.GetOrdersRequest) (
 		return nil, err
 	}
 
-	request := &order.MultiOrderRequest{
+	req := &order.MultiOrderRequest{
 		Pairs:     []currency.Pair{cp},
 		AssetType: a,
 		Type:      order.AnyType,
 		Side:      order.AnySide,
 	}
 	if !start.IsZero() {
-		request.StartTime = start
+		req.StartTime = start
 	}
 	if !end.IsZero() {
-		request.EndTime = end
+		req.EndTime = end
 	}
 
 	var resp []order.Detail
-	resp, err = exch.GetActiveOrders(ctx, request)
+	resp, err = exch.GetActiveOrders(ctx, req)
 	if err != nil {
 		return nil, err
 	}
@@ -1198,14 +1217,20 @@ func (s *RPCServer) GetOrder(ctx context.Context, r *gctrpc.GetOrderRequest) (*g
 	}, err
 }
 
-// SubmitOrder submits an order specified by exchange, currency pair and asset
-// type
+// SubmitOrder submits an order specified by exchange, currency pair and asset type
 func (s *RPCServer) SubmitOrder(ctx context.Context, r *gctrpc.SubmitOrderRequest) (*gctrpc.SubmitOrderResponse, error) {
 	a, err := asset.New(r.AssetType)
 	if err != nil {
 		return nil, err
 	}
 
+	var marginType margin.Type
+	if r.MarginType != "" {
+		marginType, err = margin.StringToMarginType(r.MarginType)
+		if err != nil {
+			return nil, err
+		}
+	}
 	if r.Pair == nil {
 		return nil, errCurrencyPairUnset
 	}
@@ -1246,6 +1271,9 @@ func (s *RPCServer) SubmitOrder(ctx context.Context, r *gctrpc.SubmitOrderReques
 		ClientOrderID: r.ClientId,
 		Exchange:      r.Exchange,
 		AssetType:     a,
+	}
+	if r.MarginType != "" {
+		submission.MarginType = marginType
 	}
 
 	resp, err := s.OrderManager.Submit(ctx, submission)
@@ -1466,11 +1494,11 @@ func (s *RPCServer) CancelBatchOrders(ctx context.Context, r *gctrpc.CancelBatch
 
 	status := make(map[string]string)
 	orders := strings.Split(r.OrdersId, ",")
-	request := make([]order.Cancel, len(orders))
+	req := make([]order.Cancel, len(orders))
 	for x := range orders {
 		orderID := orders[x]
 		status[orderID] = order.Cancelled.String()
-		request[x] = order.Cancel{
+		req[x] = order.Cancel{
 			AccountID:     r.AccountId,
 			OrderID:       orderID,
 			Side:          side,
@@ -1481,7 +1509,7 @@ func (s *RPCServer) CancelBatchOrders(ctx context.Context, r *gctrpc.CancelBatch
 	}
 
 	// TODO: Change to order manager
-	_, err = exch.CancelBatchOrders(ctx, request)
+	_, err = exch.CancelBatchOrders(ctx, req)
 	if err != nil {
 		return nil, err
 	}
@@ -1696,7 +1724,7 @@ func (s *RPCServer) WithdrawCryptocurrencyFunds(ctx context.Context, r *gctrpc.W
 		return nil, err
 	}
 
-	request := &withdraw.Request{
+	req := &withdraw.Request{
 		Exchange:    r.Exchange,
 		Amount:      r.Amount,
 		Currency:    currency.NewCode(strings.ToUpper(r.Currency)),
@@ -1725,20 +1753,20 @@ func (s *RPCServer) WithdrawCryptocurrencyFunds(ctx context.Context, r *gctrpc.W
 		if errOTP != nil {
 			return nil, errOTP
 		}
-		request.OneTimePassword = codeNum
+		req.OneTimePassword = codeNum
 	}
 
 	if exchCfg.API.Credentials.PIN != "" {
 		pinCode, errPin := strconv.ParseInt(exchCfg.API.Credentials.PIN, 10, 64)
-		if err != nil {
+		if errPin != nil {
 			return nil, errPin
 		}
-		request.PIN = pinCode
+		req.PIN = pinCode
 	}
 
-	request.TradePassword = exchCfg.API.Credentials.TradePassword
+	req.TradePassword = exchCfg.API.Credentials.TradePassword
 
-	resp, err := s.Engine.WithdrawManager.SubmitWithdrawal(ctx, request)
+	resp, err := s.Engine.WithdrawManager.SubmitWithdrawal(ctx, req)
 	if err != nil {
 		return nil, err
 	}
@@ -1769,7 +1797,7 @@ func (s *RPCServer) WithdrawFiatFunds(ctx context.Context, r *gctrpc.WithdrawFia
 		}
 	}
 
-	request := &withdraw.Request{
+	req := &withdraw.Request{
 		Exchange:    r.Exchange,
 		Amount:      r.Amount,
 		Currency:    currency.NewCode(strings.ToUpper(r.Currency)),
@@ -1787,28 +1815,28 @@ func (s *RPCServer) WithdrawFiatFunds(ctx context.Context, r *gctrpc.WithdrawFia
 
 	if exchCfg.API.Credentials.OTPSecret != "" {
 		code, errOTP := totp.GenerateCode(exchCfg.API.Credentials.OTPSecret, time.Now())
-		if err != nil {
+		if errOTP != nil {
 			return nil, errOTP
 		}
 
 		codeNum, errOTP := strconv.ParseInt(code, 10, 64)
-		if err != nil {
+		if errOTP != nil {
 			return nil, errOTP
 		}
-		request.OneTimePassword = codeNum
+		req.OneTimePassword = codeNum
 	}
 
 	if exchCfg.API.Credentials.PIN != "" {
 		pinCode, errPIN := strconv.ParseInt(exchCfg.API.Credentials.PIN, 10, 64)
-		if err != nil {
+		if errPIN != nil {
 			return nil, errPIN
 		}
-		request.PIN = pinCode
+		req.PIN = pinCode
 	}
 
-	request.TradePassword = exchCfg.API.Credentials.TradePassword
+	req.TradePassword = exchCfg.API.Credentials.TradePassword
 
-	resp, err := s.Engine.WithdrawManager.SubmitWithdrawal(ctx, request)
+	resp, err := s.Engine.WithdrawManager.SubmitWithdrawal(ctx, req)
 	if err != nil {
 		return nil, err
 	}
@@ -2141,8 +2169,9 @@ func (s *RPCServer) GetOrderbookStream(r *gctrpc.GetOrderbookStreamRequest, stre
 		base, err := depth.Retrieve()
 		if err != nil {
 			resp.Error = err.Error()
-			resp.LastUpdated = time.Now().Unix()
+			resp.LastUpdated = time.Now().UnixMicro()
 		} else {
+			resp.LastUpdated = base.LastUpdated.UnixMicro()
 			resp.Bids = make([]*gctrpc.OrderbookItem, len(base.Bids))
 			for i := range base.Bids {
 				resp.Bids[i] = &gctrpc.OrderbookItem{
@@ -2204,8 +2233,9 @@ func (s *RPCServer) GetExchangeOrderbookStream(r *gctrpc.GetExchangeOrderbookStr
 		ob, err := d.Retrieve()
 		if err != nil {
 			resp.Error = err.Error()
-			resp.LastUpdated = time.Now().Unix()
+			resp.LastUpdated = time.Now().UnixMicro()
 		} else {
+			resp.LastUpdated = ob.LastUpdated.UnixMicro()
 			resp.Pair = &gctrpc.CurrencyPair{
 				Base:  ob.Pair.Base.String(),
 				Quote: ob.Pair.Quote.String(),
@@ -2574,7 +2604,7 @@ func (s *RPCServer) GCTScriptStatus(_ context.Context, _ *gctrpc.GCTScriptStatus
 		Status: fmt.Sprintf("%v of %v virtual machines running", gctscript.VMSCount.Len(), s.gctScriptManager.GetMaxVirtualMachines()),
 	}
 
-	gctscript.AllVMSync.Range(func(k, v interface{}) bool {
+	gctscript.AllVMSync.Range(func(_, v interface{}) bool {
 		vm, ok := v.(*gctscript.VM)
 		if !ok {
 			log.Errorf(log.GRPCSys, "%v", common.GetTypeAssertError("*gctscript.VM", v))
@@ -2813,7 +2843,7 @@ func (s *RPCServer) GCTScriptListAll(context.Context, *gctrpc.GCTScriptListAllRe
 
 	resp := &gctrpc.GCTScriptStatusResponse{}
 	err := filepath.Walk(gctscript.ScriptPath,
-		func(path string, info os.FileInfo, err error) error {
+		func(path string, _ os.FileInfo, err error) error {
 			if err != nil {
 				return err
 			}
@@ -2903,6 +2933,13 @@ func (s *RPCServer) SetExchangeAsset(_ context.Context, r *gctrpc.SetExchangeAss
 	err = exchCfg.CurrencyPairs.SetAssetEnabled(a, r.Enable)
 	if err != nil {
 		return nil, err
+	}
+
+	if base.IsWebsocketEnabled() && base.Websocket.IsConnected() {
+		err = exch.FlushWebsocketChannels()
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	return &gctrpc.GenericResponse{Status: MsgStatusSuccess}, nil
@@ -3090,10 +3127,10 @@ func (s *RPCServer) WebsocketGetSubscriptions(_ context.Context, r *gctrpc.Webso
 		}
 		payload.Subscriptions = append(payload.Subscriptions,
 			&gctrpc.WebsocketSubscription{
-				Channel:  subs[i].Channel,
-				Currency: subs[i].Currency.String(),
-				Asset:    subs[i].Asset.String(),
-				Params:   string(params),
+				Channel: subs[i].Channel,
+				Pairs:   subs[i].Pairs.Join(),
+				Asset:   subs[i].Asset.String(),
+				Params:  string(params),
 			})
 	}
 	return payload, nil
@@ -3260,7 +3297,7 @@ func (s *RPCServer) ConvertTradesToCandles(_ context.Context, r *gctrpc.ConvertT
 		return nil, err
 	}
 	if len(klineItem.Candles) == 0 {
-		return nil, fmt.Errorf("no candles generated from trades")
+		return nil, errors.New("no candles generated from trades")
 	}
 
 	resp := &gctrpc.GetHistoricCandlesResponse{
@@ -3647,7 +3684,7 @@ func checkParams(exchName string, e exchange.IBotExchange, a asset.Item, p curre
 		}
 		err := b.CurrencyPairs.IsAssetEnabled(a)
 		if err != nil {
-			return fmt.Errorf("%v %w", a, errAssetTypeDisabled)
+			return err
 		}
 	}
 	if p.IsEmpty() {
@@ -4212,7 +4249,7 @@ func (s *RPCServer) CurrencyStateTradingPair(_ context.Context, r *gctrpc.Curren
 		ai)
 }
 
-func (s *RPCServer) buildFuturePosition(position *order.Position, getFundingPayments, includeFundingRates, includeOrders, includePredictedRate bool) *gctrpc.FuturePosition {
+func (s *RPCServer) buildFuturePosition(position *futures.Position, getFundingPayments, includeFundingRates, includeOrders, includePredictedRate bool) *gctrpc.FuturePosition {
 	response := &gctrpc.FuturePosition{
 		Exchange: position.Exchange,
 		Asset:    position.Asset.String(),
@@ -4302,7 +4339,7 @@ func (s *RPCServer) GetManagedPosition(_ context.Context, r *gctrpc.GetManagedPo
 	if r == nil {
 		return nil, fmt.Errorf("%w GetManagedPositionRequest", common.ErrNilPointer)
 	}
-	if err := order.CheckFundingRatePrerequisites(r.GetFundingPayments, r.IncludePredictedRate, r.GetFundingPayments); err != nil {
+	if err := futures.CheckFundingRatePrerequisites(r.GetFundingPayments, r.IncludePredictedRate, r.GetFundingPayments); err != nil {
 		return nil, err
 	}
 	if r.Pair == nil {
@@ -4321,12 +4358,16 @@ func (s *RPCServer) GetManagedPosition(_ context.Context, r *gctrpc.GetManagedPo
 	if !exch.IsEnabled() {
 		return nil, fmt.Errorf("%w '%v'", errExchangeDisabled, exch.GetName())
 	}
+	feat := exch.GetSupportedFeatures()
+	if !feat.FuturesCapabilities.OrderManagerPositionTracking {
+		return nil, fmt.Errorf("%w OrderManagerPositionTracking for exchange %v", common.ErrFunctionNotSupported, exch.GetName())
+	}
 	ai, err = asset.New(r.Asset)
 	if err != nil {
 		return nil, err
 	}
 	if !ai.IsFutures() {
-		return nil, fmt.Errorf("%w '%v'", order.ErrNotFuturesAsset, ai)
+		return nil, fmt.Errorf("%w '%v'", futures.ErrNotFuturesAsset, ai)
 	}
 	cp, err = currency.NewPairFromStrings(r.Pair.Base, r.Pair.Quote)
 	if err != nil {
@@ -4349,9 +4390,9 @@ func (s *RPCServer) GetManagedPosition(_ context.Context, r *gctrpc.GetManagedPo
 // GetAllManagedPositions returns all open positions from the order manager, no calling any API endpoints to return this information
 func (s *RPCServer) GetAllManagedPositions(_ context.Context, r *gctrpc.GetAllManagedPositionsRequest) (*gctrpc.GetManagedPositionsResponse, error) {
 	if r == nil {
-		return nil, fmt.Errorf("%w GetAllManagedPositions", common.ErrNilPointer)
+		return nil, fmt.Errorf("%w GetAllManagedPositionsRequest", common.ErrNilPointer)
 	}
-	if err := order.CheckFundingRatePrerequisites(r.GetFundingPayments, r.IncludePredictedRate, r.GetFundingPayments); err != nil {
+	if err := futures.CheckFundingRatePrerequisites(r.GetFundingPayments, r.IncludePredictedRate, r.GetFundingPayments); err != nil {
 		return nil, err
 	}
 	positions, err := s.OrderManager.GetAllOpenFuturesPositions()
@@ -4369,34 +4410,186 @@ func (s *RPCServer) GetAllManagedPositions(_ context.Context, r *gctrpc.GetAllMa
 	return &gctrpc.GetManagedPositionsResponse{Positions: response}, nil
 }
 
-// GetFuturesPositions returns pnl positions for an exchange asset pair
-func (s *RPCServer) GetFuturesPositions(ctx context.Context, r *gctrpc.GetFuturesPositionsRequest) (*gctrpc.GetFuturesPositionsResponse, error) {
+// GetFuturesPositionsSummary returns a summary of futures positions for an exchange asset pair from the API
+func (s *RPCServer) GetFuturesPositionsSummary(ctx context.Context, r *gctrpc.GetFuturesPositionsSummaryRequest) (*gctrpc.GetFuturesPositionsSummaryResponse, error) {
 	if r == nil {
-		return nil, fmt.Errorf("%w GetFuturesPositions", common.ErrNilPointer)
+		return nil, fmt.Errorf("%w GetFuturesPositionsSummaryRequest", common.ErrNilPointer)
 	}
-	if err := order.CheckFundingRatePrerequisites(r.GetFundingPayments, r.IncludePredictedRate, r.GetFundingPayments); err != nil {
-		return nil, err
+	if r.Pair == nil {
+		return nil, currency.ErrCurrencyPairEmpty
 	}
 	exch, err := s.GetExchangeByName(r.Exchange)
 	if err != nil {
 		return nil, err
 	}
-	cp, err := currency.NewPairFromStrings(r.Pair.Base, r.Pair.Quote)
-	if err != nil {
-		return nil, err
+	if !exch.IsEnabled() {
+		return nil, fmt.Errorf("%s %w", r.Exchange, errExchangeNotEnabled)
 	}
-
+	feat := exch.GetSupportedFeatures()
+	if !feat.FuturesCapabilities.Positions {
+		return nil, fmt.Errorf("%w futures position tracking for exchange %v", common.ErrFunctionNotSupported, exch.GetName())
+	}
 	ai, err := asset.New(r.Asset)
 	if err != nil {
 		return nil, err
 	}
+	if !ai.IsFutures() {
+		return nil, fmt.Errorf("%s %w", ai, futures.ErrNotFuturesAsset)
+	}
+	enabledPairs, err := exch.GetEnabledPairs(ai)
+	if err != nil {
+		return nil, err
+	}
+	cp, err := enabledPairs.DeriveFrom(r.Pair.Base + r.Pair.Quote)
+	if err != nil {
+		return nil, err
+	}
 
-	err = checkParams(r.Exchange, exch, ai, cp)
+	var underlying currency.Pair
+	if r.UnderlyingPair != nil {
+		underlying, err = currency.NewPairFromStrings(r.UnderlyingPair.Base, r.UnderlyingPair.Quote)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	var stats *futures.PositionSummary
+	stats, err = exch.GetFuturesPositionSummary(ctx, &futures.PositionSummaryRequest{
+		Asset:          ai,
+		Pair:           cp,
+		UnderlyingPair: underlying,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("cannot GetFuturesPositionSummary %w", err)
+	}
+
+	positionStats := &gctrpc.FuturesPositionStats{}
+	if !stats.MaintenanceMarginRequirement.IsZero() {
+		positionStats.MaintenanceMarginRequirement = stats.MaintenanceMarginRequirement.String()
+	}
+	if !stats.InitialMarginRequirement.IsZero() {
+		positionStats.InitialMarginRequirement = stats.InitialMarginRequirement.String()
+	}
+	if !stats.CollateralUsed.IsZero() {
+		positionStats.CollateralUsed = stats.CollateralUsed.String()
+	}
+	if !stats.MarkPrice.IsZero() {
+		positionStats.MarkPrice = stats.MarkPrice.String()
+	}
+	if !stats.CurrentSize.IsZero() {
+		positionStats.CurrentSize = stats.CurrentSize.String()
+	}
+	if !stats.ContractMultiplier.IsZero() {
+		positionStats.ContractMultiplier = stats.ContractMultiplier.String()
+	}
+	if !stats.ContractSize.IsZero() {
+		positionStats.ContractSize = stats.ContractSize.String()
+	}
+	if !stats.AverageOpenPrice.IsZero() {
+		positionStats.AverageOpenPrice = stats.AverageOpenPrice.String()
+	}
+	if !stats.UnrealisedPNL.IsZero() {
+		positionStats.RecentPnl = stats.UnrealisedPNL.String()
+	}
+	if !stats.MaintenanceMarginFraction.IsZero() {
+		positionStats.MarginFraction = stats.MaintenanceMarginFraction.String()
+	}
+	if !stats.FreeCollateral.IsZero() {
+		positionStats.FreeCollateral = stats.FreeCollateral.String()
+	}
+	if !stats.TotalCollateral.IsZero() {
+		positionStats.TotalCollateral = stats.TotalCollateral.String()
+	}
+	if !stats.EstimatedLiquidationPrice.IsZero() {
+		positionStats.EstimatedLiquidationPrice = stats.EstimatedLiquidationPrice.String()
+	}
+	if !stats.FrozenBalance.IsZero() {
+		positionStats.FrozenBalance = stats.FrozenBalance.String()
+	}
+	if !stats.EquityOfCurrency.IsZero() {
+		positionStats.EquityOfCurrency = stats.EquityOfCurrency.String()
+	}
+	if !stats.AvailableEquity.IsZero() {
+		positionStats.AvailableEquity = stats.AvailableEquity.String()
+	}
+	if !stats.CashBalance.IsZero() {
+		positionStats.CashBalance = stats.CashBalance.String()
+	}
+	if !stats.DiscountEquity.IsZero() {
+		positionStats.DiscountEquity = stats.DiscountEquity.String()
+	}
+	if !stats.EquityUSD.IsZero() {
+		positionStats.EquityUsd = stats.EquityUSD.String()
+	}
+	if !stats.IsolatedEquity.IsZero() {
+		positionStats.IsolatedEquity = stats.IsolatedEquity.String()
+	}
+	if stats.ContractSettlementType != futures.UnsetSettlementType {
+		positionStats.ContractSettlementType = stats.ContractSettlementType.String()
+	}
+	if !stats.IsolatedLiabilities.IsZero() {
+		positionStats.IsolatedLiabilities = stats.IsolatedLiabilities.String()
+	}
+	if !stats.IsolatedUPL.IsZero() {
+		positionStats.IsolatedUpl = stats.IsolatedUPL.String()
+	}
+	if !stats.NotionalLeverage.IsZero() {
+		positionStats.NotionalLeverage = stats.NotionalLeverage.String()
+	}
+	if !stats.TotalEquity.IsZero() {
+		positionStats.TotalEquity = stats.TotalEquity.String()
+	}
+	if !stats.StrategyEquity.IsZero() {
+		positionStats.StrategyEquity = stats.StrategyEquity.String()
+	}
+	return &gctrpc.GetFuturesPositionsSummaryResponse{
+		Exchange: exch.GetName(),
+		Asset:    ai.String(),
+		Pair: &gctrpc.CurrencyPair{
+			Delimiter: cp.Delimiter,
+			Base:      cp.Base.String(),
+			Quote:     cp.Quote.String(),
+		},
+		PositionStats: positionStats,
+	}, nil
+}
+
+// GetFuturesPositionsOrders returns futures position orders from exchange API
+func (s *RPCServer) GetFuturesPositionsOrders(ctx context.Context, r *gctrpc.GetFuturesPositionsOrdersRequest) (*gctrpc.GetFuturesPositionsOrdersResponse, error) {
+	if r == nil {
+		return nil, fmt.Errorf("%w GetFuturesPositionsOrdersRequest", common.ErrNilPointer)
+	}
+	if r.Pair == nil {
+		return nil, currency.ErrCurrencyPairEmpty
+	}
+	exch, err := s.GetExchangeByName(r.Exchange)
+	if err != nil {
+		return nil, err
+	}
+	feat := exch.GetSupportedFeatures()
+	if !feat.FuturesCapabilities.Positions {
+		return nil, fmt.Errorf("%w futures position tracking for exchange %v", common.ErrFunctionNotSupported, exch.GetName())
+	}
+	if r.SyncWithOrderManager && !feat.FuturesCapabilities.OrderManagerPositionTracking {
+		return nil, fmt.Errorf("%w OrderManagerPositionTracking", common.ErrFunctionNotSupported)
+	}
+	if !exch.IsEnabled() {
+		return nil, fmt.Errorf("%s %w", r.Exchange, errExchangeNotEnabled)
+	}
+	ai, err := asset.New(r.Asset)
 	if err != nil {
 		return nil, err
 	}
 	if !ai.IsFutures() {
-		return nil, fmt.Errorf("%s %w", ai, order.ErrNotFuturesAsset)
+		return nil, fmt.Errorf("%s %w", ai, futures.ErrNotFuturesAsset)
+	}
+	enabledPairs, err := exch.GetEnabledPairs(ai)
+	if err != nil {
+		return nil, err
+	}
+	cp, err := enabledPairs.DeriveFrom(r.Pair.Base + r.Pair.Quote)
+	if err != nil {
+		return nil, err
 	}
 	var start, end time.Time
 	if r.StartDate != "" {
@@ -4416,230 +4609,66 @@ func (s *RPCServer) GetFuturesPositions(ctx context.Context, r *gctrpc.GetFuture
 		return nil, err
 	}
 
-	b := exch.GetBase()
-	creds, err := b.GetCredentials(ctx)
+	positionDetails, err := exch.GetFuturesPositionOrders(ctx, &futures.PositionsRequest{
+		Asset:                     ai,
+		Pairs:                     currency.Pairs{cp},
+		StartDate:                 start,
+		EndDate:                   end,
+		RespectOrderHistoryLimits: r.RespectOrderHistoryLimits,
+	})
 	if err != nil {
 		return nil, err
 	}
-	var subAccount string
-	if creds.SubAccount != "" {
-		subAccount = "for subaccount: " + creds.SubAccount
-	}
-	positionDetails, err := exch.GetFuturesPositions(ctx, &order.PositionsRequest{
-		Asset:     ai,
-		Pairs:     currency.Pairs{cp},
-		StartDate: start,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("%w %v", err, subAccount)
-	}
-	if len(positionDetails) != 1 {
-		return nil, errUnexpectedResponseSize
-	}
-	if r.Overwrite {
-		err = s.OrderManager.ClearFuturesTracking(r.Exchange, ai, cp)
-		if err != nil {
-			return nil, fmt.Errorf("cannot overwrite %w %v", err, subAccount)
-		}
-	}
-	for i := range positionDetails[0].Orders {
-		err = s.OrderManager.orderStore.futuresPositionController.TrackNewOrder(&positionDetails[0].Orders[i])
-		if err != nil {
-			if !errors.Is(err, order.ErrPositionClosed) {
-				return nil, err
-			}
-		}
-	}
-	pos, err := s.OrderManager.GetFuturesPositionsForExchange(r.Exchange, ai, cp)
-	if err != nil {
-		return nil, fmt.Errorf("cannot GetFuturesPositionsForExchange %w %v", err, subAccount)
-	}
-
-	response := &gctrpc.GetFuturesPositionsResponse{
-		SubAccount: creds.SubAccount,
-	}
-	var totalRealisedPNL, totalUnrealisedPNL decimal.Decimal
-	for i := range pos {
-		if r.Status != "" && pos[i].Status.String() != strings.ToUpper(r.Status) {
-			continue
-		}
-		if r.PositionLimit > 0 && len(response.Positions) >= int(r.PositionLimit) {
-			break
-		}
-		if pos[i].Status == order.Open {
-			var tick *ticker.Price
-			tick, err = exch.FetchTicker(ctx, pos[i].Pair, pos[i].Asset)
-			if err != nil {
-				return nil, fmt.Errorf("%w when fetching ticker data for %v %v %v %v", err, pos[i].Exchange, pos[i].Asset, pos[i].Pair, subAccount)
-			}
-			pos[i].UnrealisedPNL, err = s.OrderManager.UpdateOpenPositionUnrealisedPNL(pos[i].Exchange, pos[i].Asset, pos[i].Pair, tick.Last, tick.LastUpdated)
-			if err != nil {
-				return nil, fmt.Errorf("%w when updating unrealised PNL for %v %v %v %v", err, pos[i].Exchange, pos[i].Asset, pos[i].Pair, subAccount)
-			}
-			pos[i].LatestPrice = decimal.NewFromFloat(tick.Last)
-		}
-		response.TotalOrders += int64(len(pos[i].Orders))
+	response := &gctrpc.GetFuturesPositionsOrdersResponse{}
+	positions := make([]*gctrpc.FuturePosition, len(positionDetails))
+	var anyOrders bool
+	for i := range positionDetails {
 		details := &gctrpc.FuturePosition{
-			Exchange: pos[i].Exchange,
-			Asset:    pos[i].Asset.String(),
+			Exchange: exch.GetName(),
+			Asset:    positionDetails[i].Asset.String(),
 			Pair: &gctrpc.CurrencyPair{
-				Delimiter: pos[i].Pair.Delimiter,
-				Base:      pos[i].Pair.Base.String(),
-				Quote:     pos[i].Pair.Quote.String(),
+				Delimiter: positionDetails[i].Pair.Delimiter,
+				Base:      positionDetails[i].Pair.Base.String(),
+				Quote:     positionDetails[i].Pair.Quote.String(),
 			},
-			Status:           pos[i].Status.String(),
-			OpeningDate:      pos[i].OpeningDate.Format(common.SimpleTimeFormatWithTimezone),
-			OpeningDirection: pos[i].OpeningDirection.String(),
-			OpeningPrice:     pos[i].OpeningPrice.String(),
-			OpeningSize:      pos[i].OpeningSize.String(),
-			CurrentDirection: pos[i].LatestDirection.String(),
-			CurrentPrice:     pos[i].LatestPrice.String(),
-			CurrentSize:      pos[i].LatestSize.String(),
-			UnrealisedPnl:    pos[i].UnrealisedPNL.String(),
-			RealisedPnl:      pos[i].RealisedPNL.String(),
-			OrderCount:       int64(len(pos[i].Orders)),
+			ContractSettlementType: positionDetails[i].ContractSettlementType.String(),
+			Orders:                 make([]*gctrpc.OrderDetails, len(positionDetails[i].Orders)),
 		}
-		if !pos[i].UnrealisedPNL.IsZero() {
-			details.UnrealisedPnl = pos[i].UnrealisedPNL.String()
-		}
-		if !pos[i].RealisedPNL.IsZero() {
-			details.RealisedPnl = pos[i].RealisedPNL.String()
-		}
-		if pos[i].LatestDirection != order.UnknownSide {
-			details.CurrentDirection = pos[i].LatestDirection.String()
-		}
-		if len(pos[i].PNLHistory) > 0 {
-			details.OpeningDate = pos[i].PNLHistory[0].Time.Format(common.SimpleTimeFormatWithTimezone)
-			if pos[i].Status == order.Closed {
-				details.ClosingDate = pos[i].PNLHistory[len(pos[i].PNLHistory)-1].Time.Format(common.SimpleTimeFormatWithTimezone)
+		for j := range positionDetails[i].Orders {
+			anyOrders = true
+			details.Orders[j] = &gctrpc.OrderDetails{
+				Exchange:       exch.GetName(),
+				Id:             positionDetails[i].Orders[j].OrderID,
+				ClientOrderId:  positionDetails[i].Orders[j].ClientOrderID,
+				BaseCurrency:   positionDetails[i].Orders[j].Pair.Base.String(),
+				QuoteCurrency:  positionDetails[i].Orders[j].Pair.Quote.String(),
+				AssetType:      positionDetails[i].Orders[j].AssetType.String(),
+				OrderSide:      positionDetails[i].Orders[j].Side.String(),
+				OrderType:      positionDetails[i].Orders[j].Type.String(),
+				CreationTime:   positionDetails[i].Orders[j].Date.Format(common.SimpleTimeFormatWithTimezone),
+				UpdateTime:     positionDetails[i].Orders[j].LastUpdated.Format(common.SimpleTimeFormatWithTimezone),
+				Status:         positionDetails[i].Orders[j].Status.String(),
+				Price:          positionDetails[i].Orders[j].Price,
+				Amount:         positionDetails[i].Orders[j].Amount,
+				OpenVolume:     positionDetails[i].Orders[j].RemainingAmount,
+				Fee:            positionDetails[i].Orders[j].Fee,
+				Cost:           positionDetails[i].Orders[j].Cost,
+				ContractAmount: positionDetails[i].Orders[j].ContractAmount,
 			}
 		}
-		totalRealisedPNL = totalRealisedPNL.Add(pos[i].RealisedPNL)
-		totalUnrealisedPNL = totalUnrealisedPNL.Add(pos[i].UnrealisedPNL)
-		if r.GetPositionStats {
-			var stats *order.PositionSummary
-			stats, err = exch.GetPositionSummary(ctx, &order.PositionSummaryRequest{
-				Asset: pos[i].Asset,
-				Pair:  pos[i].Pair,
-			})
-			if err != nil {
-				return nil, fmt.Errorf("cannot GetPositionSummary %w %v", err, subAccount)
-			}
-			details.PositionStats = &gctrpc.FuturesPositionStats{
-				MaintenanceMarginRequirement: stats.MaintenanceMarginRequirement.String(),
-				InitialMarginRequirement:     stats.InitialMarginRequirement.String(),
-				CollateralUsed:               stats.CollateralUsed.String(),
-				MarkPrice:                    stats.MarkPrice.String(),
-				CurrentSize:                  stats.CurrentSize.String(),
-				BreakEvenPrice:               stats.BreakEvenPrice.String(),
-				AverageOpenPrice:             stats.AverageOpenPrice.String(),
-				RecentPnl:                    stats.RecentPNL.String(),
-				MarginFraction:               stats.MarginFraction.String(),
-				FreeCollateral:               stats.FreeCollateral.String(),
-				TotalCollateral:              stats.TotalCollateral.String(),
-			}
-			if !stats.EstimatedLiquidationPrice.IsZero() {
-				details.PositionStats.EstimatedLiquidationPrice = stats.EstimatedLiquidationPrice.String()
-			}
-		}
-		if r.GetFundingPayments {
-			var endDate = time.Now()
-			if pos[i].Status == order.Closed {
-				endDate = pos[i].Orders[len(pos[i].Orders)-1].Date
-			}
-			var fundingDetails *fundingrate.Rates
-			fundingDetails, err = exch.GetFundingRates(ctx, &fundingrate.RatesRequest{
-				Asset:                pos[i].Asset,
-				Pair:                 pos[i].Pair,
-				StartDate:            pos[i].Orders[0].Date,
-				EndDate:              endDate,
-				IncludePayments:      r.GetFundingPayments,
-				IncludePredictedRate: r.IncludePredictedRate,
-			})
-			if err != nil {
-				return nil, err
-			}
-			var funding []*gctrpc.FundingRate
-			if r.IncludeFullFundingRates {
-				for j := range fundingDetails.FundingRates {
-					funding = append(funding, &gctrpc.FundingRate{
-						Date:    fundingDetails.FundingRates[j].Time.Format(common.SimpleTimeFormatWithTimezone),
-						Rate:    fundingDetails.FundingRates[j].Rate.String(),
-						Payment: fundingDetails.FundingRates[j].Payment.String(),
-					})
-				}
-			}
-			fundingRates := &gctrpc.FundingData{
-				Rates:      funding,
-				PaymentSum: fundingDetails.PaymentSum.String(),
-			}
-			if r.IncludeFullFundingRates {
-				fundingRates.LatestRate = funding[len(fundingRates.Rates)-1]
-			}
-			if r.IncludePredictedRate && !fundingDetails.PredictedUpcomingRate.Time.IsZero() {
-				fundingRates.UpcomingRate = &gctrpc.FundingRate{
-					Date: fundingDetails.PredictedUpcomingRate.Time.Format(common.SimpleTimeFormatWithTimezone),
-					Rate: fundingDetails.PredictedUpcomingRate.Rate.String(),
-				}
-			}
-			details.FundingData = fundingRates
-			err = s.OrderManager.orderStore.futuresPositionController.TrackFundingDetails(fundingDetails)
+		positions[i] = details
+	}
+	if !anyOrders {
+		return &gctrpc.GetFuturesPositionsOrdersResponse{}, nil
+	}
+	response.Positions = positions
+	if r.SyncWithOrderManager {
+		for i := range positionDetails {
+			err = s.OrderManager.processFuturesPositions(exch, &positionDetails[i])
 			if err != nil {
 				return nil, err
 			}
 		}
-		if !r.IncludeFullOrderData {
-			response.Positions = append(response.Positions, details)
-			continue
-		}
-		for j := range pos[i].Orders {
-			var trades []*gctrpc.TradeHistory
-			for k := range pos[i].Orders[j].Trades {
-				trades = append(trades, &gctrpc.TradeHistory{
-					CreationTime: pos[i].Orders[j].Trades[k].Timestamp.Unix(),
-					Id:           pos[i].Orders[j].Trades[k].TID,
-					Price:        pos[i].Orders[j].Trades[k].Price,
-					Amount:       pos[i].Orders[j].Trades[k].Amount,
-					Exchange:     pos[i].Orders[j].Trades[k].Exchange,
-					AssetType:    pos[i].Asset.String(),
-					OrderSide:    pos[i].Orders[j].Trades[k].Side.String(),
-					Fee:          pos[i].Orders[j].Trades[k].Fee,
-					Total:        pos[i].Orders[j].Trades[k].Total,
-				})
-			}
-			od := &gctrpc.OrderDetails{
-				Exchange:      pos[i].Orders[j].Exchange,
-				Id:            pos[i].Orders[j].OrderID,
-				ClientOrderId: pos[i].Orders[j].ClientOrderID,
-				BaseCurrency:  pos[i].Orders[j].Pair.Base.String(),
-				QuoteCurrency: pos[i].Orders[j].Pair.Quote.String(),
-				AssetType:     pos[i].Orders[j].AssetType.String(),
-				OrderSide:     pos[i].Orders[j].Side.String(),
-				OrderType:     pos[i].Orders[j].Type.String(),
-				CreationTime:  pos[i].Orders[j].Date.Format(common.SimpleTimeFormatWithTimezone),
-				Status:        pos[i].Orders[j].Status.String(),
-				Price:         pos[i].Orders[j].Price,
-				Amount:        pos[i].Orders[j].Amount,
-				Fee:           pos[i].Orders[j].Fee,
-				Cost:          pos[i].Orders[j].Cost,
-				Trades:        trades,
-			}
-			if pos[i].Orders[j].LastUpdated.After(pos[i].Orders[j].Date) {
-				od.UpdateTime = pos[i].Orders[j].LastUpdated.Format(common.SimpleTimeFormatWithTimezone)
-			}
-			details.Orders = append(details.Orders, od)
-		}
-		response.Positions = append(response.Positions, details)
-	}
-
-	if !totalUnrealisedPNL.IsZero() {
-		response.TotalUnrealisedPnl = totalUnrealisedPNL.String()
-	}
-	if !totalRealisedPNL.IsZero() {
-		response.TotalRealisedPnl = totalRealisedPNL.String()
-	}
-	if !totalUnrealisedPNL.IsZero() && !totalRealisedPNL.IsZero() {
-		response.TotalPnl = totalRealisedPNL.Add(totalUnrealisedPNL).String()
 	}
 	return response, nil
 }
@@ -4647,19 +4676,22 @@ func (s *RPCServer) GetFuturesPositions(ctx context.Context, r *gctrpc.GetFuture
 // GetFundingRates returns the funding rates for an exchange, asset, pair
 func (s *RPCServer) GetFundingRates(ctx context.Context, r *gctrpc.GetFundingRatesRequest) (*gctrpc.GetFundingRatesResponse, error) {
 	if r == nil {
-		return nil, fmt.Errorf("%w GetFundingRateRequest", common.ErrNilPointer)
+		return nil, fmt.Errorf("%w GetFundingRatesRequest", common.ErrNilPointer)
 	}
 	exch, err := s.GetExchangeByName(r.Exchange)
 	if err != nil {
 		return nil, err
 	}
-
+	feat := exch.GetSupportedFeatures()
+	if !feat.FuturesCapabilities.FundingRates {
+		return nil, fmt.Errorf("%w FundingRates for exchange %v", common.ErrFunctionNotSupported, exch.GetName())
+	}
 	a, err := asset.New(r.Asset)
 	if err != nil {
 		return nil, err
 	}
 	if !a.IsFutures() {
-		return nil, fmt.Errorf("%s %w", a, order.ErrNotFuturesAsset)
+		return nil, fmt.Errorf("%s %w", a, futures.ErrNotFuturesAsset)
 	}
 	start := time.Now().AddDate(0, -1, 0)
 	end := time.Now()
@@ -4680,16 +4712,21 @@ func (s *RPCServer) GetFundingRates(ctx context.Context, r *gctrpc.GetFundingRat
 		return nil, err
 	}
 
-	pairs, err := exch.GetEnabledPairs(a)
-	if err != nil {
-		return nil, err
-	}
-	cp, err := pairs.DeriveFrom(r.Pair.Base + r.Pair.Quote)
+	cp, err := exch.MatchSymbolWithAvailablePairs(r.Pair.Base+r.Pair.Quote, a, false)
 	if err != nil {
 		return nil, err
 	}
 
-	funding, err := exch.GetFundingRates(ctx, &fundingrate.RatesRequest{
+	pairs, err := exch.GetEnabledPairs(a)
+	if err != nil {
+		return nil, err
+	}
+
+	if !pairs.Contains(cp, true) {
+		return nil, fmt.Errorf("%w %v", errPairNotEnabled, cp)
+	}
+
+	funding, err := exch.GetHistoricalFundingRates(ctx, &fundingrate.HistoricalRatesRequest{
 		Asset:                a,
 		Pair:                 cp,
 		StartDate:            start,
@@ -4770,18 +4807,24 @@ func (s *RPCServer) GetLatestFundingRate(ctx context.Context, r *gctrpc.GetLates
 		return nil, err
 	}
 	if !a.IsFutures() {
-		return nil, fmt.Errorf("%s %w", a, order.ErrNotFuturesAsset)
+		return nil, fmt.Errorf("%s %w", a, futures.ErrNotFuturesAsset)
+	}
+
+	cp, err := exch.MatchSymbolWithAvailablePairs(r.Pair.Base+r.Pair.Quote, a, false)
+	if err != nil {
+		return nil, err
 	}
 
 	pairs, err := exch.GetEnabledPairs(a)
 	if err != nil {
 		return nil, err
 	}
-	cp, err := pairs.DeriveFrom(r.Pair.Base + r.Pair.Quote)
-	if err != nil {
-		return nil, err
+
+	if !pairs.Contains(cp, true) {
+		return nil, fmt.Errorf("%w %v", errPairNotEnabled, cp)
 	}
-	funding, err := exch.GetLatestFundingRate(ctx, &fundingrate.LatestRateRequest{
+
+	fundingRates, err := exch.GetLatestFundingRates(ctx, &fundingrate.LatestRateRequest{
 		Asset:                a,
 		Pair:                 cp,
 		IncludePredictedRate: r.IncludePredicted,
@@ -4789,27 +4832,30 @@ func (s *RPCServer) GetLatestFundingRate(ctx context.Context, r *gctrpc.GetLates
 	if err != nil {
 		return nil, err
 	}
+	if len(fundingRates) != 1 {
+		return nil, fmt.Errorf("expected 1 funding rate, received %v", len(fundingRates))
+	}
 	var response gctrpc.GetLatestFundingRateResponse
 	fundingData := &gctrpc.FundingData{
 		Exchange: r.Exchange,
 		Asset:    r.Asset,
 		Pair: &gctrpc.CurrencyPair{
-			Delimiter: funding.Pair.Delimiter,
-			Base:      funding.Pair.Base.String(),
-			Quote:     funding.Pair.Quote.String(),
+			Delimiter: fundingRates[0].Pair.Delimiter,
+			Base:      fundingRates[0].Pair.Base.String(),
+			Quote:     fundingRates[0].Pair.Quote.String(),
 		},
 		LatestRate: &gctrpc.FundingRate{
-			Date: funding.LatestRate.Time.Format(common.SimpleTimeFormatWithTimezone),
-			Rate: funding.LatestRate.Rate.String(),
+			Date: fundingRates[0].LatestRate.Time.Format(common.SimpleTimeFormatWithTimezone),
+			Rate: fundingRates[0].LatestRate.Rate.String(),
 		},
 	}
-	if !funding.TimeOfNextRate.IsZero() {
-		fundingData.TimeOfNextRate = funding.TimeOfNextRate.Format(common.SimpleTimeFormatWithTimezone)
+	if !fundingRates[0].TimeOfNextRate.IsZero() {
+		fundingData.TimeOfNextRate = fundingRates[0].TimeOfNextRate.Format(common.SimpleTimeFormatWithTimezone)
 	}
 	if r.IncludePredicted {
 		fundingData.UpcomingRate = &gctrpc.FundingRate{
-			Date: funding.PredictedUpcomingRate.Time.Format(common.SimpleTimeFormatWithTimezone),
-			Rate: funding.PredictedUpcomingRate.Rate.String(),
+			Date: fundingRates[0].PredictedUpcomingRate.Time.Format(common.SimpleTimeFormatWithTimezone),
+			Rate: fundingRates[0].PredictedUpcomingRate.Rate.String(),
 		}
 	}
 	response.Rate = fundingData
@@ -4824,6 +4870,10 @@ func (s *RPCServer) GetCollateral(ctx context.Context, r *gctrpc.GetCollateralRe
 	if err != nil {
 		return nil, err
 	}
+	feat := exch.GetSupportedFeatures()
+	if !feat.FuturesCapabilities.Collateral {
+		return nil, fmt.Errorf("%w Get Collateral for exchange %v", common.ErrFunctionNotSupported, exch.GetName())
+	}
 
 	a, err := asset.New(r.Asset)
 	if err != nil {
@@ -4835,7 +4885,7 @@ func (s *RPCServer) GetCollateral(ctx context.Context, r *gctrpc.GetCollateralRe
 		return nil, err
 	}
 	if !a.IsFutures() {
-		return nil, fmt.Errorf("%s %w", a, order.ErrNotFuturesAsset)
+		return nil, fmt.Errorf("%s %w", a, futures.ErrNotFuturesAsset)
 	}
 	ai, err := exch.FetchAccountInfo(ctx, a)
 	if err != nil {
@@ -4874,11 +4924,11 @@ func (s *RPCServer) GetCollateral(ctx context.Context, r *gctrpc.GetCollateralRe
 		}
 	}
 
-	calculators := make([]order.CollateralCalculator, 0, len(acc.Currencies))
+	calculators := make([]futures.CollateralCalculator, 0, len(acc.Currencies))
 	for i := range acc.Currencies {
 		total := decimal.NewFromFloat(acc.Currencies[i].Total)
 		free := decimal.NewFromFloat(acc.Currencies[i].AvailableWithoutBorrow)
-		cal := order.CollateralCalculator{
+		cal := futures.CollateralCalculator{
 			CalculateOffline:   r.CalculateOffline,
 			CollateralCurrency: acc.Currencies[i].Currency,
 			Asset:              a,
@@ -4895,7 +4945,7 @@ func (s *RPCServer) GetCollateral(ctx context.Context, r *gctrpc.GetCollateralRe
 			}
 			tick, err = exch.FetchTicker(ctx, tickerCurr, asset.Spot)
 			if err != nil {
-				log.Errorf(log.GRPCSys, fmt.Sprintf("GetCollateral offline calculation error via FetchTicker %s %s", exch.GetName(), err))
+				log.Errorf(log.GRPCSys, "GetCollateral offline calculation error via FetchTicker %s %s", exch.GetName(), err)
 				continue
 			}
 			if tick.Last == 0 {
@@ -4906,134 +4956,134 @@ func (s *RPCServer) GetCollateral(ctx context.Context, r *gctrpc.GetCollateralRe
 		calculators = append(calculators, cal)
 	}
 
-	calc := &order.TotalCollateralCalculator{
+	calc := &futures.TotalCollateralCalculator{
 		CollateralAssets: calculators,
 		CalculateOffline: r.CalculateOffline,
 		FetchPositions:   true,
 	}
 
-	collateral, err := exch.CalculateTotalCollateral(ctx, calc)
+	c, err := exch.CalculateTotalCollateral(ctx, calc)
 	if err != nil {
 		return nil, err
 	}
 
-	var collateralDisplayCurrency = " " + collateral.CollateralCurrency.String()
+	var collateralDisplayCurrency = " " + c.CollateralCurrency.String()
 	result := &gctrpc.GetCollateralResponse{
 		SubAccount:          creds.SubAccount,
-		CollateralCurrency:  collateral.CollateralCurrency.String(),
-		AvailableCollateral: collateral.AvailableCollateral.String() + collateralDisplayCurrency,
-		UsedCollateral:      collateral.UsedCollateral.String() + collateralDisplayCurrency,
+		CollateralCurrency:  c.CollateralCurrency.String(),
+		AvailableCollateral: c.AvailableCollateral.String() + collateralDisplayCurrency,
+		UsedCollateral:      c.UsedCollateral.String() + collateralDisplayCurrency,
 	}
-	if !collateral.CollateralContributedByPositiveSpotBalances.IsZero() {
-		result.CollateralContributedByPositiveSpotBalances = collateral.CollateralContributedByPositiveSpotBalances.String() + collateralDisplayCurrency
+	if !c.CollateralContributedByPositiveSpotBalances.IsZero() {
+		result.CollateralContributedByPositiveSpotBalances = c.CollateralContributedByPositiveSpotBalances.String() + collateralDisplayCurrency
 	}
-	if !collateral.TotalValueOfPositiveSpotBalances.IsZero() {
-		result.TotalValueOfPositiveSpotBalances = collateral.TotalValueOfPositiveSpotBalances.String() + collateralDisplayCurrency
+	if !c.TotalValueOfPositiveSpotBalances.IsZero() {
+		result.TotalValueOfPositiveSpotBalances = c.TotalValueOfPositiveSpotBalances.String() + collateralDisplayCurrency
 	}
-	if !collateral.AvailableMaintenanceCollateral.IsZero() {
-		result.MaintenanceCollateral = collateral.AvailableMaintenanceCollateral.String() + collateralDisplayCurrency
+	if !c.AvailableMaintenanceCollateral.IsZero() {
+		result.MaintenanceCollateral = c.AvailableMaintenanceCollateral.String() + collateralDisplayCurrency
 	}
-	if !collateral.UnrealisedPNL.IsZero() {
-		result.UnrealisedPnl = collateral.UnrealisedPNL.String()
+	if !c.UnrealisedPNL.IsZero() {
+		result.UnrealisedPnl = c.UnrealisedPNL.String()
 	}
-	if collateral.UsedBreakdown != nil {
+	if c.UsedBreakdown != nil {
 		result.UsedBreakdown = &gctrpc.CollateralUsedBreakdown{}
-		if !collateral.UsedBreakdown.LockedInStakes.IsZero() {
-			result.UsedBreakdown.LockedInStakes = collateral.UsedBreakdown.LockedInStakes.String() + collateralDisplayCurrency
+		if !c.UsedBreakdown.LockedInStakes.IsZero() {
+			result.UsedBreakdown.LockedInStakes = c.UsedBreakdown.LockedInStakes.String() + collateralDisplayCurrency
 		}
-		if !collateral.UsedBreakdown.LockedInNFTBids.IsZero() {
-			result.UsedBreakdown.LockedInNftBids = collateral.UsedBreakdown.LockedInNFTBids.String() + collateralDisplayCurrency
+		if !c.UsedBreakdown.LockedInNFTBids.IsZero() {
+			result.UsedBreakdown.LockedInNftBids = c.UsedBreakdown.LockedInNFTBids.String() + collateralDisplayCurrency
 		}
-		if !collateral.UsedBreakdown.LockedInFeeVoucher.IsZero() {
-			result.UsedBreakdown.LockedInFeeVoucher = collateral.UsedBreakdown.LockedInFeeVoucher.String() + collateralDisplayCurrency
+		if !c.UsedBreakdown.LockedInFeeVoucher.IsZero() {
+			result.UsedBreakdown.LockedInFeeVoucher = c.UsedBreakdown.LockedInFeeVoucher.String() + collateralDisplayCurrency
 		}
-		if !collateral.UsedBreakdown.LockedInSpotMarginFundingOffers.IsZero() {
-			result.UsedBreakdown.LockedInSpotMarginFundingOffers = collateral.UsedBreakdown.LockedInSpotMarginFundingOffers.String() + collateralDisplayCurrency
+		if !c.UsedBreakdown.LockedInSpotMarginFundingOffers.IsZero() {
+			result.UsedBreakdown.LockedInSpotMarginFundingOffers = c.UsedBreakdown.LockedInSpotMarginFundingOffers.String() + collateralDisplayCurrency
 		}
-		if !collateral.UsedBreakdown.LockedInSpotOrders.IsZero() {
-			result.UsedBreakdown.LockedInSpotOrders = collateral.UsedBreakdown.LockedInSpotOrders.String() + collateralDisplayCurrency
+		if !c.UsedBreakdown.LockedInSpotOrders.IsZero() {
+			result.UsedBreakdown.LockedInSpotOrders = c.UsedBreakdown.LockedInSpotOrders.String() + collateralDisplayCurrency
 		}
-		if !collateral.UsedBreakdown.LockedAsCollateral.IsZero() {
-			result.UsedBreakdown.LockedAsCollateral = collateral.UsedBreakdown.LockedAsCollateral.String() + collateralDisplayCurrency
+		if !c.UsedBreakdown.LockedAsCollateral.IsZero() {
+			result.UsedBreakdown.LockedAsCollateral = c.UsedBreakdown.LockedAsCollateral.String() + collateralDisplayCurrency
 		}
-		if !collateral.UsedBreakdown.UsedInPositions.IsZero() {
-			result.UsedBreakdown.UsedInFutures = collateral.UsedBreakdown.UsedInPositions.String() + collateralDisplayCurrency
+		if !c.UsedBreakdown.UsedInPositions.IsZero() {
+			result.UsedBreakdown.UsedInFutures = c.UsedBreakdown.UsedInPositions.String() + collateralDisplayCurrency
 		}
-		if !collateral.UsedBreakdown.UsedInSpotMarginBorrows.IsZero() {
-			result.UsedBreakdown.UsedInSpotMargin = collateral.UsedBreakdown.UsedInSpotMarginBorrows.String() + collateralDisplayCurrency
+		if !c.UsedBreakdown.UsedInSpotMarginBorrows.IsZero() {
+			result.UsedBreakdown.UsedInSpotMargin = c.UsedBreakdown.UsedInSpotMarginBorrows.String() + collateralDisplayCurrency
 		}
 	}
 	if r.IncludeBreakdown {
-		for i := range collateral.BreakdownOfPositions {
+		for i := range c.BreakdownOfPositions {
 			result.PositionBreakdown = append(result.PositionBreakdown, &gctrpc.CollateralByPosition{
-				Currency:            collateral.BreakdownOfPositions[i].PositionCurrency.String(),
-				Size:                collateral.BreakdownOfPositions[i].Size.String(),
-				OpenOrderSize:       collateral.BreakdownOfPositions[i].OpenOrderSize.String(),
-				PositionSize:        collateral.BreakdownOfPositions[i].PositionSize.String(),
-				MarkPrice:           collateral.BreakdownOfPositions[i].MarkPrice.String() + collateralDisplayCurrency,
-				RequiredMargin:      collateral.BreakdownOfPositions[i].RequiredMargin.String(),
-				TotalCollateralUsed: collateral.BreakdownOfPositions[i].CollateralUsed.String() + collateralDisplayCurrency,
+				Currency:            c.BreakdownOfPositions[i].PositionCurrency.String(),
+				Size:                c.BreakdownOfPositions[i].Size.String(),
+				OpenOrderSize:       c.BreakdownOfPositions[i].OpenOrderSize.String(),
+				PositionSize:        c.BreakdownOfPositions[i].PositionSize.String(),
+				MarkPrice:           c.BreakdownOfPositions[i].MarkPrice.String() + collateralDisplayCurrency,
+				RequiredMargin:      c.BreakdownOfPositions[i].RequiredMargin.String(),
+				TotalCollateralUsed: c.BreakdownOfPositions[i].CollateralUsed.String() + collateralDisplayCurrency,
 			})
 		}
-		for i := range collateral.BreakdownByCurrency {
-			if collateral.BreakdownByCurrency[i].TotalFunds.IsZero() && !r.IncludeZeroValues {
+		for i := range c.BreakdownByCurrency {
+			if c.BreakdownByCurrency[i].TotalFunds.IsZero() && !r.IncludeZeroValues {
 				continue
 			}
-			var originalDisplayCurrency = " " + collateral.BreakdownByCurrency[i].Currency.String()
+			var originalDisplayCurrency = " " + c.BreakdownByCurrency[i].Currency.String()
 			cb := &gctrpc.CollateralForCurrency{
-				Currency:                    collateral.BreakdownByCurrency[i].Currency.String(),
-				ExcludedFromCollateral:      collateral.BreakdownByCurrency[i].SkipContribution,
-				TotalFunds:                  collateral.BreakdownByCurrency[i].TotalFunds.String() + originalDisplayCurrency,
-				AvailableForUseAsCollateral: collateral.BreakdownByCurrency[i].AvailableForUseAsCollateral.String() + originalDisplayCurrency,
-				ApproxFairMarketValue:       collateral.BreakdownByCurrency[i].FairMarketValue.String() + collateralDisplayCurrency,
-				Weighting:                   collateral.BreakdownByCurrency[i].Weighting.String(),
-				CollateralContribution:      collateral.BreakdownByCurrency[i].CollateralContribution.String() + collateralDisplayCurrency,
-				ScaledToCurrency:            collateral.BreakdownByCurrency[i].ScaledCurrency.String(),
+				Currency:                    c.BreakdownByCurrency[i].Currency.String(),
+				ExcludedFromCollateral:      c.BreakdownByCurrency[i].SkipContribution,
+				TotalFunds:                  c.BreakdownByCurrency[i].TotalFunds.String() + originalDisplayCurrency,
+				AvailableForUseAsCollateral: c.BreakdownByCurrency[i].AvailableForUseAsCollateral.String() + originalDisplayCurrency,
+				ApproxFairMarketValue:       c.BreakdownByCurrency[i].FairMarketValue.String() + collateralDisplayCurrency,
+				Weighting:                   c.BreakdownByCurrency[i].Weighting.String(),
+				CollateralContribution:      c.BreakdownByCurrency[i].CollateralContribution.String() + collateralDisplayCurrency,
+				ScaledToCurrency:            c.BreakdownByCurrency[i].ScaledCurrency.String(),
 			}
-			if !collateral.BreakdownByCurrency[i].AdditionalCollateralUsed.IsZero() {
-				cb.AdditionalCollateralUsed = collateral.BreakdownByCurrency[i].AdditionalCollateralUsed.String() + collateralDisplayCurrency
+			if !c.BreakdownByCurrency[i].AdditionalCollateralUsed.IsZero() {
+				cb.AdditionalCollateralUsed = c.BreakdownByCurrency[i].AdditionalCollateralUsed.String() + collateralDisplayCurrency
 			}
 
-			if !collateral.BreakdownByCurrency[i].ScaledUsed.IsZero() {
-				cb.FundsInUse = collateral.BreakdownByCurrency[i].ScaledUsed.String() + collateralDisplayCurrency
+			if !c.BreakdownByCurrency[i].ScaledUsed.IsZero() {
+				cb.FundsInUse = c.BreakdownByCurrency[i].ScaledUsed.String() + collateralDisplayCurrency
 			}
-			if !collateral.BreakdownByCurrency[i].UnrealisedPNL.IsZero() {
-				cb.UnrealisedPnl = collateral.BreakdownByCurrency[i].UnrealisedPNL.String() + collateralDisplayCurrency
+			if !c.BreakdownByCurrency[i].UnrealisedPNL.IsZero() {
+				cb.UnrealisedPnl = c.BreakdownByCurrency[i].UnrealisedPNL.String() + collateralDisplayCurrency
 			}
-			if collateral.BreakdownByCurrency[i].ScaledUsedBreakdown != nil {
+			if c.BreakdownByCurrency[i].ScaledUsedBreakdown != nil {
 				breakDownDisplayCurrency := collateralDisplayCurrency
-				if collateral.BreakdownByCurrency[i].Weighting.IsZero() && collateral.BreakdownByCurrency[i].FairMarketValue.IsZero() {
+				if c.BreakdownByCurrency[i].Weighting.IsZero() && c.BreakdownByCurrency[i].FairMarketValue.IsZero() {
 					// cannot determine value, show in like currency instead
 					breakDownDisplayCurrency = originalDisplayCurrency
 				}
 				cb.UsedBreakdown = &gctrpc.CollateralUsedBreakdown{}
-				if !collateral.BreakdownByCurrency[i].ScaledUsedBreakdown.LockedInStakes.IsZero() {
-					cb.UsedBreakdown.LockedInStakes = collateral.BreakdownByCurrency[i].ScaledUsedBreakdown.LockedInStakes.String() + breakDownDisplayCurrency
+				if !c.BreakdownByCurrency[i].ScaledUsedBreakdown.LockedInStakes.IsZero() {
+					cb.UsedBreakdown.LockedInStakes = c.BreakdownByCurrency[i].ScaledUsedBreakdown.LockedInStakes.String() + breakDownDisplayCurrency
 				}
-				if !collateral.BreakdownByCurrency[i].ScaledUsedBreakdown.LockedInNFTBids.IsZero() {
-					cb.UsedBreakdown.LockedInNftBids = collateral.BreakdownByCurrency[i].ScaledUsedBreakdown.LockedInNFTBids.String() + breakDownDisplayCurrency
+				if !c.BreakdownByCurrency[i].ScaledUsedBreakdown.LockedInNFTBids.IsZero() {
+					cb.UsedBreakdown.LockedInNftBids = c.BreakdownByCurrency[i].ScaledUsedBreakdown.LockedInNFTBids.String() + breakDownDisplayCurrency
 				}
-				if !collateral.BreakdownByCurrency[i].ScaledUsedBreakdown.LockedInFeeVoucher.IsZero() {
-					cb.UsedBreakdown.LockedInFeeVoucher = collateral.BreakdownByCurrency[i].ScaledUsedBreakdown.LockedInFeeVoucher.String() + breakDownDisplayCurrency
+				if !c.BreakdownByCurrency[i].ScaledUsedBreakdown.LockedInFeeVoucher.IsZero() {
+					cb.UsedBreakdown.LockedInFeeVoucher = c.BreakdownByCurrency[i].ScaledUsedBreakdown.LockedInFeeVoucher.String() + breakDownDisplayCurrency
 				}
-				if !collateral.BreakdownByCurrency[i].ScaledUsedBreakdown.LockedInSpotMarginFundingOffers.IsZero() {
-					cb.UsedBreakdown.LockedInSpotMarginFundingOffers = collateral.BreakdownByCurrency[i].ScaledUsedBreakdown.LockedInSpotMarginFundingOffers.String() + breakDownDisplayCurrency
+				if !c.BreakdownByCurrency[i].ScaledUsedBreakdown.LockedInSpotMarginFundingOffers.IsZero() {
+					cb.UsedBreakdown.LockedInSpotMarginFundingOffers = c.BreakdownByCurrency[i].ScaledUsedBreakdown.LockedInSpotMarginFundingOffers.String() + breakDownDisplayCurrency
 				}
-				if !collateral.BreakdownByCurrency[i].ScaledUsedBreakdown.LockedInSpotOrders.IsZero() {
-					cb.UsedBreakdown.LockedInSpotOrders = collateral.BreakdownByCurrency[i].ScaledUsedBreakdown.LockedInSpotOrders.String() + breakDownDisplayCurrency
+				if !c.BreakdownByCurrency[i].ScaledUsedBreakdown.LockedInSpotOrders.IsZero() {
+					cb.UsedBreakdown.LockedInSpotOrders = c.BreakdownByCurrency[i].ScaledUsedBreakdown.LockedInSpotOrders.String() + breakDownDisplayCurrency
 				}
-				if !collateral.BreakdownByCurrency[i].ScaledUsedBreakdown.LockedAsCollateral.IsZero() {
-					cb.UsedBreakdown.LockedAsCollateral = collateral.BreakdownByCurrency[i].ScaledUsedBreakdown.LockedAsCollateral.String() + breakDownDisplayCurrency
+				if !c.BreakdownByCurrency[i].ScaledUsedBreakdown.LockedAsCollateral.IsZero() {
+					cb.UsedBreakdown.LockedAsCollateral = c.BreakdownByCurrency[i].ScaledUsedBreakdown.LockedAsCollateral.String() + breakDownDisplayCurrency
 				}
-				if !collateral.BreakdownByCurrency[i].ScaledUsedBreakdown.UsedInPositions.IsZero() {
-					cb.UsedBreakdown.UsedInFutures = collateral.BreakdownByCurrency[i].ScaledUsedBreakdown.UsedInPositions.String() + breakDownDisplayCurrency
+				if !c.BreakdownByCurrency[i].ScaledUsedBreakdown.UsedInPositions.IsZero() {
+					cb.UsedBreakdown.UsedInFutures = c.BreakdownByCurrency[i].ScaledUsedBreakdown.UsedInPositions.String() + breakDownDisplayCurrency
 				}
-				if !collateral.BreakdownByCurrency[i].ScaledUsedBreakdown.UsedInSpotMarginBorrows.IsZero() {
-					cb.UsedBreakdown.UsedInSpotMargin = collateral.BreakdownByCurrency[i].ScaledUsedBreakdown.UsedInSpotMarginBorrows.String() + breakDownDisplayCurrency
+				if !c.BreakdownByCurrency[i].ScaledUsedBreakdown.UsedInSpotMarginBorrows.IsZero() {
+					cb.UsedBreakdown.UsedInSpotMargin = c.BreakdownByCurrency[i].ScaledUsedBreakdown.UsedInSpotMarginBorrows.String() + breakDownDisplayCurrency
 				}
 			}
-			if collateral.BreakdownByCurrency[i].Error != nil {
-				cb.Error = collateral.BreakdownByCurrency[i].Error.Error()
+			if c.BreakdownByCurrency[i].Error != nil {
+				cb.Error = c.BreakdownByCurrency[i].Error.Error()
 			}
 			result.CurrencyBreakdown = append(result.CurrencyBreakdown, cb)
 		}
@@ -5218,7 +5268,7 @@ func (s *RPCServer) GetTechnicalAnalysis(ctx context.Context, r *gctrpc.GetTechn
 // GetMarginRatesHistory returns the margin lending or borrow rates for an exchange, asset, currency along with many customisable options
 func (s *RPCServer) GetMarginRatesHistory(ctx context.Context, r *gctrpc.GetMarginRatesHistoryRequest) (*gctrpc.GetMarginRatesHistoryResponse, error) {
 	if r == nil {
-		return nil, fmt.Errorf("%w GetLendingRatesRequest", common.ErrNilPointer)
+		return nil, fmt.Errorf("%w GetMarginRatesHistoryRequest", common.ErrNilPointer)
 	}
 	exch, err := s.GetExchangeByName(r.Exchange)
 	if err != nil {
@@ -5614,5 +5664,395 @@ func (s *RPCServer) GetOrderbookAmountByImpact(_ context.Context, r *gctrpc.GetO
 		StartPrice:                          impact.StartPrice,
 		EndPrice:                            impact.EndPrice,
 		AverageOrderCost:                    impact.AverageOrderCost,
+	}, nil
+}
+
+// GetCollateralMode returns the collateral type for the account asset
+func (s *RPCServer) GetCollateralMode(ctx context.Context, r *gctrpc.GetCollateralModeRequest) (*gctrpc.GetCollateralModeResponse, error) {
+	if r == nil {
+		return nil, fmt.Errorf("%w GetCollateralModeRequest", common.ErrNilPointer)
+	}
+	exch, err := s.GetExchangeByName(r.Exchange)
+	if err != nil {
+		return nil, err
+	}
+	feat := exch.GetSupportedFeatures()
+	if !feat.FuturesCapabilities.CollateralMode {
+		return nil, fmt.Errorf("%w GetCollateralMode for exchange %v", common.ErrFunctionNotSupported, exch.GetName())
+	}
+
+	item, err := asset.New(r.Asset)
+	if err != nil {
+		return nil, err
+	}
+	if !exch.IsEnabled() {
+		return nil, fmt.Errorf("%s %w", exch.GetName(), errExchangeNotEnabled)
+	}
+	if !item.IsValid() {
+		return nil, fmt.Errorf("%w %v", asset.ErrNotSupported, r.Asset)
+	}
+	b := exch.GetBase()
+	if b == nil {
+		return nil, fmt.Errorf("%s %w", exch.GetName(), errExchangeBaseNotFound)
+	}
+	err = b.CurrencyPairs.IsAssetEnabled(item)
+	if err != nil {
+		return nil, err
+	}
+	collateralMode, err := exch.GetCollateralMode(ctx, item)
+	if err != nil {
+		return nil, err
+	}
+	return &gctrpc.GetCollateralModeResponse{
+		Exchange:       r.Exchange,
+		Asset:          r.Asset,
+		CollateralMode: collateralMode.String(),
+	}, nil
+}
+
+// SetCollateralMode sets the collateral type for the account asset
+func (s *RPCServer) SetCollateralMode(ctx context.Context, r *gctrpc.SetCollateralModeRequest) (*gctrpc.SetCollateralModeResponse, error) {
+	if r == nil {
+		return nil, fmt.Errorf("%w SetCollateralModeRequest", common.ErrNilPointer)
+	}
+	exch, err := s.GetExchangeByName(r.Exchange)
+	if err != nil {
+		return nil, err
+	}
+	if !exch.IsEnabled() {
+		return nil, fmt.Errorf("%s %w", exch.GetName(), errExchangeNotEnabled)
+	}
+	feat := exch.GetSupportedFeatures()
+	if !feat.FuturesCapabilities.CollateralMode {
+		return nil, fmt.Errorf("%w SetCollateralMode for exchange %v", common.ErrFunctionNotSupported, exch.GetName())
+	}
+	item, err := asset.New(r.Asset)
+	if err != nil {
+		return nil, err
+	}
+	b := exch.GetBase()
+	if b == nil {
+		return nil, fmt.Errorf("%s %w", exch.GetName(), errExchangeBaseNotFound)
+	}
+	err = b.CurrencyPairs.IsAssetEnabled(item)
+	if err != nil {
+		return nil, fmt.Errorf("%v %w", item, err)
+	}
+	cm, err := collateral.StringToMode(r.CollateralMode)
+	if err != nil {
+		return nil, fmt.Errorf("%w %v", order.ErrCollateralInvalid, r.CollateralMode)
+	}
+	err = exch.SetCollateralMode(ctx, item, cm)
+	if err != nil {
+		return nil, err
+	}
+	return &gctrpc.SetCollateralModeResponse{
+		Exchange: r.Exchange,
+		Asset:    r.Asset,
+		Success:  true,
+	}, nil
+}
+
+// SetMarginType sets the margin type for the account asset pair
+func (s *RPCServer) SetMarginType(ctx context.Context, r *gctrpc.SetMarginTypeRequest) (*gctrpc.SetMarginTypeResponse, error) {
+	if r == nil {
+		return nil, fmt.Errorf("%w SetMarginTypeRequest", common.ErrNilPointer)
+	}
+	if r.Pair == nil {
+		return nil, currency.ErrCurrencyPairEmpty
+	}
+	exch, err := s.GetExchangeByName(r.Exchange)
+	if err != nil {
+		return nil, err
+	}
+	if !exch.IsEnabled() {
+		return nil, fmt.Errorf("%s %w", r.Exchange, errExchangeNotEnabled)
+	}
+	ai, err := asset.New(r.Asset)
+	if err != nil {
+		return nil, err
+	}
+	enabledPairs, err := exch.GetEnabledPairs(ai)
+	if err != nil {
+		return nil, err
+	}
+	cp, err := enabledPairs.DeriveFrom(r.Pair.Base + r.Pair.Quote)
+	if err != nil {
+		return nil, err
+	}
+
+	mt, err := margin.StringToMarginType(r.MarginType)
+	if err != nil {
+		return nil, err
+	}
+
+	err = exch.SetMarginType(ctx, ai, cp, mt)
+	if err != nil {
+		return nil, err
+	}
+
+	return &gctrpc.SetMarginTypeResponse{
+		Exchange: r.Exchange,
+		Asset:    r.Asset,
+		Pair:     r.Pair,
+		Success:  true,
+	}, nil
+}
+
+// GetLeverage returns the leverage for the account asset pair
+func (s *RPCServer) GetLeverage(ctx context.Context, r *gctrpc.GetLeverageRequest) (*gctrpc.GetLeverageResponse, error) {
+	if r == nil {
+		return nil, fmt.Errorf("%w GetLeverageRequest", common.ErrNilPointer)
+	}
+	if r.Pair == nil {
+		return nil, currency.ErrCurrencyPairEmpty
+	}
+	exch, err := s.GetExchangeByName(r.Exchange)
+	if err != nil {
+		return nil, err
+	}
+	if !exch.IsEnabled() {
+		return nil, fmt.Errorf("%s %w", r.Exchange, errExchangeNotEnabled)
+	}
+	feat := exch.GetSupportedFeatures()
+	if !feat.FuturesCapabilities.Leverage {
+		return nil, fmt.Errorf("%w futures position tracking for exchange %v", common.ErrFunctionNotSupported, exch.GetName())
+	}
+	ai, err := asset.New(r.Asset)
+	if err != nil {
+		return nil, err
+	}
+	enabledPairs, err := exch.GetEnabledPairs(ai)
+	if err != nil {
+		return nil, err
+	}
+	cp, err := enabledPairs.DeriveFrom(r.Pair.Base + r.Pair.Quote)
+	if err != nil {
+		return nil, err
+	}
+
+	mt, err := margin.StringToMarginType(r.MarginType)
+	if err != nil {
+		return nil, err
+	}
+
+	var orderSide order.Side
+	if r.OrderSide != "" {
+		orderSide, err = order.StringToOrderSide(r.OrderSide)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	leverage, err := exch.GetLeverage(ctx, ai, cp, mt, orderSide)
+	if err != nil {
+		return nil, err
+	}
+
+	return &gctrpc.GetLeverageResponse{
+		Exchange:   r.Exchange,
+		Asset:      r.Asset,
+		Pair:       r.Pair,
+		MarginType: r.MarginType,
+		Leverage:   leverage,
+		OrderSide:  r.OrderSide,
+	}, nil
+}
+
+// SetLeverage sets the leverage for the account asset pair
+func (s *RPCServer) SetLeverage(ctx context.Context, r *gctrpc.SetLeverageRequest) (*gctrpc.SetLeverageResponse, error) {
+	if r == nil {
+		return nil, fmt.Errorf("%w SetLeverageRequest", common.ErrNilPointer)
+	}
+	if r.Pair == nil {
+		return nil, currency.ErrCurrencyPairEmpty
+	}
+	exch, err := s.GetExchangeByName(r.Exchange)
+	if err != nil {
+		return nil, err
+	}
+	if !exch.IsEnabled() {
+		return nil, fmt.Errorf("%s %w", r.Exchange, errExchangeNotEnabled)
+	}
+	feat := exch.GetSupportedFeatures()
+	if !feat.FuturesCapabilities.Leverage {
+		return nil, fmt.Errorf("%w futures position tracking for exchange %v", common.ErrFunctionNotSupported, exch.GetName())
+	}
+	ai, err := asset.New(r.Asset)
+	if err != nil {
+		return nil, err
+	}
+	enabledPairs, err := exch.GetEnabledPairs(ai)
+	if err != nil {
+		return nil, err
+	}
+	cp, err := enabledPairs.DeriveFrom(r.Pair.Base + r.Pair.Quote)
+	if err != nil {
+		return nil, err
+	}
+
+	mt, err := margin.StringToMarginType(r.MarginType)
+	if err != nil {
+		return nil, err
+	}
+
+	var orderSide order.Side
+	if r.OrderSide != "" {
+		orderSide, err = order.StringToOrderSide(r.OrderSide)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	err = exch.SetLeverage(ctx, ai, cp, mt, r.Leverage, orderSide)
+	if err != nil {
+		return nil, err
+	}
+
+	return &gctrpc.SetLeverageResponse{
+		Exchange:   r.Exchange,
+		Asset:      r.Asset,
+		Pair:       r.Pair,
+		MarginType: r.MarginType,
+		OrderSide:  r.OrderSide,
+		Success:    true,
+	}, nil
+}
+
+// ChangePositionMargin sets a position's margin
+func (s *RPCServer) ChangePositionMargin(ctx context.Context, r *gctrpc.ChangePositionMarginRequest) (*gctrpc.ChangePositionMarginResponse, error) {
+	if r == nil {
+		return nil, fmt.Errorf("%w ChangePositionMarginRequest", common.ErrNilPointer)
+	}
+	if r.Pair == nil {
+		return nil, currency.ErrCurrencyPairEmpty
+	}
+	exch, err := s.GetExchangeByName(r.Exchange)
+	if err != nil {
+		return nil, err
+	}
+	if !exch.IsEnabled() {
+		return nil, fmt.Errorf("%s %w", r.Exchange, errExchangeNotEnabled)
+	}
+	ai, err := asset.New(r.Asset)
+	if err != nil {
+		return nil, err
+	}
+	enabledPairs, err := exch.GetEnabledPairs(ai)
+	if err != nil {
+		return nil, err
+	}
+	cp, err := enabledPairs.DeriveFrom(r.Pair.Base + r.Pair.Quote)
+	if err != nil {
+		return nil, err
+	}
+
+	mt, err := margin.StringToMarginType(r.MarginType)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := exch.ChangePositionMargin(ctx, &margin.PositionChangeRequest{
+		Exchange:                exch.GetName(),
+		Pair:                    cp,
+		Asset:                   ai,
+		MarginType:              mt,
+		OriginalAllocatedMargin: r.OriginalAllocatedMargin,
+		NewAllocatedMargin:      r.NewAllocatedMargin,
+		MarginSide:              r.MarginSide,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return &gctrpc.ChangePositionMarginResponse{
+		Exchange:           r.Exchange,
+		Asset:              r.Asset,
+		Pair:               r.Pair,
+		MarginType:         r.MarginType,
+		NewAllocatedMargin: resp.AllocatedMargin,
+		MarginSide:         r.MarginSide,
+	}, nil
+}
+
+// GetOpenInterest fetches the open interest from the exchange
+func (s *RPCServer) GetOpenInterest(ctx context.Context, r *gctrpc.GetOpenInterestRequest) (*gctrpc.GetOpenInterestResponse, error) {
+	if r == nil {
+		return nil, fmt.Errorf("%w GetOpenInterestRequest", common.ErrNilPointer)
+	}
+	exch, err := s.GetExchangeByName(r.Exchange)
+	if err != nil {
+		return nil, err
+	}
+	if !exch.IsEnabled() {
+		return nil, fmt.Errorf("%s %w", r.Exchange, errExchangeNotEnabled)
+	}
+	feat := exch.GetSupportedFeatures()
+	if !feat.FuturesCapabilities.OpenInterest.Supported {
+		return nil, common.ErrFunctionNotSupported
+	}
+	keys := make([]key.PairAsset, len(r.Data))
+	for i := range r.Data {
+		var a asset.Item
+		a, err = asset.New(r.Data[i].Asset)
+		if err != nil {
+			return nil, err
+		}
+		keys[i].Base = currency.NewCode(r.Data[i].Pair.Base).Item
+		keys[i].Quote = currency.NewCode(r.Data[i].Pair.Quote).Item
+		keys[i].Asset = a
+	}
+
+	openInterest, err := exch.GetOpenInterest(ctx, keys...)
+	if err != nil {
+		return nil, err
+	}
+
+	resp := make([]*gctrpc.OpenInterestDataResponse, len(openInterest))
+	for i := range openInterest {
+		resp[i] = &gctrpc.OpenInterestDataResponse{
+			Exchange: openInterest[i].Key.Exchange,
+			Pair: &gctrpc.CurrencyPair{
+				Base:  openInterest[i].Key.Base.String(),
+				Quote: openInterest[i].Key.Quote.String(),
+			},
+			Asset:        openInterest[i].Key.Asset.String(),
+			OpenInterest: openInterest[i].OpenInterest,
+		}
+	}
+	return &gctrpc.GetOpenInterestResponse{
+		Data: resp,
+	}, nil
+}
+
+// GetCurrencyTradeURL returns the URL for the trading pair
+func (s *RPCServer) GetCurrencyTradeURL(ctx context.Context, r *gctrpc.GetCurrencyTradeURLRequest) (*gctrpc.GetCurrencyTradeURLResponse, error) {
+	if r == nil {
+		return nil, fmt.Errorf("%w GetCurrencyTradeURLRequest", common.ErrNilPointer)
+	}
+	exch, err := s.GetExchangeByName(r.Exchange)
+	if err != nil {
+		return nil, err
+	}
+	if !exch.IsEnabled() {
+		return nil, fmt.Errorf("%s %w", r.Exchange, errExchangeNotEnabled)
+	}
+	ai, err := asset.New(r.Asset)
+	if err != nil {
+		return nil, err
+	}
+	if r.Pair == nil ||
+		(r.Pair.Base == "" && r.Pair.Quote == "") {
+		return nil, currency.ErrCurrencyPairEmpty
+	}
+	cp, err := exch.MatchSymbolWithAvailablePairs(r.Pair.Base+r.Pair.Quote, ai, false)
+	if err != nil {
+		return nil, err
+	}
+	url, err := exch.GetCurrencyTradeURL(ctx, ai, cp)
+	if err != nil {
+		return nil, err
+	}
+	return &gctrpc.GetCurrencyTradeURLResponse{
+		Url: url,
 	}, nil
 }

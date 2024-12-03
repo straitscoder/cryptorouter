@@ -9,6 +9,7 @@ import (
 	"github.com/thrasher-corp/gocryptotrader/currency"
 	"github.com/thrasher-corp/gocryptotrader/database"
 	"github.com/thrasher-corp/gocryptotrader/exchanges/protocol"
+	"github.com/thrasher-corp/gocryptotrader/exchanges/subscription"
 	gctscript "github.com/thrasher-corp/gocryptotrader/gctscript/vm"
 	"github.com/thrasher-corp/gocryptotrader/log"
 	"github.com/thrasher-corp/gocryptotrader/portfolio"
@@ -26,10 +27,7 @@ const (
 	fileEncryptionDisabled               = -1
 	pairsLastUpdatedWarningThreshold     = 30 // 30 days
 	defaultHTTPTimeout                   = time.Second * 15
-	defaultWebsocketResponseCheckTimeout = time.Millisecond * 30
-	defaultWebsocketResponseMaxLimit     = time.Second * 7
 	defaultWebsocketOrderbookBufferLimit = 5
-	defaultWebsocketTrafficTimeout       = time.Second * 30
 	DefaultConnectionMonitorDelay        = time.Second * 2
 	maxAuthFailures                      = 3
 	defaultNTPAllowedDifference          = 50000000
@@ -47,6 +45,15 @@ const (
 	DefaultSyncerTimeoutREST = time.Second * 15
 	// DefaultSyncerTimeoutWebsocket the default time to switch from websocket to REST protocols without a response
 	DefaultSyncerTimeoutWebsocket = time.Minute
+	// DefaultWebsocketResponseCheckTimeout is the default timeout for
+	// websocket responses.
+	DefaultWebsocketResponseCheckTimeout = time.Millisecond * 30
+	// DefaultWebsocketResponseMaxLimit is the default maximum time for
+	// websocket responses.
+	DefaultWebsocketResponseMaxLimit = time.Second * 7
+	// DefaultWebsocketTrafficTimeout is the default timeout for websocket
+	// traffic.
+	DefaultWebsocketTrafficTimeout = time.Second * 30
 )
 
 // Constants here hold some messages
@@ -62,19 +69,21 @@ const (
 // Constants here define unset default values displayed in the config.json
 // file
 const (
-	APIURLNonDefaultMessage              = "NON_DEFAULT_HTTP_LINK_TO_EXCHANGE_API"
-	WebsocketURLNonDefaultMessage        = "NON_DEFAULT_HTTP_LINK_TO_WEBSOCKET_EXCHANGE_API"
-	DefaultUnsetAPIKey                   = "Key"
-	DefaultUnsetAPISecret                = "Secret"
-	DefaultUnsetAccountPlan              = "accountPlan"
-	DefaultForexProviderExchangeRatesAPI = "ExchangeRateHost"
+	APIURLNonDefaultMessage       = "NON_DEFAULT_HTTP_LINK_TO_EXCHANGE_API"
+	WebsocketURLNonDefaultMessage = "NON_DEFAULT_HTTP_LINK_TO_WEBSOCKET_EXCHANGE_API"
+	DefaultUnsetAPIKey            = "Key"
+	DefaultUnsetAPISecret         = "Secret"
+	DefaultUnsetAccountPlan       = "accountPlan"
 )
 
-// Variables here are used for configuration
+// Public errors exported by this package
 var (
-	Cfg                 Config
-	m                   sync.Mutex
 	ErrExchangeNotFound = errors.New("exchange not found")
+)
+
+var (
+	cfg Config
+	m   sync.Mutex
 )
 
 // Config is the overarching object that holds all the information for
@@ -119,6 +128,8 @@ type OrderManager struct {
 	Verbose                       bool          `json:"verbose"`
 	ActivelyTrackFuturesPositions bool          `json:"activelyTrackFuturesPositions"`
 	FuturesTrackingSeekDuration   time.Duration `json:"futuresTrackingSeekDuration"`
+	RespectOrderHistoryLimits     *bool         `json:"respectOrderHistoryLimits"`
+	CancelOrdersOnShutdown        bool          `json:"cancelOrdersOnShutdown"`
 }
 
 // DataHistoryManager holds all information required for the data history manager
@@ -306,8 +317,9 @@ type FeaturesEnabledConfig struct {
 
 // FeaturesConfig stores the exchanges supported and enabled features
 type FeaturesConfig struct {
-	Supports FeaturesSupportedConfig `json:"supports"`
-	Enabled  FeaturesEnabledConfig   `json:"enabled"`
+	Supports      FeaturesSupportedConfig `json:"supports"`
+	Enabled       FeaturesEnabledConfig   `json:"enabled"`
+	Subscriptions subscription.List       `json:"subscriptions,omitempty"`
 }
 
 // APIEndpointsConfig stores the API endpoint addresses

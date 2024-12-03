@@ -1,7 +1,6 @@
 package btse
 
 import (
-	"sync"
 	"time"
 )
 
@@ -21,7 +20,10 @@ type FundingHistoryData struct {
 }
 
 // MarketSummary response data
-type MarketSummary []struct {
+type MarketSummary []*MarketPair
+
+// MarketPair is a single pair in Market Summary
+type MarketPair struct {
 	Symbol              string   `json:"symbol"`
 	Last                float64  `json:"last"`
 	LowestAsk           float64  `json:"lowestAsk"`
@@ -56,7 +58,7 @@ type MarketSummary []struct {
 	AvailableSettlement []string `json:"availableSettlement"`
 	Futures             bool     `json:"futures"`
 	IsMarketOpenToSpot  bool     `json:"isMarketOpenToSpot"`
-	IsMarketOpentoOTC   bool     `json:"isMarketOpenToOtc"`
+	IsMarketOpenToOTC   bool     `json:"isMarketOpenToOtc"`
 }
 
 // OHLCV holds Open, High Low, Close, Volume data for set symbol
@@ -350,16 +352,6 @@ type ErrorResponse struct {
 	Message   string `json:"message"`
 	Status    int    `json:"status"`
 }
-
-// OrderSizeLimit holds accepted minimum, maximum, and size increment when submitting new orders
-type OrderSizeLimit struct {
-	MinOrderSize     float64
-	MaxOrderSize     float64
-	MinSizeIncrement float64
-}
-
-// orderSizeLimitMap map of OrderSizeLimit per currency
-var orderSizeLimitMap sync.Map
 
 // WsSubscriptionAcknowledgement contains successful subscription messages
 type WsSubscriptionAcknowledgement struct {

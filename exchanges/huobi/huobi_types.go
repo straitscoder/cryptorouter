@@ -3,6 +3,7 @@ package huobi
 import (
 	"github.com/thrasher-corp/gocryptotrader/currency"
 	"github.com/thrasher-corp/gocryptotrader/exchanges/order"
+	"github.com/thrasher-corp/gocryptotrader/types"
 )
 
 type errorCapture struct {
@@ -34,7 +35,7 @@ type CurrenciesChainData struct {
 	Currency   string `json:"currency"`
 	AssetType  uint8  `json:"assetType"`
 	InstStatus string `json:"instStatus"`
-	ChainData  []struct {
+	ChainData  []*struct {
 		Chain                     string  `json:"chain"`
 		DisplayName               string  `json:"displayName"`
 		BaseChain                 string  `json:"baseChain"`
@@ -480,6 +481,7 @@ type SwapMarketsData struct {
 	PriceTick      float64 `json:"price_tick"`
 	SettlementDate string  `json:"settlement_date"`
 	CreateDate     string  `json:"create_date"`
+	DeliveryTime   string  `json:"delivery_time"`
 	ContractStatus int64   `json:"contract_status"`
 }
 
@@ -519,16 +521,40 @@ type Tickers struct {
 	Data []Ticker `json:"data"`
 }
 
+// FuturesBatchTicker holds ticker data
+type FuturesBatchTicker struct {
+	ID             float64      `json:"id"`
+	Timestamp      int64        `json:"ts"`
+	Ask            [2]float64   `json:"ask"`
+	Bid            [2]float64   `json:"bid"`
+	BusinessType   string       `json:"business_type"`
+	ContractCode   string       `json:"contract_code"`
+	Open           types.Number `json:"open"`
+	Close          types.Number `json:"close"`
+	Low            types.Number `json:"low"`
+	High           types.Number `json:"high"`
+	Amount         types.Number `json:"amount"`
+	Count          float64      `json:"count"`
+	Volume         types.Number `json:"vol"`
+	TradeTurnover  types.Number `json:"trade_turnover"`
+	TradePartition string       `json:"trade_partition"`
+	Symbol         string       `json:"symbol"` // If ContractCode is empty, Symbol is populated
+}
+
 // Ticker latest ticker data
 type Ticker struct {
-	Amount float64 `json:"amount"`
-	Close  float64 `json:"close"`
-	Count  int64   `json:"count"`
-	High   float64 `json:"high"`
-	Low    float64 `json:"low"`
-	Open   float64 `json:"open"`
-	Symbol string  `json:"symbol"`
-	Volume float64 `json:"vol"`
+	Symbol  string  `json:"symbol"`
+	Open    float64 `json:"open"`
+	High    float64 `json:"high"`
+	Low     float64 `json:"low"`
+	Close   float64 `json:"close"`
+	Amount  float64 `json:"amount"`
+	Volume  float64 `json:"vol"`
+	Count   float64 `json:"count"`
+	Bid     float64 `json:"bid"`
+	BidSize float64 `json:"bidSize"`
+	Ask     float64 `json:"ask"`
+	AskSize float64 `json:"askSize"`
 }
 
 // OrderBookDataRequestParamsType var for request param types
@@ -720,7 +746,7 @@ type MarginAccountBalance struct {
 // SpotNewOrderRequestParams holds the params required to place
 // an order
 type SpotNewOrderRequestParams struct {
-	AccountID int                           `json:"account-id,string"` // Account ID, obtained using the accounts method. Curency trades use the accountid of the ‘spot’ account; for loan asset transactions, please use the accountid of the ‘margin’ account.
+	AccountID int                           `json:"account-id,string"` // Account ID, obtained using the accounts method. Currency trades use the accountid of the ‘spot’ account; for loan asset transactions, please use the accountid of the ‘margin’ account.
 	Amount    float64                       `json:"amount"`            // The limit price indicates the quantity of the order, the market price indicates how much to buy when the order is paid, and the market price indicates how much the coin is sold when the order is sold.
 	Price     float64                       `json:"price"`             // Order price, market price does not use  this parameter
 	Source    string                        `json:"source"`            // Order source, api: API call, margin-api: loan asset transaction
@@ -768,7 +794,7 @@ var (
 	// SpotNewOrderRequestTypeBuyLimit buy limit order
 	SpotNewOrderRequestTypeBuyLimit = SpotNewOrderRequestParamsType("buy-limit")
 
-	// SpotNewOrderRequestTypeSellLimit sell lmit order
+	// SpotNewOrderRequestTypeSellLimit sell limit order
 	SpotNewOrderRequestTypeSellLimit = SpotNewOrderRequestParamsType("sell-limit")
 )
 
@@ -1140,13 +1166,14 @@ var (
 		"reduceShort":    12,
 	}
 
-	validContractTypes = []string{
-		"this_week", "next_week", "quarter", "next_quarter",
+	contractExpiryNames = map[string]string{
+		"this_week":    "CW",
+		"next_week":    "NW",
+		"quarter":      "CQ",
+		"next_quarter": "NQ",
 	}
 
-	validContractShortTypes = []string{
-		"cw", "nw", "cq", "nq",
-	}
+	validContractExpiryCodes = []string{"CW", "NW", "CQ", "NQ"}
 
 	validFuturesPeriods = []string{
 		"1min", "5min", "15min", "30min", "60min", "1hour", "4hour", "1day",
