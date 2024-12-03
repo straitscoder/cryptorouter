@@ -7,7 +7,6 @@ import (
 	"math"
 	"sort"
 	"strconv"
-	"sync"
 	"time"
 
 	"github.com/thrasher-corp/gocryptotrader/common"
@@ -17,6 +16,8 @@ import (
 	"github.com/thrasher-corp/gocryptotrader/exchanges/account"
 	"github.com/thrasher-corp/gocryptotrader/exchanges/asset"
 	"github.com/thrasher-corp/gocryptotrader/exchanges/deposit"
+	"github.com/thrasher-corp/gocryptotrader/exchanges/fundingrate"
+	"github.com/thrasher-corp/gocryptotrader/exchanges/futures"
 	"github.com/thrasher-corp/gocryptotrader/exchanges/kline"
 	"github.com/thrasher-corp/gocryptotrader/exchanges/order"
 	"github.com/thrasher-corp/gocryptotrader/exchanges/orderbook"
@@ -27,29 +28,6 @@ import (
 	"github.com/thrasher-corp/gocryptotrader/log"
 	"github.com/thrasher-corp/gocryptotrader/portfolio/withdraw"
 )
-
-// GetDefaultConfig returns a default exchange config
-func (y *Yobit) GetDefaultConfig(ctx context.Context) (*config.Exchange, error) {
-	y.SetDefaults()
-	exchCfg := new(config.Exchange)
-	exchCfg.Name = y.Name
-	exchCfg.HTTPTimeout = exchange.DefaultHTTPTimeout
-	exchCfg.BaseCurrencies = y.BaseCurrencies
-
-	err := y.SetupDefaults(exchCfg)
-	if err != nil {
-		return nil, err
-	}
-
-	if y.Features.Supports.RESTCapabilities.AutoPairUpdates {
-		err = y.UpdateTradablePairs(ctx, true)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	return exchCfg, nil
-}
 
 // SetDefaults sets current default value for Yobit
 func (y *Yobit) SetDefaults() {
@@ -99,7 +77,7 @@ func (y *Yobit) SetDefaults() {
 	y.Requester, err = request.New(y.Name,
 		common.NewHTTPClientWithTimeout(exchange.DefaultHTTPTimeout),
 		// Server responses are cached every 2 seconds.
-		request.WithLimiter(request.NewBasicRateLimit(time.Second, 1)))
+		request.WithLimiter(request.NewBasicRateLimit(time.Second, 1, 1)))
 	if err != nil {
 		log.Errorln(log.ExchangeSys, err)
 	}
@@ -123,38 +101,6 @@ func (y *Yobit) Setup(exch *config.Exchange) error {
 		return nil
 	}
 	return y.SetupDefaults(exch)
-}
-
-// Start starts the WEX go routine
-func (y *Yobit) Start(ctx context.Context, wg *sync.WaitGroup) error {
-	if wg == nil {
-		return fmt.Errorf("%T %w", wg, common.ErrNilPointer)
-	}
-	wg.Add(1)
-	go func() {
-		y.Run(ctx)
-		wg.Done()
-	}()
-	return nil
-}
-
-// Run implements the Yobit wrapper
-func (y *Yobit) Run(ctx context.Context) {
-	if y.Verbose {
-		y.PrintEnabledPairs()
-	}
-
-	if !y.GetEnabledFeatures().AutoPairUpdates {
-		return
-	}
-
-	err := y.UpdateTradablePairs(ctx, false)
-	if err != nil {
-		log.Errorf(log.ExchangeSys,
-			"%s failed to update tradable pairs. Err: %s",
-			y.Name,
-			err)
-	}
 }
 
 // FetchTradablePairs returns a list of the exchanges tradable pairs
@@ -288,7 +234,7 @@ func (y *Yobit) UpdateOrderbook(ctx context.Context, p currency.Pair, assetType 
 
 	for i := range orderbookNew.Bids {
 		book.Bids = append(book.Bids,
-			orderbook.Item{
+			orderbook.Tranche{
 				Price:  orderbookNew.Bids[i][0],
 				Amount: orderbookNew.Bids[i][1],
 			})
@@ -296,7 +242,7 @@ func (y *Yobit) UpdateOrderbook(ctx context.Context, p currency.Pair, assetType 
 
 	for i := range orderbookNew.Asks {
 		book.Asks = append(book.Asks,
-			orderbook.Item{
+			orderbook.Tranche{
 				Price:  orderbookNew.Asks[i][0],
 				Amount: orderbookNew.Asks[i][1],
 			})
@@ -424,7 +370,7 @@ func (y *Yobit) GetHistoricTrades(_ context.Context, _ currency.Pair, _ asset.It
 // SubmitOrder submits a new order
 // Yobit only supports limit orders
 func (y *Yobit) SubmitOrder(ctx context.Context, s *order.Submit) (*order.SubmitResponse, error) {
-	if err := s.Validate(); err != nil {
+	if err := s.Validate(y.GetTradingRequirements()); err != nil {
 		return nil, err
 	}
 
@@ -560,7 +506,7 @@ func (y *Yobit) GetOrderInfo(ctx context.Context, orderID string, _ currency.Pai
 
 // GetDepositAddress returns a deposit address for a specified currency
 func (y *Yobit) GetDepositAddress(ctx context.Context, cryptocurrency currency.Code, _, _ string) (*deposit.Address, error) {
-	if cryptocurrency == currency.XRP {
+	if cryptocurrency.Equal(currency.XRP) {
 		// {"success":1,"return":{"status":"online","blocks":65778672,"address":996707783,"processed_amount":0.00000000,"server_time":1629425030}}
 		return nil, errors.New("XRP isn't supported as the API does not return a valid address")
 	}
@@ -586,7 +532,7 @@ func (y *Yobit) WithdrawCryptocurrencyFunds(ctx context.Context, withdrawRequest
 	if err != nil {
 		return nil, err
 	}
-	if len(resp.Error) > 0 {
+	if resp.Error != "" {
 		return nil, errors.New(resp.Error)
 	}
 	return &withdraw.ExchangeResponse{}, nil
@@ -759,4 +705,29 @@ func (y *Yobit) GetServerTime(ctx context.Context, _ asset.Item) (time.Time, err
 		return time.Time{}, err
 	}
 	return time.Unix(info.ServerTime, 0), nil
+}
+
+// GetFuturesContractDetails returns all contracts from the exchange by asset type
+func (y *Yobit) GetFuturesContractDetails(context.Context, asset.Item) ([]futures.Contract, error) {
+	return nil, common.ErrFunctionNotSupported
+}
+
+// GetLatestFundingRates returns the latest funding rates data
+func (y *Yobit) GetLatestFundingRates(context.Context, *fundingrate.LatestRateRequest) ([]fundingrate.LatestRateResponse, error) {
+	return nil, common.ErrFunctionNotSupported
+}
+
+// UpdateOrderExecutionLimits updates order execution limits
+func (y *Yobit) UpdateOrderExecutionLimits(_ context.Context, _ asset.Item) error {
+	return common.ErrNotYetImplemented
+}
+
+// GetCurrencyTradeURL returns the URL to the exchange's trade page for the given asset and currency pair
+func (y *Yobit) GetCurrencyTradeURL(_ context.Context, a asset.Item, cp currency.Pair) (string, error) {
+	_, err := y.CurrencyPairs.IsPairEnabled(cp, a)
+	if err != nil {
+		return "", err
+	}
+	cp.Delimiter = currency.ForwardSlashDelimiter
+	return tradeBaseURL + cp.Upper().String(), nil
 }

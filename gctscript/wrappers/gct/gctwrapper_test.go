@@ -11,7 +11,9 @@ import (
 
 	objects "github.com/d5/tengo/v2"
 	"github.com/thrasher-corp/gocryptotrader/common"
+	"github.com/thrasher-corp/gocryptotrader/config"
 	"github.com/thrasher-corp/gocryptotrader/engine"
+	exchange "github.com/thrasher-corp/gocryptotrader/exchanges"
 	"github.com/thrasher-corp/gocryptotrader/exchanges/asset"
 	"github.com/thrasher-corp/gocryptotrader/gctscript/modules"
 	"github.com/thrasher-corp/gocryptotrader/gctscript/modules/gct"
@@ -38,8 +40,7 @@ func TestMain(m *testing.M) {
 		log.Print(err)
 		os.Exit(1)
 	}
-	exch.SetDefaults()
-	cfg, err := exch.GetDefaultConfig(context.Background())
+	cfg, err := exchange.GetDefaultConfig(context.Background(), exch)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -65,7 +66,7 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 
-	engine.Bot.OrderManager, err = engine.SetupOrderManager(em, &engine.CommunicationManager{}, &engine.Bot.ServicesWG, false, false, 0)
+	engine.Bot.OrderManager, err = engine.SetupOrderManager(em, &engine.CommunicationManager{}, &engine.Bot.ServicesWG, &config.OrderManager{})
 	if err != nil {
 		log.Print(err)
 		os.Exit(1)
@@ -95,10 +96,10 @@ var (
 		Value: "error",
 	}
 	currencyPair = &objects.String{
-		Value: "BTCUSD",
+		Value: "BTC-USD",
 	}
 	delimiter = &objects.String{
-		Value: "",
+		Value: "-",
 	}
 	assetType = &objects.String{
 		Value: "spot",

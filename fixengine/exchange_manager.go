@@ -15,7 +15,6 @@ import (
 	"github.com/thrasher-corp/gocryptotrader/exchanges/bithumb"
 	"github.com/thrasher-corp/gocryptotrader/exchanges/bitmex"
 	"github.com/thrasher-corp/gocryptotrader/exchanges/bitstamp"
-	"github.com/thrasher-corp/gocryptotrader/exchanges/bittrex"
 	"github.com/thrasher-corp/gocryptotrader/exchanges/btcmarkets"
 	"github.com/thrasher-corp/gocryptotrader/exchanges/btse"
 	"github.com/thrasher-corp/gocryptotrader/exchanges/bybit"
@@ -26,14 +25,11 @@ import (
 	"github.com/thrasher-corp/gocryptotrader/exchanges/gemini"
 	"github.com/thrasher-corp/gocryptotrader/exchanges/hitbtc"
 	"github.com/thrasher-corp/gocryptotrader/exchanges/huobi"
-	"github.com/thrasher-corp/gocryptotrader/exchanges/itbit"
 	"github.com/thrasher-corp/gocryptotrader/exchanges/kraken"
 	"github.com/thrasher-corp/gocryptotrader/exchanges/lbank"
-	"github.com/thrasher-corp/gocryptotrader/exchanges/okcoin"
 	"github.com/thrasher-corp/gocryptotrader/exchanges/okx"
 	"github.com/thrasher-corp/gocryptotrader/exchanges/poloniex"
 	"github.com/thrasher-corp/gocryptotrader/exchanges/yobit"
-	"github.com/thrasher-corp/gocryptotrader/exchanges/zb"
 	"github.com/thrasher-corp/gocryptotrader/log"
 )
 
@@ -170,8 +166,6 @@ func (m *ExchangeManager) NewExchangeByName(name string) (exchange.IBotExchange,
 		exch = new(bitmex.Bitmex)
 	case "bitstamp":
 		exch = new(bitstamp.Bitstamp)
-	case "bittrex":
-		exch = new(bittrex.Bittrex)
 	case "btc markets":
 		exch = new(btcmarkets.BTCMarkets)
 	case "btse":
@@ -192,22 +186,16 @@ func (m *ExchangeManager) NewExchangeByName(name string) (exchange.IBotExchange,
 		exch = new(hitbtc.HitBTC)
 	case "huobi":
 		exch = new(huobi.HUOBI)
-	case "itbit":
-		exch = new(itbit.ItBit)
 	case "kraken":
 		exch = new(kraken.Kraken)
 	case "lbank":
 		exch = new(lbank.Lbank)
-	case "okcoin international":
-		exch = new(okcoin.Okcoin)
 	case "okx":
 		exch = new(okx.Okx)
 	case "poloniex":
 		exch = new(poloniex.Poloniex)
 	case "yobit":
 		exch = new(yobit.Yobit)
-	case "zb":
-		exch = new(zb.ZB)
 	default:
 		if m.Builder != nil {
 			return m.Builder.NewExchangeByName(nameLower)

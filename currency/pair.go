@@ -4,32 +4,39 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"unicode"
 )
 
-var errCannotCreatePair = errors.New("cannot create currency pair")
+var (
+	errCannotCreatePair       = errors.New("cannot create currency pair")
+	errDelimiterNotFound      = errors.New("delimiter not found")
+	errDelimiterCannotBeEmpty = errors.New("delimiter cannot be empty")
+)
 
-// NewPairDelimiter splits the desired currency string at delimiter, the returns
-// a Pair struct
+// NewBTCUSDT is a shortcut for NewPair(BTC, USDT)
+func NewBTCUSDT() Pair {
+	return NewPair(BTC, USDT)
+}
+
+// NewBTCUSD is a shortcut for NewPair(BTC, USD)
+func NewBTCUSD() Pair {
+	return NewPair(BTC, USD)
+}
+
+// NewPairDelimiter splits the desired currency string at delimiter, then returns a Pair struct
 func NewPairDelimiter(currencyPair, delimiter string) (Pair, error) {
-	if !strings.Contains(currencyPair, delimiter) {
+	if currencyPair == "" {
+		return EMPTYPAIR, errEmptyPairString
+	}
+	if delimiter == "" {
+		return EMPTYPAIR, errDelimiterCannotBeEmpty
+	}
+	index := strings.Index(currencyPair, delimiter)
+	if index == -1 {
 		return EMPTYPAIR,
-			fmt.Errorf("delimiter: [%s] not found in currencypair string", delimiter)
+			fmt.Errorf("supplied pair: [%s] %s %w", currencyPair, delimiter, errDelimiterNotFound)
 	}
-	result := strings.Split(currencyPair, delimiter)
-	if len(result) < 2 {
-		return EMPTYPAIR,
-			fmt.Errorf("supplied pair: [%s] cannot be split with %s",
-				currencyPair,
-				delimiter)
-	}
-	if len(result) > 2 {
-		result[1] = strings.Join(result[1:], delimiter)
-	}
-	return Pair{
-		Delimiter: delimiter,
-		Base:      NewCode(result[0]),
-		Quote:     NewCode(result[1]),
-	}, nil
+	return Pair{Delimiter: delimiter, Base: NewCode(currencyPair[:index]), Quote: NewCode(currencyPair[index+1:])}, nil
 }
 
 // NewPairFromStrings returns a CurrencyPair without a delimiter
@@ -51,34 +58,12 @@ func NewPairFromStrings(base, quote string) (Pair, error) {
 
 // NewPair returns a currency pair from currency codes
 func NewPair(baseCurrency, quoteCurrency Code) Pair {
-	return Pair{
-		Base:  baseCurrency,
-		Quote: quoteCurrency,
-	}
+	return Pair{Base: baseCurrency, Quote: quoteCurrency}
 }
 
 // NewPairWithDelimiter returns a CurrencyPair with a delimiter
 func NewPairWithDelimiter(base, quote, delimiter string) Pair {
-	return Pair{
-		Base:      NewCode(base),
-		Quote:     NewCode(quote),
-		Delimiter: delimiter,
-	}
-}
-
-// NewPairFromIndex returns a CurrencyPair via a currency string and specific
-// index
-func NewPairFromIndex(currencyPair, index string) (Pair, error) {
-	i := strings.Index(currencyPair, index)
-	if i == -1 {
-		return EMPTYPAIR,
-			fmt.Errorf("index %s not found in currency pair string", index)
-	}
-	if i == 0 {
-		return NewPairFromStrings(currencyPair[0:len(index)],
-			currencyPair[len(index):])
-	}
-	return NewPairFromStrings(currencyPair[0:i], currencyPair[i:])
+	return Pair{Base: NewCode(base), Quote: NewCode(quote), Delimiter: delimiter}
 }
 
 // NewPairFromString converts currency string into a new CurrencyPair
@@ -90,23 +75,17 @@ func NewPairFromString(currencyPair string) (Pair, error) {
 				errCannotCreatePair,
 				currencyPair)
 	}
-	var delimiter string
-	pairStrings := []string{currencyPair}
-	for x := range delimiters {
-		if strings.Contains(pairStrings[0], delimiters[x]) {
-			values := strings.SplitN(pairStrings[0], delimiters[x], 2)
-			if delimiter != "" {
-				values[1] += delimiter + pairStrings[1]
-				pairStrings = values
-			} else {
-				pairStrings = values
-			}
-			delimiter = delimiters[x]
+
+	for x := range currencyPair {
+		if unicode.IsPunct(rune(currencyPair[x])) {
+			return Pair{
+				Base:      NewCode(currencyPair[:x]),
+				Delimiter: string(currencyPair[x]),
+				Quote:     NewCode(currencyPair[x+1:]),
+			}, nil
 		}
 	}
-	if delimiter != "" {
-		return Pair{Base: NewCode(pairStrings[0]), Delimiter: delimiter, Quote: NewCode(pairStrings[1])}, nil
-	}
+
 	return NewPairFromStrings(currencyPair[0:3], currencyPair[3:])
 }
 
@@ -126,6 +105,15 @@ func NewPairFromFormattedPairs(currencyPair string, pairs Pairs, pairFmt PairFor
 // Format formats the given pair as a string
 func (f PairFormat) Format(pair Pair) string {
 	return pair.Format(f).String()
+}
+
+// clone returns a clone of the PairFormat
+func (f *PairFormat) clone() *PairFormat {
+	if f == nil {
+		return nil
+	}
+	c := *f
+	return &c
 }
 
 // MatchPairsWithNoDelimiter will move along a predictable index on the provided currencyPair
@@ -152,11 +140,21 @@ func MatchPairsWithNoDelimiter(currencyPair string, pairs Pairs, pairFmt PairFor
 
 // GetFormatting returns the formatting style of a pair
 func (p Pair) GetFormatting() (PairFormat, error) {
-	if p.Base.UpperCase != p.Quote.UpperCase {
-		return PairFormat{}, fmt.Errorf("%w casing mismatch", errPairFormattingInconsistent)
+	if p.Base.isCaseSensitive() && p.Quote.isCaseSensitive() && (p.Base.upperCase != p.Quote.upperCase) {
+		return EMPTYFORMAT, fmt.Errorf("%w casing mismatch", errPairFormattingInconsistent)
 	}
-	return PairFormat{
-		Uppercase: p.Base.UpperCase,
-		Delimiter: p.Delimiter,
-	}, nil
+	return PairFormat{Uppercase: p.Base.upperCase || p.Quote.upperCase, Delimiter: p.Delimiter}, nil
+}
+
+func (p Pair) hasFormatDifference(pairFmt PairFormat) bool {
+	return p.Delimiter != pairFmt.Delimiter ||
+		(p.Base.isCaseSensitive() && p.Base.upperCase != pairFmt.Uppercase) ||
+		(p.Quote.isCaseSensitive() && p.Quote.upperCase != pairFmt.Uppercase)
+}
+
+func (c Code) isCaseSensitive() bool {
+	if c.Item == nil {
+		return false
+	}
+	return c.Item.Symbol != c.Item.Lower
 }

@@ -8,16 +8,19 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
+	"github.com/shopspring/decimal"
 	"github.com/thrasher-corp/gocryptotrader/common"
+	"github.com/thrasher-corp/gocryptotrader/common/key"
 	"github.com/thrasher-corp/gocryptotrader/config"
 	"github.com/thrasher-corp/gocryptotrader/currency"
 	exchange "github.com/thrasher-corp/gocryptotrader/exchanges"
 	"github.com/thrasher-corp/gocryptotrader/exchanges/account"
 	"github.com/thrasher-corp/gocryptotrader/exchanges/asset"
 	"github.com/thrasher-corp/gocryptotrader/exchanges/deposit"
+	"github.com/thrasher-corp/gocryptotrader/exchanges/fundingrate"
+	"github.com/thrasher-corp/gocryptotrader/exchanges/futures"
 	"github.com/thrasher-corp/gocryptotrader/exchanges/kline"
 	"github.com/thrasher-corp/gocryptotrader/exchanges/order"
 	"github.com/thrasher-corp/gocryptotrader/exchanges/orderbook"
@@ -30,29 +33,6 @@ import (
 	"github.com/thrasher-corp/gocryptotrader/log"
 	"github.com/thrasher-corp/gocryptotrader/portfolio/withdraw"
 )
-
-// GetDefaultConfig returns a default exchange config
-func (b *Bitmex) GetDefaultConfig(ctx context.Context) (*config.Exchange, error) {
-	b.SetDefaults()
-	exchCfg := new(config.Exchange)
-	exchCfg.Name = b.Name
-	exchCfg.HTTPTimeout = exchange.DefaultHTTPTimeout
-	exchCfg.BaseCurrencies = b.BaseCurrencies
-
-	err := b.SetupDefaults(exchCfg)
-	if err != nil {
-		return nil, err
-	}
-
-	if b.Features.Supports.RESTCapabilities.AutoPairUpdates {
-		err = b.UpdateTradablePairs(ctx, true)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	return exchCfg, nil
-}
 
 // SetDefaults sets the basic defaults for Bitmex
 func (b *Bitmex) SetDefaults() {
@@ -120,6 +100,7 @@ func (b *Bitmex) SetDefaults() {
 				CryptoWithdrawal:    true,
 				TradeFee:            true,
 				CryptoWithdrawalFee: true,
+				FundingRateFetching: true,
 			},
 			WebsocketCapabilities: protocol.Features{
 				TradeFetching:          true,
@@ -131,6 +112,21 @@ func (b *Bitmex) SetDefaults() {
 				DeadMansSwitch:         true,
 				GetOrders:              true,
 				GetOrder:               true,
+				FundingRateFetching:    false, // supported but not implemented // TODO when multi-websocket support added
+			},
+			FuturesCapabilities: exchange.FuturesCapabilities{
+				FundingRates: true,
+				SupportedFundingRateFrequencies: map[kline.Interval]bool{
+					kline.EightHour: true,
+				},
+				FundingRateBatching: map[asset.Item]bool{
+					asset.PerpetualContract: true,
+				},
+				OpenInterest: exchange.OpenInterestSupport{
+					Supported:          true,
+					SupportedViaTicker: true,
+					SupportsRestBatch:  true,
+				},
 			},
 			WithdrawPermissions: exchange.AutoWithdrawCryptoWithAPIPermission |
 				exchange.WithdrawCryptoWithEmail |
@@ -140,11 +136,12 @@ func (b *Bitmex) SetDefaults() {
 		Enabled: exchange.FeaturesEnabled{
 			AutoPairUpdates: true,
 		},
+		Subscriptions: defaultSubscriptions.Clone(),
 	}
 
 	b.Requester, err = request.New(b.Name,
 		common.NewHTTPClientWithTimeout(exchange.DefaultHTTPTimeout),
-		request.WithLimiter(SetRateLimit()))
+		request.WithLimiter(GetRateLimit()))
 	if err != nil {
 		log.Errorln(log.ExchangeSys, err)
 	}
@@ -156,7 +153,7 @@ func (b *Bitmex) SetDefaults() {
 	if err != nil {
 		log.Errorln(log.ExchangeSys, err)
 	}
-	b.Websocket = stream.New()
+	b.Websocket = stream.NewWebsocket()
 	b.WebsocketResponseMaxLimit = exchange.DefaultWebsocketResponseMaxLimit
 	b.WebsocketResponseCheckTimeout = exchange.DefaultWebsocketResponseCheckTimeout
 	b.WebsocketOrderbookBufferLimit = exchange.DefaultWebsocketOrderbookBufferLimit
@@ -183,15 +180,14 @@ func (b *Bitmex) Setup(exch *config.Exchange) error {
 	}
 
 	err = b.Websocket.Setup(&stream.WebsocketSetup{
-		ExchangeConfig:         exch,
-		DefaultURL:             bitmexWSURL,
-		RunningURL:             wsEndpoint,
-		Connector:              b.WsConnect,
-		Subscriber:             b.Subscribe,
-		Unsubscriber:           b.Unsubscribe,
-		GenerateSubscriptions:  b.GenerateDefaultSubscriptions,
-		ConnectionMonitorDelay: exch.ConnectionMonitorDelay,
-		Features:               &b.Features.Supports.WebsocketCapabilities,
+		ExchangeConfig:        exch,
+		DefaultURL:            bitmexWSURL,
+		RunningURL:            wsEndpoint,
+		Connector:             b.WsConnect,
+		Subscriber:            b.Subscribe,
+		Unsubscriber:          b.Unsubscribe,
+		GenerateSubscriptions: b.generateSubscriptions,
+		Features:              &b.Features.Supports.WebsocketCapabilities,
 		OrderbookBufferConfig: buffer.Config{
 			UpdateEntriesByID: true,
 		},
@@ -199,49 +195,11 @@ func (b *Bitmex) Setup(exch *config.Exchange) error {
 	if err != nil {
 		return err
 	}
-	return b.Websocket.SetupNewConnection(stream.ConnectionSetup{
+	return b.Websocket.SetupNewConnection(&stream.ConnectionSetup{
 		ResponseCheckTimeout: exch.WebsocketResponseCheckTimeout,
 		ResponseMaxLimit:     exch.WebsocketResponseMaxLimit,
 		URL:                  bitmexWSURL,
 	})
-}
-
-// Start starts the Bitmex go routine
-func (b *Bitmex) Start(ctx context.Context, wg *sync.WaitGroup) error {
-	if wg == nil {
-		return fmt.Errorf("%T %w", wg, common.ErrNilPointer)
-	}
-	wg.Add(1)
-	go func() {
-		b.Run(ctx)
-		wg.Done()
-	}()
-	return nil
-}
-
-// Run implements the Bitmex wrapper
-func (b *Bitmex) Run(ctx context.Context) {
-	if b.Verbose {
-		wsEndpoint, err := b.API.Endpoints.GetURL(exchange.WebsocketSpot)
-		if err != nil {
-			log.Errorln(log.ExchangeSys, err)
-		}
-		log.Debugf(log.ExchangeSys,
-			"%s Websocket: %s. (url: %s).\n",
-			b.Name,
-			common.IsEnabled(b.Websocket.IsEnabled()),
-			wsEndpoint)
-		b.PrintEnabledPairs()
-	}
-
-	if !b.GetEnabledFeatures().AutoPairUpdates {
-		return
-	}
-
-	err := b.UpdateTradablePairs(ctx, false)
-	if err != nil {
-		log.Errorf(log.ExchangeSys, "%s failed to update tradable pairs. Err: %s", b.Name, err)
-	}
 }
 
 // FetchTradablePairs returns a list of the exchanges tradable pairs
@@ -362,11 +320,7 @@ func (b *Bitmex) UpdateTickers(ctx context.Context, a asset.Item) error {
 		return err
 	}
 
-	enabled, err := b.GetEnabledPairs(a)
-	if err != nil {
-		return err
-	}
-
+	var enabled bool
 instruments:
 	for j := range tick {
 		var pair currency.Pair
@@ -375,7 +329,7 @@ instruments:
 			if tick[j].Typ != futuresID {
 				continue instruments
 			}
-			pair, err = enabled.DeriveFrom(tick[j].Symbol)
+			pair, enabled, err = b.MatchSymbolCheckEnabled(tick[j].Symbol, a, false)
 		case asset.Index:
 			switch tick[j].Typ {
 			case bitMEXBasketIndexID,
@@ -390,23 +344,24 @@ instruments:
 			// contain an underscore. Calling DeriveFrom will then error and
 			// the instruments will be missed.
 			tick[j].Symbol = strings.Replace(tick[j].Symbol, currency.UnderscoreDelimiter, "", 1)
-			pair, err = enabled.DeriveFrom(tick[j].Symbol)
+			pair, enabled, err = b.MatchSymbolCheckEnabled(tick[j].Symbol, a, false)
 		case asset.PerpetualContract:
 			if tick[j].Typ != perpetualContractID {
 				continue instruments
 			}
-			pair, err = enabled.DeriveFrom(tick[j].Symbol)
+			pair, enabled, err = b.MatchSymbolCheckEnabled(tick[j].Symbol, a, false)
 		case asset.Spot:
 			if tick[j].Typ != spotID {
 				continue instruments
 			}
 			tick[j].Symbol = strings.Replace(tick[j].Symbol, currency.UnderscoreDelimiter, "", 1)
-			pair, err = enabled.DeriveFrom(tick[j].Symbol)
+			pair, enabled, err = b.MatchSymbolCheckEnabled(tick[j].Symbol, a, false)
 		}
-		if err != nil {
-			if !errors.Is(err, currency.ErrPairNotFound) {
-				return err
-			}
+
+		if err != nil && !errors.Is(err, currency.ErrPairNotFound) {
+			return err
+		}
+		if !enabled {
 			continue
 		}
 
@@ -421,6 +376,7 @@ instruments:
 			Pair:         pair,
 			LastUpdated:  tick[j].Timestamp,
 			ExchangeName: b.Name,
+			OpenInterest: tick[j].OpenInterest,
 			AssetType:    a})
 		if err != nil {
 			return err
@@ -503,17 +459,17 @@ func (b *Bitmex) UpdateOrderbook(ctx context.Context, p currency.Pair, assetType
 		return book, err
 	}
 
-	book.Asks = make(orderbook.Items, 0, len(orderbookNew))
-	book.Bids = make(orderbook.Items, 0, len(orderbookNew))
+	book.Asks = make(orderbook.Tranches, 0, len(orderbookNew))
+	book.Bids = make(orderbook.Tranches, 0, len(orderbookNew))
 	for i := range orderbookNew {
 		switch {
 		case strings.EqualFold(orderbookNew[i].Side, order.Sell.String()):
-			book.Asks = append(book.Asks, orderbook.Item{
+			book.Asks = append(book.Asks, orderbook.Tranche{
 				Amount: float64(orderbookNew[i].Size),
 				Price:  orderbookNew[i].Price,
 			})
 		case strings.EqualFold(orderbookNew[i].Side, order.Buy.String()):
-			book.Bids = append(book.Bids, orderbook.Item{
+			book.Bids = append(book.Bids, orderbook.Tranche{
 				Amount: float64(orderbookNew[i].Size),
 				Price:  orderbookNew[i].Price,
 			})
@@ -724,7 +680,7 @@ allTrades:
 
 // SubmitOrder submits a new order
 func (b *Bitmex) SubmitOrder(ctx context.Context, s *order.Submit) (*order.SubmitResponse, error) {
-	if err := s.Validate(); err != nil {
+	if err := s.Validate(b.GetTradingRequirements()); err != nil {
 		return nil, err
 	}
 
@@ -1103,4 +1059,316 @@ func (b *Bitmex) getOrderType(id int64) (order.Type, error) {
 		return order.UnknownType, fmt.Errorf("unhandled order type for '%d': %w", id, order.ErrTypeIsInvalid)
 	}
 	return o, nil
+}
+
+// GetFuturesContractDetails returns details about futures contracts
+func (b *Bitmex) GetFuturesContractDetails(ctx context.Context, item asset.Item) ([]futures.Contract, error) {
+	if !item.IsFutures() {
+		return nil, futures.ErrNotFuturesAsset
+	}
+	if !b.SupportsAsset(item) || item == asset.Index {
+		return nil, fmt.Errorf("%w %v", asset.ErrNotSupported, item)
+	}
+
+	marketInfo, err := b.GetInstruments(ctx, &GenericRequestParams{Reverse: true, Count: 500})
+	if err != nil {
+		return nil, err
+	}
+
+	resp := make([]futures.Contract, 0, len(marketInfo))
+	switch item {
+	case asset.PerpetualContract:
+		for x := range marketInfo {
+			if marketInfo[x].Typ != perpetualContractID {
+				continue
+			}
+			var cp, underlying currency.Pair
+			cp, err = currency.NewPairFromStrings(marketInfo[x].RootSymbol, marketInfo[x].QuoteCurrency)
+			if err != nil {
+				return nil, err
+			}
+			underlying, err = currency.NewPairFromStrings(marketInfo[x].RootSymbol, marketInfo[x].SettlCurrency)
+			if err != nil {
+				return nil, err
+			}
+			var s time.Time
+			if marketInfo[x].Front != "" {
+				s, err = time.Parse(time.RFC3339, marketInfo[x].Front)
+				if err != nil {
+					return nil, err
+				}
+			}
+			var contractSettlementType futures.ContractSettlementType
+			switch {
+			case cp.Quote.Equal(currency.USDT):
+				contractSettlementType = futures.Linear
+			case cp.Quote.Equal(currency.USD):
+				contractSettlementType = futures.Quanto
+			default:
+				contractSettlementType = futures.Inverse
+			}
+			resp = append(resp, futures.Contract{
+				Exchange:             b.Name,
+				Name:                 cp,
+				Underlying:           underlying,
+				Asset:                item,
+				StartDate:            s,
+				IsActive:             marketInfo[x].State == "Open",
+				Status:               marketInfo[x].State,
+				Type:                 futures.Perpetual,
+				SettlementType:       contractSettlementType,
+				SettlementCurrencies: currency.Currencies{currency.NewCode(marketInfo[x].SettlCurrency)},
+				Multiplier:           marketInfo[x].Multiplier,
+				LatestRate: fundingrate.Rate{
+					Time: marketInfo[x].FundingTimestamp,
+					Rate: decimal.NewFromFloat(marketInfo[x].FundingRate),
+				},
+			})
+		}
+	case asset.Futures:
+		for x := range marketInfo {
+			if marketInfo[x].Typ != futuresID {
+				continue
+			}
+			var cp, underlying currency.Pair
+			cp, err = currency.NewPairFromStrings(marketInfo[x].RootSymbol, marketInfo[x].Symbol[len(marketInfo[x].RootSymbol):])
+			if err != nil {
+				return nil, err
+			}
+			underlying, err = currency.NewPairFromStrings(marketInfo[x].RootSymbol, marketInfo[x].SettlCurrency)
+			if err != nil {
+				return nil, err
+			}
+			var s, e time.Time
+			if marketInfo[x].Front != "" {
+				s, err = time.Parse(time.RFC3339, marketInfo[x].Front)
+				if err != nil {
+					return nil, err
+				}
+			}
+			if marketInfo[x].Expiry != "" {
+				e, err = time.Parse(time.RFC3339, marketInfo[x].Expiry)
+				if err != nil {
+					return nil, err
+				}
+			}
+			var ct futures.ContractType
+			contractDuration := e.Sub(s)
+			switch {
+			case contractDuration <= kline.OneWeek.Duration()+kline.ThreeDay.Duration():
+				ct = futures.Weekly
+			case contractDuration <= kline.TwoWeek.Duration()+kline.ThreeDay.Duration():
+				ct = futures.Fortnightly
+			case contractDuration <= kline.OneMonth.Duration()+kline.ThreeWeek.Duration():
+				ct = futures.Monthly
+			case contractDuration <= kline.ThreeMonth.Duration()+kline.ThreeWeek.Duration():
+				ct = futures.Quarterly
+			case contractDuration <= kline.SixMonth.Duration()+kline.ThreeWeek.Duration():
+				ct = futures.HalfYearly
+			case contractDuration <= kline.NineMonth.Duration()+kline.ThreeWeek.Duration():
+				ct = futures.NineMonthly
+			case contractDuration <= kline.OneYear.Duration()+kline.ThreeWeek.Duration():
+				ct = futures.Yearly
+			}
+			contractSettlementType := futures.Inverse
+			switch {
+			case strings.Contains(cp.Quote.String(), "USDT"):
+				contractSettlementType = futures.Linear
+			case strings.Contains(cp.Quote.String(), "USD"):
+				contractSettlementType = futures.Quanto
+			}
+			resp = append(resp, futures.Contract{
+				Exchange:             b.Name,
+				Name:                 cp,
+				Underlying:           underlying,
+				Asset:                item,
+				StartDate:            s,
+				EndDate:              e,
+				IsActive:             marketInfo[x].State == "Open",
+				Status:               marketInfo[x].State,
+				Type:                 ct,
+				SettlementCurrencies: currency.Currencies{currency.NewCode(marketInfo[x].SettlCurrency)},
+				Multiplier:           marketInfo[x].Multiplier,
+				SettlementType:       contractSettlementType,
+			})
+		}
+	}
+	return resp, nil
+}
+
+// GetLatestFundingRates returns the latest funding rates data
+func (b *Bitmex) GetLatestFundingRates(ctx context.Context, r *fundingrate.LatestRateRequest) ([]fundingrate.LatestRateResponse, error) {
+	if r == nil {
+		return nil, fmt.Errorf("%w LatestRateRequest", common.ErrNilPointer)
+	}
+
+	if r.IncludePredictedRate {
+		return nil, fmt.Errorf("%w IncludePredictedRate", common.ErrFunctionNotSupported)
+	}
+
+	count := "1"
+	if r.Pair.IsEmpty() {
+		count = "500"
+	} else {
+		isPerp, err := b.IsPerpetualFutureCurrency(r.Asset, r.Pair)
+		if err != nil {
+			return nil, err
+		}
+		if !isPerp {
+			return nil, fmt.Errorf("%w %v %v", futures.ErrNotPerpetualFuture, r.Asset, r.Pair)
+		}
+	}
+
+	format, err := b.GetPairFormat(r.Asset, true)
+	if err != nil {
+		return nil, err
+	}
+	fPair := format.Format(r.Pair)
+	rates, err := b.GetFullFundingHistory(ctx, fPair, count, "", "", "", true, time.Time{}, time.Time{})
+	if err != nil {
+		return nil, err
+	}
+
+	resp := make([]fundingrate.LatestRateResponse, 0, len(rates))
+	// Bitmex returns historical rates from this endpoint, we only want the latest
+	latestRateSymbol := make(map[string]bool)
+	for i := range rates {
+		if _, ok := latestRateSymbol[rates[i].Symbol]; ok {
+			continue
+		}
+		latestRateSymbol[rates[i].Symbol] = true
+		var nr time.Time
+		nr, err = time.Parse(time.RFC3339, rates[i].FundingInterval)
+		if err != nil {
+			return nil, err
+		}
+		var cp currency.Pair
+		var isEnabled bool
+		cp, isEnabled, err = b.MatchSymbolCheckEnabled(rates[i].Symbol, r.Asset, false)
+		if err != nil && !errors.Is(err, currency.ErrPairNotFound) {
+			return nil, err
+		}
+		if !isEnabled {
+			continue
+		}
+		var isPerp bool
+		isPerp, err = b.IsPerpetualFutureCurrency(r.Asset, cp)
+		if err != nil {
+			return nil, err
+		}
+		if !isPerp {
+			continue
+		}
+		resp = append(resp, fundingrate.LatestRateResponse{
+			Exchange: b.Name,
+			Asset:    r.Asset,
+			Pair:     cp,
+			LatestRate: fundingrate.Rate{
+				Time: rates[i].Timestamp,
+				Rate: decimal.NewFromFloat(rates[i].FundingRate),
+			},
+			TimeOfNextRate: rates[i].Timestamp.Add(time.Duration(nr.Hour()) * time.Hour),
+			TimeChecked:    time.Now(),
+		})
+	}
+	return resp, nil
+}
+
+// IsPerpetualFutureCurrency ensures a given asset and currency is a perpetual future
+func (b *Bitmex) IsPerpetualFutureCurrency(a asset.Item, _ currency.Pair) (bool, error) {
+	return a == asset.PerpetualContract, nil
+}
+
+// UpdateOrderExecutionLimits updates order execution limits
+func (b *Bitmex) UpdateOrderExecutionLimits(_ context.Context, _ asset.Item) error {
+	return common.ErrNotYetImplemented
+}
+
+// GetOpenInterest returns the open interest rate for a given asset pair
+func (b *Bitmex) GetOpenInterest(ctx context.Context, k ...key.PairAsset) ([]futures.OpenInterest, error) {
+	for i := range k {
+		if k[i].Asset == asset.Spot || k[i].Asset == asset.Index {
+			// avoid API calls or returning errors after a successful retrieval
+			return nil, fmt.Errorf("%w %v %v", asset.ErrNotSupported, k[i].Asset, k[i].Pair())
+		}
+	}
+	if len(k) != 1 {
+		activeInstruments, err := b.GetActiveAndIndexInstruments(ctx)
+		if err != nil {
+			return nil, err
+		}
+		resp := make([]futures.OpenInterest, 0, len(activeInstruments))
+		for i := range activeInstruments {
+			for _, a := range b.CurrencyPairs.GetAssetTypes(true) {
+				var symbol currency.Pair
+				var enabled bool
+				symbol, enabled, err = b.MatchSymbolCheckEnabled(activeInstruments[i].Symbol, a, false)
+				if err != nil && !errors.Is(err, currency.ErrPairNotFound) {
+					return nil, err
+				}
+				if !enabled {
+					continue
+				}
+				var appendData bool
+				for j := range k {
+					if k[j].Pair().Equal(symbol) && k[j].Asset == a {
+						appendData = true
+						break
+					}
+				}
+				if len(k) > 0 && !appendData {
+					continue
+				}
+				resp = append(resp, futures.OpenInterest{
+					Key: key.ExchangePairAsset{
+						Exchange: b.Name,
+						Base:     symbol.Base.Item,
+						Quote:    symbol.Quote.Item,
+						Asset:    a,
+					},
+					OpenInterest: activeInstruments[i].OpenInterest,
+				})
+			}
+		}
+		return resp, nil
+	}
+	_, isEnabled, err := b.MatchSymbolCheckEnabled(k[0].Pair().String(), k[0].Asset, false)
+	if err != nil && !errors.Is(err, currency.ErrPairNotFound) {
+		return nil, err
+	}
+	if !isEnabled {
+		return nil, fmt.Errorf("%w %v %v", currency.ErrPairNotEnabled, k[0].Asset, k[0].Pair())
+	}
+	symbolStr, err := b.FormatSymbol(k[0].Pair(), k[0].Asset)
+	if err != nil {
+		return nil, err
+	}
+	instrument, err := b.GetInstrument(ctx, &GenericRequestParams{Symbol: symbolStr})
+	if err != nil {
+		return nil, err
+	}
+	if len(instrument) != 1 {
+		return nil, fmt.Errorf("%w %v", currency.ErrPairNotFound, k[0].Pair())
+	}
+	resp := make([]futures.OpenInterest, 1)
+	resp[0] = futures.OpenInterest{
+		Key: key.ExchangePairAsset{
+			Exchange: b.Name,
+			Base:     k[0].Base,
+			Quote:    k[0].Quote,
+			Asset:    k[0].Asset,
+		},
+		OpenInterest: instrument[0].OpenInterest,
+	}
+	return resp, nil
+}
+
+// GetCurrencyTradeURL returns the URL to the exchange's trade page for the given asset and currency pair
+func (b *Bitmex) GetCurrencyTradeURL(_ context.Context, a asset.Item, cp currency.Pair) (string, error) {
+	_, err := b.CurrencyPairs.IsPairEnabled(cp, a)
+	if err != nil {
+		return "", err
+	}
+	cp.Delimiter = currency.DashDelimiter
+	return tradeBaseURL + cp.Upper().String(), nil
 }

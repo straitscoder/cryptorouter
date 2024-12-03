@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/gofrs/uuid"
+	"github.com/thrasher-corp/gocryptotrader/common/key"
 	"github.com/thrasher-corp/gocryptotrader/currency"
 	"github.com/thrasher-corp/gocryptotrader/dispatch"
 	"github.com/thrasher-corp/gocryptotrader/exchanges/asset"
@@ -12,10 +13,9 @@ import (
 
 // const values for the ticker package
 const (
-	ErrExchangeNameUnset = "ticker exchange name not set"
-	errPairNotSet        = "ticker currency pair not set"
-	errAssetTypeNotSet   = "ticker asset type not set"
-	errTickerPriceIsNil  = "ticker price is nil"
+	errPairNotSet       = "ticker currency pair not set"
+	errAssetTypeNotSet  = "ticker asset type not set"
+	errTickerPriceIsNil = "ticker price is nil"
 )
 
 // Vars for the ticker package
@@ -25,7 +25,7 @@ var (
 
 // Service holds ticker information for each individual exchange
 type Service struct {
-	Tickers  map[string]map[*currency.Item]map[*currency.Item]map[asset.Item]*Ticker
+	Tickers  map[key.ExchangePairAsset]*Ticker
 	Exchange map[string]uuid.UUID
 	mux      *dispatch.Mux
 	mu       sync.Mutex
@@ -37,12 +37,17 @@ type Price struct {
 	High         float64       `json:"High"`
 	Low          float64       `json:"Low"`
 	Bid          float64       `json:"Bid"`
+	BidSize      float64       `json:"BidSize"`
 	Ask          float64       `json:"Ask"`
+	AskSize      float64       `json:"AskSize"`
 	Volume       float64       `json:"Volume"`
 	QuoteVolume  float64       `json:"QuoteVolume"`
 	PriceATH     float64       `json:"PriceATH"`
 	Open         float64       `json:"Open"`
 	Close        float64       `json:"Close"`
+	OpenInterest float64       `json:"OpenInterest"`
+	MarkPrice    float64       `json:"MarkPrice"`
+	IndexPrice   float64       `json:"IndexPrice"`
 	Pair         currency.Pair `json:"Pair"`
 	ExchangeName string        `json:"exchangeName"`
 	AssetType    asset.Item    `json:"assetType"`
@@ -51,9 +56,7 @@ type Price struct {
 	// Funding rate field variables
 	FlashReturnRate       float64
 	BidPeriod             float64
-	BidSize               float64
 	AskPeriod             float64
-	AskSize               float64
 	FlashReturnRateAmount float64
 }
 

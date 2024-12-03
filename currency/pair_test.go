@@ -3,8 +3,11 @@ package currency
 import (
 	"encoding/json"
 	"errors"
-	"fmt"
+	"strconv"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 const (
@@ -46,47 +49,18 @@ func TestUpper(t *testing.T) {
 }
 
 func TestPairUnmarshalJSON(t *testing.T) {
-	var unmarshalHere Pair
-	configPair, err := NewPairDelimiter("btc_usd", "_")
-	if err != nil {
-		t.Fatal(err)
-	}
+	var p Pair
+	assert.NoError(t, p.UnmarshalJSON([]byte(`"btc_usd"`)), "UnmarshalJSON should not error")
+	assert.Equal(t, "btc", p.Base.String(), "Base should be correct")
+	assert.Equal(t, "usd", p.Quote.String(), "Quote should be correct")
+	assert.Equal(t, "_", p.Delimiter, "Delimiter should be correct")
 
-	encoded, err := json.Marshal(configPair)
-	if err != nil {
-		t.Fatal("Pair UnmarshalJSON() error", err)
-	}
+	assert.ErrorIs(t, p.UnmarshalJSON([]byte(`"btcusd"`)), errCannotCreatePair, "UnmarshalJSON with no delimiter should error")
 
-	err = json.Unmarshal(encoded, &unmarshalHere)
-	if err != nil {
-		t.Fatal("Pair UnmarshalJSON() error", err)
-	}
-
-	err = json.Unmarshal(encoded, &unmarshalHere)
-	if err != nil {
-		t.Fatal("Pair UnmarshalJSON() error", err)
-	}
-
-	if !unmarshalHere.Equal(configPair) {
-		t.Errorf("Pair UnmarshalJSON() error expected %s but received %s",
-			configPair, unmarshalHere)
-	}
-
-	encoded, err = json.Marshal(EMPTYPAIR)
-	if err != nil {
-		t.Fatal(err)
-	}
-	err = json.Unmarshal(encoded, &unmarshalHere)
-	if err != nil {
-		t.Fatal("Pair UnmarshalJSON() error", err)
-	}
-	err = json.Unmarshal([]byte("null"), &unmarshalHere)
-	if err != nil {
-		t.Fatal("Pair UnmarshalJSON() error", err)
-	}
-	if unmarshalHere != EMPTYPAIR {
-		t.Fatalf("Expected EMPTYPAIR got: %s", unmarshalHere)
-	}
+	assert.NoError(t, p.UnmarshalJSON([]byte(`""`)), "UnmarshalJSON should not error on empty value")
+	assert.Equal(t, EMPTYPAIR, p, "UnmarshalJSON empty value should give EMPTYPAIR")
+	assert.NoError(t, p.UnmarshalJSON([]byte(`null`)), "UnmarshalJSON should not error on empty value")
+	assert.Equal(t, EMPTYPAIR, p, "UnmarshalJSON null value should give EMPTYPAIR")
 }
 
 func TestPairMarshalJSON(t *testing.T) {
@@ -375,108 +349,29 @@ func TestNewPairWithDelimiter(t *testing.T) {
 func TestNewPairDelimiter(t *testing.T) {
 	t.Parallel()
 	_, err := NewPairDelimiter("", "")
-	if err == nil {
-		t.Fatal("error cannot be nil")
-	}
+	require.ErrorIs(t, err, errEmptyPairString)
+
+	_, err = NewPairDelimiter("BTC_USD", "")
+	require.ErrorIs(t, err, errDelimiterCannotBeEmpty)
+
 	_, err = NewPairDelimiter("BTC_USD", "wow")
-	if err == nil {
-		t.Fatal("error cannot be nil")
-	}
+	require.ErrorIs(t, err, errDelimiterNotFound)
 
 	_, err = NewPairDelimiter("BTC_USD", " ")
-	if err == nil {
-		t.Fatal("error cannot be nil")
-	}
+	require.ErrorIs(t, err, errDelimiterNotFound)
 
 	pair, err := NewPairDelimiter(defaultPairWDelimiter, "-")
-	if err != nil {
-		t.Fatal(err)
-	}
-	actual := pair.String()
-	expected := defaultPairWDelimiter
-	if actual != expected {
-		t.Errorf(
-			"Pair(): %s was not equal to expected value: %s",
-			actual, expected,
-		)
-	}
-
-	actual = pair.Delimiter
-	expected = "-"
-	if actual != expected {
-		t.Errorf(
-			"Delmiter: %s was not equal to expected value: %s",
-			actual, expected,
-		)
-	}
+	require.NoError(t, err)
+	assert.Equal(t, defaultPairWDelimiter, pair.String())
+	assert.Equal(t, "-", pair.Delimiter)
 
 	pair, err = NewPairDelimiter("BTC-MOVE-0626", "-")
-	if err != nil {
-		t.Fatal(err)
-	}
-	actual = pair.String()
-	expected = "BTC-MOVE-0626"
-	if actual != expected {
-		t.Errorf(
-			"Pair(): %s was not equal to expected value: %s",
-			actual, expected,
-		)
-	}
+	require.NoError(t, err)
+	assert.Equal(t, "BTC-MOVE-0626", pair.String())
 
-	pair, err = NewPairDelimiter("fBTC-USDT", "-")
-	if err != nil {
-		t.Fatal(err)
-	}
-	actual = pair.String()
-	expected = "fbtc-USDT"
-	if actual != expected {
-		t.Errorf(
-			"Pair(): %s was not equal to expected value: %s",
-			actual, expected,
-		)
-	}
-}
-
-// TestNewPairFromIndex returns a CurrencyPair via a currency string and
-// specific index
-func TestNewPairFromIndex(t *testing.T) {
-	t.Parallel()
-	curr := defaultPair
-	index := "BTC"
-
-	pair, err := NewPairFromIndex(curr, index)
-	if err != nil {
-		t.Error("NewPairFromIndex() error", err)
-	}
-
-	pair.Delimiter = "-"
-	actual := pair.String()
-
-	expected := defaultPairWDelimiter
-	if actual != expected {
-		t.Errorf(
-			"Pair(): %s was not equal to expected value: %s",
-			actual, expected,
-		)
-	}
-
-	curr = "DOGEBTC"
-
-	pair, err = NewPairFromIndex(curr, index)
-	if err != nil {
-		t.Error("NewPairFromIndex() error", err)
-	}
-
-	pair.Delimiter = "-"
-	actual = pair.String()
-
-	expected = "DOGE-BTC"
-	if actual != expected {
-		t.Errorf(
-			"Pair(): %s was not equal to expected value: %s",
-			actual, expected,
-		)
-	}
+	pair, err = NewPairDelimiter("sETH-USDT", "-")
+	require.NoError(t, err)
+	assert.Equal(t, "SETH-USDT", pair.String(), "If any upper case is found in set this forces the pair to be uppercase")
 }
 
 func TestNewPairFromString(t *testing.T) {
@@ -588,36 +483,26 @@ func TestContainsCurrency(t *testing.T) {
 }
 
 func TestFormatPairs(t *testing.T) {
-	_, err := FormatPairs([]string{""}, "-", "")
-	if !errors.Is(err, errEmptyPairString) {
-		t.Fatalf("received: '%v' but expected: '%v'", err, errEmptyPairString)
-	}
+	_, err := FormatPairs([]string{""}, "-")
+	assert.ErrorIs(t, err, errEmptyPairString, "Should error on empty string")
 
-	newP, err := FormatPairs([]string{defaultPairWDelimiter}, "-", "")
-	if err != nil {
-		t.Error("FormatPairs() error", err)
-	}
+	_, err = FormatPairs([]string{"NO"}, "")
+	assert.ErrorIs(t, err, errNoDelimiter, "Should error on a small string with no delimiter")
 
-	if newP[0].String() != defaultPairWDelimiter {
-		t.Error("TestFormatPairs: Expected pair was not found")
-	}
+	newP, err := FormatPairs([]string{defaultPairWDelimiter}, "-")
+	assert.NoError(t, err)
+	require.NotEmpty(t, newP)
+	assert.Equal(t, defaultPairWDelimiter, newP[0].String(), "Pair should format correctly")
 
-	newP, err = FormatPairs([]string{defaultPair}, "", "BTC")
-	if err != nil {
-		t.Error("FormatPairs() error", err)
-	}
+	newP, err = FormatPairs([]string{defaultPair}, "")
+	assert.NoError(t, err)
+	require.NotEmpty(t, newP)
+	assert.Equal(t, defaultPair, newP[0].String(), "Pair should format correctly")
 
-	if newP[0].String() != defaultPair {
-		t.Error("TestFormatPairs: Expected pair was not found")
-	}
-	newP, err = FormatPairs([]string{"ETHUSD"}, "", "")
-	if err != nil {
-		t.Error("FormatPairs() error", err)
-	}
-
-	if newP[0].String() != "ETHUSD" {
-		t.Error("TestFormatPairs: Expected pair was not found")
-	}
+	newP, err = FormatPairs([]string{"ETHUSD"}, "")
+	assert.NoError(t, err)
+	require.NotEmpty(t, newP)
+	assert.Equal(t, "ETHUSD", newP[0].String(), "Pair should format correctly")
 }
 
 func TestCopyPairFormat(t *testing.T) {
@@ -639,89 +524,6 @@ func TestCopyPairFormat(t *testing.T) {
 	result = CopyPairFormat(np, pairs, true)
 	if result.String() != "" {
 		t.Error("TestCopyPairFormat: Unexpected non empty pair returned")
-	}
-}
-
-func TestFindPairDifferences(t *testing.T) {
-	pairList, err := NewPairsFromStrings([]string{defaultPairWDelimiter, "ETH-USD", "LTC-USD"})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	dash, err := NewPairsFromStrings([]string{"DASH-USD"})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	// Test new pair update
-	diff, err := pairList.FindDifferences(dash, PairFormat{Delimiter: DashDelimiter, Uppercase: true})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(diff.New) != 1 && len(diff.Remove) != 3 && diff.FormatDifference {
-		t.Error("TestFindPairDifferences: Unexpected values")
-	}
-
-	diff, err = pairList.FindDifferences(Pairs{}, EMPTYFORMAT)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(diff.New) != 0 && len(diff.Remove) != 3 && !diff.FormatDifference {
-		t.Error("TestFindPairDifferences: Unexpected values")
-	}
-
-	diff, err = Pairs{}.FindDifferences(pairList, EMPTYFORMAT)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(diff.New) != 3 && len(diff.Remove) != 0 && diff.FormatDifference {
-		t.Error("TestFindPairDifferences: Unexpected values")
-	}
-
-	// Test that the supplied pair lists are the same, so
-	// no newPairs or removedPairs
-	diff, err = pairList.FindDifferences(pairList, PairFormat{Delimiter: DashDelimiter, Uppercase: true})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(diff.New) != 0 && len(diff.Remove) != 0 && !diff.FormatDifference {
-		t.Error("TestFindPairDifferences: Unexpected values")
-	}
-
-	_, err = pairList.FindDifferences(Pairs{EMPTYPAIR}, EMPTYFORMAT)
-	if !errors.Is(err, ErrCurrencyPairEmpty) {
-		t.Fatalf("received: '%v' but expected: '%v'", err, ErrCurrencyPairEmpty)
-	}
-
-	_, err = Pairs{EMPTYPAIR}.FindDifferences(pairList, EMPTYFORMAT)
-	if !errors.Is(err, ErrCurrencyPairEmpty) {
-		t.Fatalf("received: '%v' but expected: '%v'", err, ErrCurrencyPairEmpty)
-	}
-
-	// Test duplication
-	duplication, err := NewPairsFromStrings([]string{defaultPairWDelimiter, "ETH-USD", "LTC-USD", "ETH-USD"})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	_, err = pairList.FindDifferences(duplication, EMPTYFORMAT)
-	if !errors.Is(err, ErrPairDuplication) {
-		t.Fatalf("received: '%v' but expected: '%v'", err, ErrPairDuplication)
-	}
-
-	// This will allow for the removal of the duplicated item to be returned if
-	// contained in the original list.
-	diff, err = duplication.FindDifferences(pairList, EMPTYFORMAT)
-	if !errors.Is(err, nil) {
-		t.Fatalf("received: '%v' but expected: '%v'", err, nil)
-	}
-
-	if len(diff.Remove) != 1 {
-		t.Fatal("expected removal value in pair difference struct")
-	}
-
-	if !diff.Remove[0].Equal(pairList[1]) {
-		t.Fatal("unexpected value returned", diff.Remove[0], pairList[1])
 	}
 }
 
@@ -764,7 +566,7 @@ func TestRandomPairFromPairs(t *testing.T) {
 	// currency pairs
 	pairs = append(pairs, NewPair(ETH, USD))
 	expectedResults := make(map[string]bool)
-	for i := 0; i < 50; i++ {
+	for range 50 {
 		result, err = pairs.GetRandomPair()
 		if !errors.Is(err, nil) {
 			t.Fatalf("received: '%v' but expected: '%v'", err, nil)
@@ -874,7 +676,6 @@ func TestPairFormat_Format(t *testing.T) {
 		Uppercase bool
 		Delimiter string
 		Separator string
-		Index     string
 	}
 	tests := []struct {
 		name   string
@@ -913,13 +714,11 @@ func TestPairFormat_Format(t *testing.T) {
 		},
 	}
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			f := &PairFormat{
 				Uppercase: tt.fields.Uppercase,
 				Delimiter: tt.fields.Delimiter,
 				Separator: tt.fields.Separator,
-				Index:     tt.fields.Index,
 			}
 			if got := f.Format(tt.arg); got != tt.want {
 				t.Errorf("PairFormat.Format() = %v, want %v", got, tt.want)
@@ -991,8 +790,7 @@ func TestGetOrderParameters(t *testing.T) {
 	}
 
 	for i, tc := range testCases {
-		tc := tc
-		t.Run(fmt.Sprintf("%d", i), func(t *testing.T) {
+		t.Run(strconv.Itoa(i), func(t *testing.T) {
 			t.Parallel()
 			var resp *OrderParameters
 			var err error
@@ -1058,8 +856,7 @@ func TestIsAssociated(t *testing.T) {
 	}
 
 	for x := range testCases {
-		x := x
-		t.Run(fmt.Sprintf("%d", x), func(t *testing.T) {
+		t.Run(strconv.Itoa(x), func(t *testing.T) {
 			t.Parallel()
 			if testCases[x].Pair.IsAssociated(testCases[x].associate) != testCases[x].expectedResult {
 				t.Fatalf("Test %d failed. Expected %v, received %v", x, testCases[x].expectedResult, testCases[x].Pair.IsAssociated(testCases[x].associate))
@@ -1070,27 +867,58 @@ func TestIsAssociated(t *testing.T) {
 
 func TestPair_GetFormatting(t *testing.T) {
 	t.Parallel()
-	p := NewPair(BTC, USDT)
-	pFmt, err := p.GetFormatting()
-	if err != nil {
-		t.Error(err)
-	}
-	if !pFmt.Uppercase || pFmt.Delimiter != "" {
-		t.Error("incorrect formatting")
-	}
+	pFmt, err := NewPair(BTC, USDT).GetFormatting()
+	require.NoError(t, err)
+	assert.True(t, pFmt.Uppercase)
+	assert.Empty(t, pFmt.Delimiter)
 
-	p = NewPairWithDelimiter("eth", "usdt", "/")
-	pFmt, err = p.GetFormatting()
-	if err != nil {
-		t.Error(err)
-	}
-	if pFmt.Uppercase || pFmt.Delimiter != "/" {
-		t.Error("incorrect formatting")
-	}
+	pFmt, err = NewPairWithDelimiter("eth", "usdt", "/").GetFormatting()
+	require.NoError(t, err)
+	assert.False(t, pFmt.Uppercase)
+	assert.Equal(t, "/", pFmt.Delimiter)
 
-	p = NewPairWithDelimiter("eth", "USDT", "/")
-	_, err = p.GetFormatting()
-	if !errors.Is(err, errPairFormattingInconsistent) {
-		t.Error(err)
+	_, err = NewPairWithDelimiter("eth", "USDT", "/").GetFormatting()
+	require.ErrorIs(t, err, errPairFormattingInconsistent)
+
+	pFmt, err = EMPTYPAIR.GetFormatting()
+	require.NoError(t, err)
+	assert.Equal(t, EMPTYFORMAT, pFmt)
+
+	pFmt, err = NewPairWithDelimiter("eth", "420", "/").GetFormatting()
+	require.NoError(t, err)
+	assert.False(t, pFmt.Uppercase)
+
+	pFmt, err = NewPairWithDelimiter("ETH", "420", "/").GetFormatting()
+	require.NoError(t, err)
+	assert.True(t, pFmt.Uppercase)
+
+	pFmt, err = NewPairWithDelimiter("420", "eth", "/").GetFormatting()
+	require.NoError(t, err)
+	assert.False(t, pFmt.Uppercase)
+
+	pFmt, err = NewPairWithDelimiter("420", "ETH", "/").GetFormatting()
+	require.NoError(t, err)
+	assert.True(t, pFmt.Uppercase)
+}
+
+func TestNewBTCUSD(t *testing.T) {
+	t.Parallel()
+	p := NewBTCUSD()
+	if !p.Base.Equal(BTC) {
+		t.Fatal("expected base BTC from function NewBTCUSD")
+	}
+	if !p.Quote.Equal(USD) {
+		t.Fatal("expected quote USD from function NewBTCUSD")
+	}
+}
+
+func TestNewBTCUSDT(t *testing.T) {
+	t.Parallel()
+	p := NewBTCUSDT()
+	if !p.Base.Equal(BTC) {
+		t.Fatal("expected base BTC from function NewBTCUSDT")
+	}
+	if !p.Quote.Equal(USDT) {
+		t.Fatal("expected quote USDT from function NewBTCUSDT")
 	}
 }

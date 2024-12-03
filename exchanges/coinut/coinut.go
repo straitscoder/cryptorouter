@@ -22,6 +22,7 @@ import (
 
 const (
 	coinutAPIURL          = "https://api.coinut.com"
+	tradeBaseURL          = "https://coinut.com/spot/"
 	coinutAPIVersion      = "1"
 	coinutInstruments     = "inst_list"
 	coinutTicker          = "inst_tick"
@@ -42,7 +43,6 @@ const (
 	coinutStatusOK = "OK"
 	coinutMaxNonce = 16777215 // See https://github.com/coinut/api/wiki/Websocket-API#nonce
 
-	wsRateLimitInMilliseconds = 33
 )
 
 var errLookupInstrumentID = errors.New("unable to lookup instrument ID")
@@ -415,7 +415,7 @@ func getInternationalBankDepositFee(c currency.Code, amount float64) float64 {
 		} else {
 			fee = amount * 0.001
 		}
-	} else if c == currency.CAD {
+	} else if c.Equal(currency.CAD) {
 		if amount*0.005 < 10 {
 			fee = 2
 		} else {

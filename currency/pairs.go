@@ -5,9 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"math/rand"
+	"slices"
 	"strings"
-
-	"github.com/thrasher-corp/gocryptotrader/log"
 )
 
 var (
@@ -59,26 +58,16 @@ func (p Pairs) Join() string {
 
 // Format formats the pair list to the exchange format configuration
 func (p Pairs) Format(pairFmt PairFormat) Pairs {
-	pairs := make(Pairs, len(p))
-	copy(pairs, p)
-
-	var err error
+	pairs := slices.Clone(p)
 	for x := range pairs {
-		if pairFmt.Index != "" {
-			pairs[x], err = NewPairFromIndex(p[x].String(), pairFmt.Index)
-			if err != nil {
-				log.Errorf(log.Global, "failed to create NewPairFromIndex. Err: %s\n", err)
-				return nil
-			}
-		}
-		pairs[x].Base.UpperCase = pairFmt.Uppercase
-		pairs[x].Quote.UpperCase = pairFmt.Uppercase
+		pairs[x].Base.upperCase = pairFmt.Uppercase
+		pairs[x].Quote.upperCase = pairFmt.Uppercase
 		pairs[x].Delimiter = pairFmt.Delimiter
 	}
 	return pairs
 }
 
-// UnmarshalJSON comforms type to the umarshaler interface
+// UnmarshalJSON conforms type to the umarshaler interface
 func (p *Pairs) UnmarshalJSON(d []byte) error {
 	var pairs string
 	err := json.Unmarshal(d, &pairs)
@@ -120,8 +109,7 @@ func (p Pairs) Lower() Pairs {
 	return newSlice
 }
 
-// Contains checks to see if a specified pair exists inside a currency pair
-// array
+// Contains checks to see if a specified pair exists inside a currency pair array
 func (p Pairs) Contains(check Pair, exact bool) bool {
 	for i := range p {
 		if (exact && p[i].Equal(check)) ||
@@ -132,15 +120,13 @@ func (p Pairs) Contains(check Pair, exact bool) bool {
 	return false
 }
 
-// ContainsAll checks to see if all pairs supplied are contained within the
-// original pairs list.
+// ContainsAll checks to see if all pairs supplied are contained within the original pairs list
 func (p Pairs) ContainsAll(check Pairs, exact bool) error {
 	if len(check) == 0 {
 		return ErrCurrencyPairsEmpty
 	}
 
-	comparative := make(Pairs, len(p))
-	copy(comparative, p)
+	comparative := slices.Clone(p)
 list:
 	for x := range check {
 		for y := range comparative {
@@ -213,25 +199,26 @@ func (p Pairs) GetPairsByCurrencies(currencies Currencies) Pairs {
 	return pairs
 }
 
-// Remove removes the specified pair from the list of pairs if it exists
-func (p Pairs) Remove(pair Pair) (Pairs, error) {
-	pairs := make(Pairs, len(p))
-	copy(pairs, p)
-	for x := range p {
-		if p[x].Equal(pair) {
-			return append(pairs[:x], pairs[x+1:]...), nil
+// Remove removes the specified pairs from the list of pairs if they exist
+func (p Pairs) Remove(rem ...Pair) Pairs {
+	n := make(Pairs, 0, len(p))
+	for _, pN := range p {
+		if !slices.ContainsFunc(rem, func(pX Pair) bool { return pX.Equal(pN) }) {
+			n = append(n, pN)
 		}
 	}
-	return nil, fmt.Errorf("%s %w", pair, ErrPairNotFound)
+	return slices.Clip(n)
 }
 
-// Add adds a specified pair to the list of pairs if it doesn't exist
-func (p Pairs) Add(pair Pair) Pairs {
-	if p.Contains(pair, true) {
-		return p
+// Add adds pairs to the list of pairs ignoring duplicates
+func (p Pairs) Add(pairs ...Pair) Pairs {
+	n := slices.Clone(p)
+	for _, a := range pairs {
+		if !n.Contains(a, true) {
+			n = append(n, a)
+		}
 	}
-	p = append(p, pair)
-	return p
+	return n
 }
 
 // GetMatch returns either the pair that is equal including the reciprocal for
@@ -246,52 +233,57 @@ func (p Pairs) GetMatch(pair Pair) (Pair, error) {
 	return EMPTYPAIR, ErrPairNotFound
 }
 
+type pairKey struct {
+	Base  *Item
+	Quote *Item
+}
+
 // FindDifferences returns pairs which are new or have been removed
 func (p Pairs) FindDifferences(incoming Pairs, pairFmt PairFormat) (PairDifference, error) {
 	newPairs := make(Pairs, 0, len(incoming))
-	check := make(map[string]bool)
+	check := make(map[pairKey]bool)
+	formatDiff := false
 	for x := range incoming {
 		if incoming[x].IsEmpty() {
 			return PairDifference{}, fmt.Errorf("contained in the incoming pairs a %w", ErrCurrencyPairEmpty)
 		}
-		format := EMPTYFORMAT.Format(incoming[x])
-		if check[format] {
+
+		if !formatDiff {
+			formatDiff = incoming[x].hasFormatDifference(pairFmt)
+		}
+
+		k := pairKey{Base: incoming[x].Base.Item, Quote: incoming[x].Quote.Item}
+		if check[k] {
 			return PairDifference{}, fmt.Errorf("contained in the incoming pairs %w", ErrPairDuplication)
 		}
-		check[format] = true
+		check[k] = true
 		if !p.Contains(incoming[x], true) {
 			newPairs = append(newPairs, incoming[x])
 		}
 	}
 	removedPairs := make(Pairs, 0, len(p))
-	check = make(map[string]bool)
+	clear(check)
 	for x := range p {
 		if p[x].IsEmpty() {
 			return PairDifference{}, fmt.Errorf("contained in the existing pairs a %w", ErrCurrencyPairEmpty)
 		}
-		format := EMPTYFORMAT.Format(p[x])
-		if !incoming.Contains(p[x], true) || check[format] {
+
+		if !formatDiff {
+			formatDiff = p[x].hasFormatDifference(pairFmt)
+		}
+
+		k := pairKey{Base: p[x].Base.Item, Quote: p[x].Quote.Item}
+		if !incoming.Contains(p[x], true) || check[k] {
 			removedPairs = append(removedPairs, p[x])
 		}
-		check[format] = true
+		check[k] = true
 	}
-	return PairDifference{
-		New:              newPairs,
-		Remove:           removedPairs,
-		FormatDifference: p.HasFormatDifference(pairFmt),
-	}, nil
+	return PairDifference{New: newPairs, Remove: removedPairs, FormatDifference: formatDiff}, nil
 }
 
 // HasFormatDifference checks and validates full formatting across a pairs list
 func (p Pairs) HasFormatDifference(pairFmt PairFormat) bool {
-	for x := range p {
-		if p[x].Delimiter != pairFmt.Delimiter ||
-			(!p[x].Base.IsEmpty() && p[x].Base.UpperCase != pairFmt.Uppercase) ||
-			(!p[x].Quote.IsEmpty() && p[x].Quote.UpperCase != pairFmt.Uppercase) {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(p, func(pair Pair) bool { return pair.hasFormatDifference(pairFmt) })
 }
 
 // GetRandomPair returns a random pair from a list of pairs
@@ -303,7 +295,8 @@ func (p Pairs) GetRandomPair() (Pair, error) {
 }
 
 // DeriveFrom matches symbol string to the available pairs list when no
-// delimiter is supplied.
+// delimiter is supplied. WARNING: This is not optimised and should only be used
+// for one off processes.
 func (p Pairs) DeriveFrom(symbol string) (Pair, error) {
 	if len(p) == 0 {
 		return EMPTYPAIR, ErrCurrencyPairsEmpty
@@ -319,13 +312,13 @@ pairs:
 		}
 		base := p[x].Base.Lower().String()
 		baseLength := len(base)
-		for y := 0; y < baseLength; y++ {
+		for y := range baseLength {
 			if base[y] != symbol[y] {
 				continue pairs
 			}
 		}
 		quote := p[x].Quote.Lower().String()
-		for y := 0; y < len(quote); y++ {
+		for y := range quote {
 			if quote[y] != symbol[baseLength+y] {
 				continue pairs
 			}
@@ -340,10 +333,10 @@ func (p Pairs) GetCrypto() Currencies {
 	m := make(map[*Item]bool)
 	for x := range p {
 		if p[x].Base.IsCryptocurrency() {
-			m[p[x].Base.Item] = p[x].Base.UpperCase
+			m[p[x].Base.Item] = p[x].Base.upperCase
 		}
 		if p[x].Quote.IsCryptocurrency() {
-			m[p[x].Quote.Item] = p[x].Quote.UpperCase
+			m[p[x].Quote.Item] = p[x].Quote.upperCase
 		}
 	}
 	return currencyConstructor(m)
@@ -354,10 +347,10 @@ func (p Pairs) GetFiat() Currencies {
 	m := make(map[*Item]bool)
 	for x := range p {
 		if p[x].Base.IsFiatCurrency() {
-			m[p[x].Base.Item] = p[x].Base.UpperCase
+			m[p[x].Base.Item] = p[x].Base.upperCase
 		}
 		if p[x].Quote.IsFiatCurrency() {
-			m[p[x].Quote.Item] = p[x].Quote.UpperCase
+			m[p[x].Quote.Item] = p[x].Quote.upperCase
 		}
 	}
 	return currencyConstructor(m)
@@ -368,8 +361,8 @@ func (p Pairs) GetFiat() Currencies {
 func (p Pairs) GetCurrencies() Currencies {
 	m := make(map[*Item]bool)
 	for x := range p {
-		m[p[x].Base.Item] = p[x].Base.UpperCase
-		m[p[x].Quote.Item] = p[x].Quote.UpperCase
+		m[p[x].Base.Item] = p[x].Base.upperCase
+		m[p[x].Quote.Item] = p[x].Quote.upperCase
 	}
 	return currencyConstructor(m)
 }
@@ -379,10 +372,10 @@ func (p Pairs) GetStables() Currencies {
 	m := make(map[*Item]bool)
 	for x := range p {
 		if p[x].Base.IsStableCurrency() {
-			m[p[x].Base.Item] = p[x].Base.UpperCase
+			m[p[x].Base.Item] = p[x].Base.upperCase
 		}
 		if p[x].Quote.IsStableCurrency() {
-			m[p[x].Quote.Item] = p[x].Quote.UpperCase
+			m[p[x].Quote.Item] = p[x].Quote.upperCase
 		}
 	}
 	return currencyConstructor(m)
@@ -395,7 +388,7 @@ func currencyConstructor(m map[*Item]bool) Currencies {
 	var target int
 	for code, upper := range m {
 		cryptos[target].Item = code
-		cryptos[target].UpperCase = upper
+		cryptos[target].upperCase = upper
 		target++
 	}
 	return cryptos
@@ -456,4 +449,65 @@ func (p Pairs) GetFormatting() (PairFormat, error) {
 		return PairFormat{}, errPairFormattingInconsistent
 	}
 	return pFmt, nil
+}
+
+// GetPairsByQuote returns all pairs that have a matching quote currency
+func (p Pairs) GetPairsByQuote(quoteTerm Code) (Pairs, error) {
+	if len(p) == 0 {
+		return nil, ErrCurrencyPairsEmpty
+	}
+	if quoteTerm.IsEmpty() {
+		return nil, ErrCurrencyCodeEmpty
+	}
+	pairs := make(Pairs, 0, len(p))
+	for i := range p {
+		if p[i].Quote.Equal(quoteTerm) {
+			pairs = append(pairs, p[i])
+		}
+	}
+	return pairs, nil
+}
+
+// GetPairsByBase returns all pairs that have a matching base currency
+func (p Pairs) GetPairsByBase(baseTerm Code) (Pairs, error) {
+	if len(p) == 0 {
+		return nil, ErrCurrencyPairsEmpty
+	}
+	if baseTerm.IsEmpty() {
+		return nil, ErrCurrencyCodeEmpty
+	}
+	pairs := make(Pairs, 0, len(p))
+	for i := range p {
+		if p[i].Base.Equal(baseTerm) {
+			pairs = append(pairs, p[i])
+		}
+	}
+	return pairs, nil
+}
+
+// equalKey is a small key for testing pair equality without delimiter
+type equalKey struct {
+	Base  *Item
+	Quote *Item
+}
+
+// Equal checks to see if two lists of pairs contain only the same pairs, ignoring delimiter and case
+// Does not check for inverted/reciprocal pairs
+func (p Pairs) Equal(b Pairs) bool {
+	if len(p) != len(b) {
+		return false
+	}
+	if len(p) == 0 {
+		return true
+	}
+	m := map[equalKey]struct{}{}
+	for i := range p {
+		m[equalKey{Base: p[i].Base.Item, Quote: p[i].Quote.Item}] = struct{}{}
+	}
+	for i := range b {
+		if _, ok := m[equalKey{Base: b[i].Base.Item, Quote: b[i].Quote.Item}]; !ok {
+			return false
+		}
+	}
+	return true
 }

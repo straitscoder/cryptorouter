@@ -11,6 +11,7 @@ import (
 
 	"github.com/gofrs/uuid"
 	"github.com/shopspring/decimal"
+	"github.com/stretchr/testify/assert"
 	"github.com/thrasher-corp/gocryptotrader/backtester/common"
 	"github.com/thrasher-corp/gocryptotrader/backtester/config"
 	"github.com/thrasher-corp/gocryptotrader/backtester/data"
@@ -35,6 +36,7 @@ import (
 	"github.com/thrasher-corp/gocryptotrader/backtester/report"
 	gctcommon "github.com/thrasher-corp/gocryptotrader/common"
 	"github.com/thrasher-corp/gocryptotrader/common/convert"
+	"github.com/thrasher-corp/gocryptotrader/common/key"
 	"github.com/thrasher-corp/gocryptotrader/currency"
 	"github.com/thrasher-corp/gocryptotrader/database"
 	"github.com/thrasher-corp/gocryptotrader/database/drivers"
@@ -442,11 +444,7 @@ func TestFullCycle(t *testing.T) {
 	tt := time.Now()
 
 	stats := &statistics.Statistic{}
-	stats.ExchangeAssetPairStatistics = make(map[string]map[asset.Item]map[*currency.Item]map[*currency.Item]*statistics.CurrencyPairStatistic)
-	stats.ExchangeAssetPairStatistics[ex] = make(map[asset.Item]map[*currency.Item]map[*currency.Item]*statistics.CurrencyPairStatistic)
-	stats.ExchangeAssetPairStatistics[ex][a] = make(map[*currency.Item]map[*currency.Item]*statistics.CurrencyPairStatistic)
-	stats.ExchangeAssetPairStatistics[ex][a][cp.Base.Item] = make(map[*currency.Item]*statistics.CurrencyPairStatistic)
-
+	stats.ExchangeAssetPairStatistics = make(map[key.ExchangePairAsset]*statistics.CurrencyPairStatistic)
 	port, err := portfolio.Setup(&size.Size{
 		BuySide:  exchange.MinMax{},
 		SellSide: exchange.MinMax{},
@@ -580,10 +578,7 @@ func TestFullCycleMulti(t *testing.T) {
 	tt := time.Now()
 
 	stats := &statistics.Statistic{}
-	stats.ExchangeAssetPairStatistics = make(map[string]map[asset.Item]map[*currency.Item]map[*currency.Item]*statistics.CurrencyPairStatistic)
-	stats.ExchangeAssetPairStatistics[ex] = make(map[asset.Item]map[*currency.Item]map[*currency.Item]*statistics.CurrencyPairStatistic)
-	stats.ExchangeAssetPairStatistics[ex][a] = make(map[*currency.Item]map[*currency.Item]*statistics.CurrencyPairStatistic)
-	stats.ExchangeAssetPairStatistics[ex][a][cp.Base.Item] = make(map[*currency.Item]*statistics.CurrencyPairStatistic)
+	stats.ExchangeAssetPairStatistics = make(map[key.ExchangePairAsset]*statistics.CurrencyPairStatistic)
 
 	port, err := portfolio.Setup(&size.Size{
 		BuySide:  exchange.MinMax{},
@@ -1421,21 +1416,10 @@ func TestRunLive(t *testing.T) {
 	bt.LiveDataHandler = dc
 	cp := currency.NewPair(currency.BTC, currency.USD)
 	i := &gctkline.Item{
-		Exchange:       testExchange,
 		Pair:           cp,
 		UnderlyingPair: cp,
 		Asset:          asset.Spot,
 		Interval:       gctkline.FifteenSecond,
-		Candles: []gctkline.Candle{
-			{
-				Time:   time.Now(),
-				Open:   1337,
-				High:   1337,
-				Low:    1337,
-				Close:  1337,
-				Volume: 1337,
-			},
-		},
 	}
 	// 	AppendDataSource(exchange gctexchange.IBotExchange, interval gctkline.Interval, asset asset.Asset, pair, underlyingPair currency.Pair, dataType int64) error
 	setup := &liveDataSourceSetup{
@@ -1888,36 +1872,23 @@ func TestExecuteStrategy(t *testing.T) {
 func TestNewBacktesterFromConfigs(t *testing.T) {
 	t.Parallel()
 	_, err := NewBacktesterFromConfigs(nil, nil)
-	if !errors.Is(err, gctcommon.ErrNilPointer) {
-		t.Errorf("received '%v' expected '%v'", err, gctcommon.ErrNilPointer)
-	}
+	assert.ErrorIs(t, err, gctcommon.ErrNilPointer, "NewBacktesterFromConfigs should error on nil for both configs")
 
-	strat1 := filepath.Join("..", "config", "strategyexamples", "dca-api-candles.strat")
-	cfg, err := config.ReadStrategyConfigFromFile(strat1)
-	if !errors.Is(err, nil) {
-		t.Errorf("received '%v' expected '%v'", err, nil)
-	}
+	cfg, err := config.ReadStrategyConfigFromFile(filepath.Join("..", "config", "strategyexamples", "dca-api-candles.strat"))
+	assert.NoError(t, err, "ReadStrategyConfigFromFile should not error")
+
 	dc, err := config.GenerateDefaultConfig()
-	if !errors.Is(err, nil) {
-		t.Errorf("received '%v' expected '%v'", err, nil)
-	}
+	assert.NoError(t, err, "GenerateDefaultConfig should not error")
 
 	_, err = NewBacktesterFromConfigs(cfg, nil)
-	if !errors.Is(err, gctcommon.ErrNilPointer) {
-		t.Errorf("received '%v' expected '%v'", err, gctcommon.ErrNilPointer)
-	}
+	assert.ErrorIs(t, err, gctcommon.ErrNilPointer, "NewBacktesterFromConfigs should error on nil default config")
 
 	_, err = NewBacktesterFromConfigs(nil, dc)
-	if !errors.Is(err, gctcommon.ErrNilPointer) {
-		t.Errorf("received '%v' expected '%v'", err, gctcommon.ErrNilPointer)
-	}
+	assert.ErrorIs(t, err, gctcommon.ErrNilPointer, "NewBacktesterFromConfigs should error on nil config")
 
 	bt, err := NewBacktesterFromConfigs(cfg, dc)
-	if !errors.Is(err, nil) {
-		t.Fatalf("received '%v' expected '%v'", err, nil)
-	}
-	if bt.MetaData.DateLoaded.IsZero() {
-		t.Errorf("received '%v' expected '%v'", bt.MetaData.DateLoaded, "a date")
+	if assert.NoError(t, err, "NewBacktesterFromConfigs should not error") {
+		assert.False(t, bt.MetaData.DateLoaded.IsZero(), "DateLoaded should have a non-zero date")
 	}
 }
 

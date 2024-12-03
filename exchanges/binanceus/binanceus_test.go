@@ -12,7 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/thrasher-corp/gocryptotrader/common"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/thrasher-corp/gocryptotrader/config"
 	"github.com/thrasher-corp/gocryptotrader/core"
 	"github.com/thrasher-corp/gocryptotrader/currency"
@@ -21,6 +22,7 @@ import (
 	"github.com/thrasher-corp/gocryptotrader/exchanges/kline"
 	"github.com/thrasher-corp/gocryptotrader/exchanges/order"
 	"github.com/thrasher-corp/gocryptotrader/exchanges/sharedtestvalues"
+	testexch "github.com/thrasher-corp/gocryptotrader/internal/testing/exchange"
 	"github.com/thrasher-corp/gocryptotrader/portfolio/withdraw"
 )
 
@@ -61,15 +63,6 @@ func TestMain(m *testing.M) {
 		log.Fatal("Binanceus TestMain()", err)
 	}
 	bi.setupOrderbookManager()
-	err = bi.Start(context.Background(), nil)
-	if !errors.Is(err, common.ErrNilPointer) {
-		log.Fatalf("%s received: '%v' but expected: '%v'", bi.Name, err, common.ErrNilPointer)
-	}
-	var testWg sync.WaitGroup
-	err = bi.Start(context.Background(), &testWg)
-	if err != nil {
-		log.Fatal("Binanceus Starting error ", err)
-	}
 	os.Exit(m.Run())
 }
 
@@ -1314,7 +1307,7 @@ var ticker24hourChangeStream = `{
 	"stream":"btcusdt@ticker",
 	"data" :{
 		"e": "24hrTicker",  
-		"E": 123456789,     
+		"E": 1234567891,     
 		"s": "BNBBTC",      
 		"p": "0.0015",      
 		"P": "250.00",      
@@ -1332,7 +1325,7 @@ var ticker24hourChangeStream = `{
 		"v": "10000",        
 		"q": "18",           
 		"O": 0,             
-		"C": 86400000,      
+		"C": 8640000011,      
 		"F": 0,             
 		"L": 18150,         
 		"n": 18151           
@@ -1353,11 +1346,11 @@ func TestWebsocketKlineUpdate(t *testing.T) {
 		"stream":"btcusdt@kline_1m",
 		"data":{
 			"e": "kline",     
-			"E": 123456789,   
+			"E": 1234567891,   
 			"s": "BNBBTC",    
 			"k": {
-				"t": 123400000, 
-				"T": 123460000, 
+				"t": 1234000001, 
+				"T": 1234600001, 
 				"s": "BNBBTC",  
 				"i": "1m",      
 				"f": 100,       
@@ -1436,7 +1429,7 @@ func TestWebsocketOrderBookDepthDiffStream(t *testing.T) {
 	}
 	update1 := []byte(`{"stream":"btcusdt@depth","data":{
 	  "e": "depthUpdate", 
-	  "E": 123456788,     
+	  "E": 1234567891,     
 	  "s": "BTCUSDT",      
 	  "U": 157,           
 	  "u": 160,           
@@ -1453,7 +1446,7 @@ func TestWebsocketOrderBookDepthDiffStream(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := bi.wsHandleData(update1); err != nil {
-		t.Error(err)
+		t.Fatal(err)
 	}
 	bi.obm.state[currency.BTC][currency.USDT][asset.Spot].fetchingBook = false
 	ob, err := bi.Websocket.Orderbook.GetOrderbook(p, asset.Spot)
@@ -1472,7 +1465,7 @@ func TestWebsocketOrderBookDepthDiffStream(t *testing.T) {
 	update2 := []byte(`{
 		"stream":"btcusdt@depth","data":{
 			"e": "depthUpdate", 
-			"E": 123456789,     
+			"E": 1234567892,     
 			"s": "BTCUSDT",      
 			"U": 161,           
 			"u": 165,           
@@ -1693,7 +1686,7 @@ func TestExecutionTypeToOrderStatus(t *testing.T) {
 var websocketDepthUpdate = []byte(
 	`{
 		"e": "depthUpdate",
-		"E": 123456789,    
+		"E": 12345678911,    
 		"s": "BNBBTC",     
 		"U": 157,          
 		"u": 160,          
@@ -1815,5 +1808,18 @@ func TestGetUsersSpotAssetSnapshot(t *testing.T) {
 	sharedtestvalues.SkipTestIfCredentialsUnset(t, bi)
 	if _, er := bi.GetUsersSpotAssetSnapshot(context.Background(), time.Time{}, time.Time{}, 10, 6); er != nil {
 		t.Error("Binanceus GetUsersSpotAssetSnapshot() error", er)
+	}
+}
+
+func TestGetCurrencyTradeURL(t *testing.T) {
+	t.Parallel()
+	testexch.UpdatePairsOnce(t, bi)
+	for _, a := range bi.GetAssetTypes(false) {
+		pairs, err := bi.CurrencyPairs.GetPairs(a, false)
+		require.NoError(t, err, "cannot get pairs for %s", a)
+		require.NotEmpty(t, pairs, "no pairs for %s", a)
+		resp, err := bi.GetCurrencyTradeURL(context.Background(), a, pairs[0])
+		require.NoError(t, err)
+		assert.NotEmpty(t, resp)
 	}
 }

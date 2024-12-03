@@ -4,10 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/thrasher-corp/gocryptotrader/common"
@@ -17,6 +17,8 @@ import (
 	"github.com/thrasher-corp/gocryptotrader/exchanges/account"
 	"github.com/thrasher-corp/gocryptotrader/exchanges/asset"
 	"github.com/thrasher-corp/gocryptotrader/exchanges/deposit"
+	"github.com/thrasher-corp/gocryptotrader/exchanges/fundingrate"
+	"github.com/thrasher-corp/gocryptotrader/exchanges/futures"
 	"github.com/thrasher-corp/gocryptotrader/exchanges/kline"
 	"github.com/thrasher-corp/gocryptotrader/exchanges/order"
 	"github.com/thrasher-corp/gocryptotrader/exchanges/orderbook"
@@ -29,29 +31,6 @@ import (
 	"github.com/thrasher-corp/gocryptotrader/log"
 	"github.com/thrasher-corp/gocryptotrader/portfolio/withdraw"
 )
-
-// GetDefaultConfig returns a default exchange config
-func (p *Poloniex) GetDefaultConfig(ctx context.Context) (*config.Exchange, error) {
-	p.SetDefaults()
-	exchCfg := new(config.Exchange)
-	exchCfg.Name = p.Name
-	exchCfg.HTTPTimeout = exchange.DefaultHTTPTimeout
-	exchCfg.BaseCurrencies = p.BaseCurrencies
-
-	err := p.SetupDefaults(exchCfg)
-	if err != nil {
-		return nil, err
-	}
-
-	if p.Features.Supports.RESTCapabilities.AutoPairUpdates {
-		err = p.UpdateTradablePairs(ctx, true)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	return exchCfg, nil
-}
 
 // SetDefaults sets default settings for poloniex
 func (p *Poloniex) SetDefaults() {
@@ -145,7 +124,7 @@ func (p *Poloniex) SetDefaults() {
 
 	p.Requester, err = request.New(p.Name,
 		common.NewHTTPClientWithTimeout(exchange.DefaultHTTPTimeout),
-		request.WithLimiter(SetRateLimit()))
+		request.WithLimiter(GetRateLimit()))
 	if err != nil {
 		log.Errorln(log.ExchangeSys, err)
 	}
@@ -158,7 +137,7 @@ func (p *Poloniex) SetDefaults() {
 	if err != nil {
 		log.Errorln(log.ExchangeSys, err)
 	}
-	p.Websocket = stream.New()
+	p.Websocket = stream.NewWebsocket()
 	p.WebsocketResponseMaxLimit = exchange.DefaultWebsocketResponseMaxLimit
 	p.WebsocketResponseCheckTimeout = exchange.DefaultWebsocketResponseCheckTimeout
 	p.WebsocketOrderbookBufferLimit = exchange.DefaultWebsocketOrderbookBufferLimit
@@ -185,15 +164,14 @@ func (p *Poloniex) Setup(exch *config.Exchange) error {
 	}
 
 	err = p.Websocket.Setup(&stream.WebsocketSetup{
-		ExchangeConfig:         exch,
-		DefaultURL:             poloniexWebsocketAddress,
-		RunningURL:             wsRunningURL,
-		Connector:              p.WsConnect,
-		Subscriber:             p.Subscribe,
-		Unsubscriber:           p.Unsubscribe,
-		GenerateSubscriptions:  p.GenerateDefaultSubscriptions,
-		ConnectionMonitorDelay: exch.ConnectionMonitorDelay,
-		Features:               &p.Features.Supports.WebsocketCapabilities,
+		ExchangeConfig:        exch,
+		DefaultURL:            poloniexWebsocketAddress,
+		RunningURL:            wsRunningURL,
+		Connector:             p.WsConnect,
+		Subscriber:            p.Subscribe,
+		Unsubscriber:          p.Unsubscribe,
+		GenerateSubscriptions: p.GenerateDefaultSubscriptions,
+		Features:              &p.Features.Supports.WebsocketCapabilities,
 		OrderbookBufferConfig: buffer.Config{
 			SortBuffer:            true,
 			SortBufferByUpdateIDs: true,
@@ -203,65 +181,10 @@ func (p *Poloniex) Setup(exch *config.Exchange) error {
 		return err
 	}
 
-	return p.Websocket.SetupNewConnection(stream.ConnectionSetup{
+	return p.Websocket.SetupNewConnection(&stream.ConnectionSetup{
 		ResponseCheckTimeout: exch.WebsocketResponseCheckTimeout,
 		ResponseMaxLimit:     exch.WebsocketResponseMaxLimit,
 	})
-}
-
-// Start starts the Poloniex go routine
-func (p *Poloniex) Start(ctx context.Context, wg *sync.WaitGroup) error {
-	if wg == nil {
-		return fmt.Errorf("%T %w", wg, common.ErrNilPointer)
-	}
-	wg.Add(1)
-	go func() {
-		p.Run(ctx)
-		wg.Done()
-	}()
-	return nil
-}
-
-// Run implements the Poloniex wrapper
-func (p *Poloniex) Run(ctx context.Context) {
-	if p.Verbose {
-		log.Debugf(log.ExchangeSys,
-			"%s Websocket: %s (url: %s).\n",
-			p.Name,
-			common.IsEnabled(p.Websocket.IsEnabled()),
-			poloniexWebsocketAddress)
-		p.PrintEnabledPairs()
-	}
-
-	forceUpdate := false
-
-	avail, err := p.GetAvailablePairs(asset.Spot)
-	if err != nil {
-		log.Errorf(log.ExchangeSys,
-			"%s failed to update tradable pairs. Err: %s",
-			p.Name,
-			err)
-		return
-	}
-
-	if common.StringDataCompare(avail.Strings(), "BTC_USDT") {
-		log.Warnf(log.ExchangeSys,
-			"%s contains invalid pair, forcing upgrade of available currencies.\n",
-			p.Name)
-		forceUpdate = true
-	}
-
-	if !p.GetEnabledFeatures().AutoPairUpdates && !forceUpdate {
-		return
-	}
-
-	err = p.UpdateTradablePairs(ctx, forceUpdate)
-	if err != nil {
-		log.Errorf(log.ExchangeSys,
-			"%s failed to update tradable pairs. Err: %s",
-			p.Name,
-			err)
-	}
 }
 
 // FetchTradablePairs returns a list of the exchanges tradable pairs
@@ -411,17 +334,17 @@ func (p *Poloniex) UpdateOrderbook(ctx context.Context, pair currency.Pair, asse
 			VerifyOrderbook: p.CanVerifyOrderbook,
 		}
 
-		book.Bids = make(orderbook.Items, len(data.Bids))
+		book.Bids = make(orderbook.Tranches, len(data.Bids))
 		for y := range data.Bids {
-			book.Bids[y] = orderbook.Item{
+			book.Bids[y] = orderbook.Tranche{
 				Amount: data.Bids[y].Amount,
 				Price:  data.Bids[y].Price,
 			}
 		}
 
-		book.Asks = make(orderbook.Items, len(data.Asks))
+		book.Asks = make(orderbook.Tranches, len(data.Asks))
 		for y := range data.Asks {
-			book.Asks[y] = orderbook.Item{
+			book.Asks[y] = orderbook.Tranche{
 				Amount: data.Asks[y].Amount,
 				Price:  data.Asks[y].Price,
 			}
@@ -619,7 +542,7 @@ allTrades:
 
 // SubmitOrder submits a new order
 func (p *Poloniex) SubmitOrder(ctx context.Context, s *order.Submit) (*order.SubmitResponse, error) {
-	if err := s.Validate(); err != nil {
+	if err := s.Validate(p.GetTradingRequirements()); err != nil {
 		return nil, err
 	}
 
@@ -854,7 +777,7 @@ func (p *Poloniex) GetDepositAddress(ctx context.Context, cryptocurrency currenc
 
 	address, ok = depositAddrs.Addresses[strings.ToUpper(targetCurrency)]
 	if !ok {
-		if len(coinParams.ChildChains) > 1 && chain != "" && !common.StringDataCompare(coinParams.ChildChains, targetCurrency) {
+		if len(coinParams.ChildChains) > 1 && chain != "" && !slices.Contains(coinParams.ChildChains, targetCurrency) {
 			// rather than assume, return an error
 			return nil, fmt.Errorf("currency %s has %v chains available, one of these must be specified",
 				cryptocurrency,
@@ -1129,4 +1052,39 @@ func (p *Poloniex) GetAvailableTransferChains(ctx context.Context, cryptocurrenc
 // GetServerTime returns the current exchange server time.
 func (p *Poloniex) GetServerTime(ctx context.Context, _ asset.Item) (time.Time, error) {
 	return p.GetTimestamp(ctx)
+}
+
+// GetFuturesContractDetails returns all contracts from the exchange by asset type
+func (p *Poloniex) GetFuturesContractDetails(context.Context, asset.Item) ([]futures.Contract, error) {
+	// TODO: implement with API upgrade
+	return nil, common.ErrNotYetImplemented
+}
+
+// GetLatestFundingRates returns the latest funding rates data
+func (p *Poloniex) GetLatestFundingRates(context.Context, *fundingrate.LatestRateRequest) ([]fundingrate.LatestRateResponse, error) {
+	// TODO: implement with API upgrade
+	return nil, common.ErrNotYetImplemented
+}
+
+// UpdateOrderExecutionLimits updates order execution limits
+func (p *Poloniex) UpdateOrderExecutionLimits(_ context.Context, _ asset.Item) error {
+	return common.ErrNotYetImplemented
+}
+
+// GetCurrencyTradeURL returns the URL to the exchange's trade page for the given asset and currency pair
+func (p *Poloniex) GetCurrencyTradeURL(_ context.Context, a asset.Item, cp currency.Pair) (string, error) {
+	_, err := p.CurrencyPairs.IsPairEnabled(cp, a)
+	if err != nil {
+		return "", err
+	}
+	switch a {
+	case asset.Spot:
+		cp.Delimiter = currency.UnderscoreDelimiter
+		return poloniexAPIURL + tradeSpot + cp.Upper().String(), nil
+	case asset.Futures:
+		cp.Delimiter = ""
+		return poloniexAPIURL + tradeFutures + cp.Upper().String(), nil
+	default:
+		return "", fmt.Errorf("%w %v", asset.ErrNotSupported, a)
+	}
 }

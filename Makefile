@@ -1,10 +1,9 @@
 LDFLAGS = -ldflags "-w -s"
 GCTPKG = github.com/thrasher-corp/gocryptotrader
-LINTPKG = github.com/golangci/golangci-lint/cmd/golangci-lint@v1.54.0
+LINTPKG = github.com/golangci/golangci-lint/cmd/golangci-lint@v1.60.1
 LINTBIN = $(GOPATH)/bin/golangci-lint
 GCTLISTENPORT=9050
 GCTPROFILERLISTENPORT=8085
-CRON = $(TRAVIS_EVENT_TYPE)
 DRIVER ?= psql
 RACE_FLAG := $(if $(NO_RACE_TEST),,-race)
 CONFIG_FLAG = $(if $(CONFIG),-config $(CONFIG),)
@@ -24,11 +23,7 @@ linter:
 check: linter test
 
 test:
-ifeq ($(CRON), cron)
-	go test $(RACE_FLAG) -tags=mock_test_off -coverprofile=coverage.txt -covermode=atomic  ./...
-else
 	go test $(RACE_FLAG) -coverprofile=coverage.txt -covermode=atomic  ./...
-endif
 
 build:
 	go build $(LDFLAGS)
@@ -66,3 +61,20 @@ endif
 target/sqlboiler.json:
 	mkdir -p $(@D)
 	go run ./cmd/gen_sqlboiler_config/main.go $(CONFIG_FLAG) -outdir $(@D)
+
+.PHONY: lint_configs
+lint_configs: check-jq
+	@$(call sort-json,config_example.json)
+	@$(call sort-json,testdata/configtest.json)
+
+define sort-json
+	@printf "Processing $(1)... "
+	@jq '.exchanges |= sort_by(.name)' --indent 1 $(1) > $(1).temp && \
+		(mv $(1).temp $(1) && printf "OK\n") || \
+		(rm $(1).temp; printf "FAILED\n"; exit 1)
+endef
+
+.PHONY: check-jq
+check-jq:
+	@printf "Checking if jq is installed... "
+	@command -v jq >/dev/null 2>&1 && { printf "OK\n"; } || { printf "FAILED. Please install jq to proceed.\n"; exit 1; }

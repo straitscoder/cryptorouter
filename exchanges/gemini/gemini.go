@@ -15,6 +15,7 @@ import (
 	"github.com/thrasher-corp/gocryptotrader/common/crypto"
 	"github.com/thrasher-corp/gocryptotrader/currency"
 	exchange "github.com/thrasher-corp/gocryptotrader/exchanges"
+	"github.com/thrasher-corp/gocryptotrader/exchanges/nonce"
 	"github.com/thrasher-corp/gocryptotrader/exchanges/request"
 )
 
@@ -22,9 +23,10 @@ const (
 	geminiAPIURL        = "https://api.gemini.com"
 	geminiSandboxAPIURL = "https://api.sandbox.gemini.com"
 	geminiAPIVersion    = "1"
+	tradeBaseURL        = "https://exchange.gemini.com/trade/"
 
 	geminiSymbols            = "symbols"
-	geminiTicker             = "pubticker"
+	geminiSymbolDetails      = "symbols/details"
 	geminiAuction            = "auction"
 	geminiAuctionHistory     = "history"
 	geminiOrderbook          = "book"
@@ -62,10 +64,25 @@ func (g *Gemini) GetSymbols(ctx context.Context) ([]string, error) {
 	return symbols, g.SendHTTPRequest(ctx, exchange.RestSpot, path, &symbols)
 }
 
+// GetSymbolDetails returns extra symbol details
+// use symbol "all" to get everything
+func (g *Gemini) GetSymbolDetails(ctx context.Context, symbol string) ([]SymbolDetails, error) {
+	if symbol == "all" {
+		var details []SymbolDetails
+		return details, g.SendHTTPRequest(ctx, exchange.RestSpot, "/v"+geminiAPIVersion+"/"+geminiSymbolDetails+"/"+symbol, &details)
+	}
+	var details SymbolDetails
+	err := g.SendHTTPRequest(ctx, exchange.RestSpot, "/v"+geminiAPIVersion+"/"+geminiSymbolDetails+"/"+symbol, &details)
+	if err != nil {
+		return nil, err
+	}
+	return []SymbolDetails{details}, nil
+}
+
 // GetTicker returns information about recent trading activity for the symbol
 func (g *Gemini) GetTicker(ctx context.Context, currencyPair string) (TickerV2, error) {
 	ticker := TickerV2{}
-	path := fmt.Sprintf("/v2/ticker/%s", currencyPair)
+	path := "/v2/ticker/" + currencyPair
 	err := g.SendHTTPRequest(ctx, exchange.RestSpot, path, &ticker)
 	if err != nil {
 		return ticker, err
@@ -319,7 +336,7 @@ func (g *Gemini) GetCryptoDepositAddress(ctx context.Context, depositAddlabel, c
 	response := DepositAddress{}
 	req := make(map[string]interface{})
 
-	if len(depositAddlabel) > 0 {
+	if depositAddlabel != "" {
 		req["label"] = depositAddlabel
 	}
 
@@ -385,7 +402,7 @@ func (g *Gemini) SendHTTPRequest(ctx context.Context, ep exchange.URL, path stri
 		HTTPRecording: g.HTTPRecording,
 	}
 
-	return g.SendPayload(ctx, request.Unset, func() (*request.Item, error) {
+	return g.SendPayload(ctx, request.UnAuth, func() (*request.Item, error) {
 		return item, nil
 	}, request.UnauthenticatedRequest)
 }
@@ -406,7 +423,7 @@ func (g *Gemini) SendAuthenticatedHTTPRequest(ctx context.Context, ep exchange.U
 	return g.SendPayload(ctx, request.Auth, func() (*request.Item, error) {
 		req := make(map[string]interface{})
 		req["request"] = fmt.Sprintf("/v%s/%s", geminiAPIVersion, path)
-		req["nonce"] = g.Requester.GetNonce(true).String()
+		req["nonce"] = g.Requester.GetNonce(nonce.UnixNano).String()
 
 		for key, value := range params {
 			req[key] = value

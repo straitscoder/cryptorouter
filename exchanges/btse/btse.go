@@ -31,6 +31,9 @@ const (
 	btseSPOTAPIPath    = "/api/v3.2/"
 	btseFuturesPath    = "/futures"
 	btseFuturesAPIPath = "/api/v2.1/"
+	tradeBaseURL       = "https://www.btse.com/en/"
+	tradeSpot          = "trading/"
+	tradeFutures       = "futures/"
 
 	// Public endpoints
 	btseMarketOverview = "market_summary"
@@ -65,8 +68,9 @@ func (b *BTSE) FetchFundingHistory(ctx context.Context, symbol string) (map[stri
 	return resp, b.SendHTTPRequest(ctx, exchange.RestFutures, http.MethodGet, btseFuturesFunding+params.Encode(), &resp, false, queryFunc)
 }
 
-// GetMarketSummary stores market summary data
-func (b *BTSE) GetMarketSummary(ctx context.Context, symbol string, spot bool) (MarketSummary, error) {
+// GetRawMarketSummary returns an unfiltered list of market pairs
+// Consider using the wrapper function GetMarketSummary instead
+func (b *BTSE) GetRawMarketSummary(ctx context.Context, symbol string, spot bool) (MarketSummary, error) {
 	var m MarketSummary
 	path := btseMarketOverview
 	if symbol != "" {
@@ -118,7 +122,7 @@ func (b *BTSE) GetTrades(ctx context.Context, symbol string, start, end time.Tim
 		urlValues.Add("end", strconv.FormatInt(end.Unix(), 10))
 	}
 	if !start.IsZero() && !end.IsZero() && start.After(end) {
-		return t, errors.New("start cannot be after end time")
+		return t, common.ErrStartAfterEnd
 	}
 	if beforeSerialID > 0 {
 		urlValues.Add("beforeSerialId", strconv.Itoa(beforeSerialID))
@@ -141,7 +145,7 @@ func (b *BTSE) GetOHLCV(ctx context.Context, symbol string, start, end time.Time
 
 	if !start.IsZero() && !end.IsZero() {
 		if start.After(end) {
-			return o, errors.New("start cannot be after end time")
+			return o, common.ErrStartAfterEnd
 		}
 		urlValues.Add("start", strconv.FormatInt(start.Unix(), 10))
 		urlValues.Add("end", strconv.FormatInt(end.Unix(), 10))
@@ -195,7 +199,7 @@ func (b *BTSE) GetWalletHistory(ctx context.Context, symbol string, start, end t
 	}
 	if !start.IsZero() && !end.IsZero() {
 		if start.After(end) || end.Before(start) {
-			return resp, errors.New("start cannot be after end time")
+			return resp, common.ErrStartAfterEnd
 		}
 		urlValues.Add("start", strconv.FormatInt(start.Unix(), 10))
 		urlValues.Add("end", strconv.FormatInt(end.Unix(), 10))
@@ -614,4 +618,9 @@ func (b *BTSE) calculateTradingFee(ctx context.Context, feeBuilder *exchange.Fee
 
 func parseOrderTime(timeStr string) (time.Time, error) {
 	return time.Parse(time.DateTime, timeStr)
+}
+
+// HasLiquidity returns if a market pair has a bid or ask != 0
+func (m *MarketPair) HasLiquidity() bool {
+	return m.LowestAsk != 0 || m.HighestBid != 0
 }

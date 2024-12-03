@@ -7,7 +7,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/thrasher-corp/gocryptotrader/common"
@@ -17,6 +16,8 @@ import (
 	"github.com/thrasher-corp/gocryptotrader/exchanges/account"
 	"github.com/thrasher-corp/gocryptotrader/exchanges/asset"
 	"github.com/thrasher-corp/gocryptotrader/exchanges/deposit"
+	"github.com/thrasher-corp/gocryptotrader/exchanges/fundingrate"
+	"github.com/thrasher-corp/gocryptotrader/exchanges/futures"
 	"github.com/thrasher-corp/gocryptotrader/exchanges/kline"
 	"github.com/thrasher-corp/gocryptotrader/exchanges/order"
 	"github.com/thrasher-corp/gocryptotrader/exchanges/orderbook"
@@ -27,29 +28,6 @@ import (
 	"github.com/thrasher-corp/gocryptotrader/log"
 	"github.com/thrasher-corp/gocryptotrader/portfolio/withdraw"
 )
-
-// GetDefaultConfig returns a default exchange config
-func (e *EXMO) GetDefaultConfig(ctx context.Context) (*config.Exchange, error) {
-	e.SetDefaults()
-	exchCfg := new(config.Exchange)
-	exchCfg.Name = e.Name
-	exchCfg.HTTPTimeout = exchange.DefaultHTTPTimeout
-	exchCfg.BaseCurrencies = e.BaseCurrencies
-
-	err := e.SetupDefaults(exchCfg)
-	if err != nil {
-		return nil, err
-	}
-
-	if e.Features.Supports.RESTCapabilities.AutoPairUpdates {
-		err = e.UpdateTradablePairs(ctx, true)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	return exchCfg, nil
-}
 
 // SetDefaults sets the basic defaults for exmo
 func (e *EXMO) SetDefaults() {
@@ -112,7 +90,7 @@ func (e *EXMO) SetDefaults() {
 
 	e.Requester, err = request.New(e.Name,
 		common.NewHTTPClientWithTimeout(exchange.DefaultHTTPTimeout),
-		request.WithLimiter(request.NewBasicRateLimit(exmoRateInterval, exmoRequestRate)))
+		request.WithLimiter(request.NewBasicRateLimit(exmoRateInterval, exmoRequestRate, 1)))
 	if err != nil {
 		log.Errorln(log.ExchangeSys, err)
 	}
@@ -135,35 +113,6 @@ func (e *EXMO) Setup(exch *config.Exchange) error {
 		return nil
 	}
 	return e.SetupDefaults(exch)
-}
-
-// Start starts the EXMO go routine
-func (e *EXMO) Start(ctx context.Context, wg *sync.WaitGroup) error {
-	if wg == nil {
-		return fmt.Errorf("%T %w", wg, common.ErrNilPointer)
-	}
-	wg.Add(1)
-	go func() {
-		e.Run(ctx)
-		wg.Done()
-	}()
-	return nil
-}
-
-// Run implements the EXMO wrapper
-func (e *EXMO) Run(ctx context.Context) {
-	if e.Verbose {
-		e.PrintEnabledPairs()
-	}
-
-	if !e.GetEnabledFeatures().AutoPairUpdates {
-		return
-	}
-
-	err := e.UpdateTradablePairs(ctx, false)
-	if err != nil {
-		log.Errorf(log.ExchangeSys, "%s failed to update tradable pairs. Err: %s", e.Name, err)
-	}
 }
 
 // FetchTradablePairs returns a list of the exchanges tradable pairs
@@ -205,28 +154,24 @@ func (e *EXMO) UpdateTradablePairs(ctx context.Context, forceUpdate bool) error 
 
 // UpdateTickers updates the ticker for all currency pairs of a given asset type
 func (e *EXMO) UpdateTickers(ctx context.Context, a asset.Item) error {
-	avail, err := e.GetAvailablePairs(a)
-	if err != nil {
-		return err
+	if !e.SupportsAsset(a) {
+		return fmt.Errorf("%w: %v", asset.ErrNotSupported, a)
 	}
-
-	enabled, err := e.GetEnabledPairs(a)
-	if err != nil {
-		return err
-	}
-
 	result, err := e.GetTicker(ctx)
 	if err != nil {
 		return err
 	}
 
+	var enabled bool
 	for symbol, tick := range result {
 		var pair currency.Pair
-		pair, err = avail.DeriveFrom(strings.Replace(symbol, "_", "", 1))
+		pair, enabled, err = e.MatchSymbolCheckEnabled(symbol, asset.Spot, true)
 		if err != nil {
-			return err
+			if !errors.Is(err, currency.ErrPairNotFound) {
+				return err
+			}
 		}
-		if !enabled.Contains(pair, true) {
+		if !enabled {
 			continue
 		}
 		err = ticker.ProcessTicker(&ticker.Price{
@@ -321,7 +266,7 @@ func (e *EXMO) UpdateOrderbook(ctx context.Context, p currency.Pair, assetType a
 			continue
 		}
 
-		book.Asks = make(orderbook.Items, len(data.Ask))
+		book.Asks = make(orderbook.Tranches, len(data.Ask))
 		for y := range data.Ask {
 			var price, amount float64
 			price, err = strconv.ParseFloat(data.Ask[y][0], 64)
@@ -334,13 +279,13 @@ func (e *EXMO) UpdateOrderbook(ctx context.Context, p currency.Pair, assetType a
 				return book, err
 			}
 
-			book.Asks[y] = orderbook.Item{
+			book.Asks[y] = orderbook.Tranche{
 				Price:  price,
 				Amount: amount,
 			}
 		}
 
-		book.Bids = make(orderbook.Items, len(data.Bid))
+		book.Bids = make(orderbook.Tranches, len(data.Bid))
 		for y := range data.Bid {
 			var price, amount float64
 			price, err = strconv.ParseFloat(data.Bid[y][0], 64)
@@ -353,7 +298,7 @@ func (e *EXMO) UpdateOrderbook(ctx context.Context, p currency.Pair, assetType a
 				return book, err
 			}
 
-			book.Bids[y] = orderbook.Item{
+			book.Bids[y] = orderbook.Tranche{
 				Price:  price,
 				Amount: amount,
 			}
@@ -527,7 +472,7 @@ func (e *EXMO) GetHistoricTrades(_ context.Context, _ currency.Pair, _ asset.Ite
 
 // SubmitOrder submits a new order
 func (e *EXMO) SubmitOrder(ctx context.Context, s *order.Submit) (*order.SubmitResponse, error) {
-	if err := s.Validate(); err != nil {
+	if err := s.Validate(e.GetTradingRequirements()); err != nil {
 		return nil, err
 	}
 
@@ -831,4 +776,29 @@ func (e *EXMO) GetAvailableTransferChains(ctx context.Context, cryptocurrency cu
 	}
 
 	return availChains, nil
+}
+
+// GetFuturesContractDetails returns all contracts from the exchange by asset type
+func (e *EXMO) GetFuturesContractDetails(context.Context, asset.Item) ([]futures.Contract, error) {
+	return nil, common.ErrFunctionNotSupported
+}
+
+// GetLatestFundingRates returns the latest funding rates data
+func (e *EXMO) GetLatestFundingRates(context.Context, *fundingrate.LatestRateRequest) ([]fundingrate.LatestRateResponse, error) {
+	return nil, common.ErrFunctionNotSupported
+}
+
+// UpdateOrderExecutionLimits updates order execution limits
+func (e *EXMO) UpdateOrderExecutionLimits(_ context.Context, _ asset.Item) error {
+	return common.ErrNotYetImplemented
+}
+
+// GetCurrencyTradeURL returns the URL to the exchange's trade page for the given asset and currency pair
+func (e *EXMO) GetCurrencyTradeURL(_ context.Context, a asset.Item, cp currency.Pair) (string, error) {
+	_, err := e.CurrencyPairs.IsPairEnabled(cp, a)
+	if err != nil {
+		return "", err
+	}
+	cp.Delimiter = currency.UnderscoreDelimiter
+	return tradeBaseURL + cp.Upper().String() + "/", nil
 }

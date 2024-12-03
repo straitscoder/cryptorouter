@@ -26,7 +26,7 @@ func main() {
 	flag.BoolVar(&settings.EnableAllPairs, "enableallpairs", false, "enables all pairs for enabled exchanges")
 	flag.BoolVar(&settings.Verbose, "verbose", false, "increases logging verbosity for GoCryptoTrader")
 	flag.BoolVar(&settings.EnableFuturesTracking, "enablefuturestracking", true, "tracks futures orders PNL is supported by the exchange")
-	flag.BoolVar(&settings.EnableExchangeSyncManager, "syncmanager", true, "enables to exchange sync manager")
+	flag.BoolVar(&settings.EnableExchangeSyncManager, "syncmanager", false, "enables to exchange sync manager")
 	flag.BoolVar(&settings.EnableWebsocketRoutine, "websocketroutine", true, "enables the websocket routine for all loaded exchanges")
 	flag.BoolVar(&settings.EnableConnectivityMonitor, "connectivitymonitor", true, "enables the connectivity monitor")
 	flag.BoolVar(&settings.EnableDispatcher, "dispatch", false, "enables the dispatch system")
@@ -68,7 +68,7 @@ func main() {
 	if engine == nil || err != nil {
 		log.Fatalf("Unable to initialise FIX engine. Error: %s\n", err)
 	}
-	config.Cfg = *engine.Config
+	config.SetConfig(*&engine.Config)
 
 	engine.Settings.PrintLoadedSettings()
 

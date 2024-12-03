@@ -2,9 +2,9 @@ package bitstamp
 
 import (
 	"errors"
-	"time"
 
 	"github.com/thrasher-corp/gocryptotrader/currency"
+	"github.com/thrasher-corp/gocryptotrader/types"
 )
 
 // Transaction types
@@ -25,15 +25,18 @@ var errWSPairParsingError = errors.New("unable to parse currency pair from wsRes
 
 // Ticker holds ticker information
 type Ticker struct {
-	Last      float64 `json:"last,string"`
-	High      float64 `json:"high,string"`
-	Low       float64 `json:"low,string"`
-	Vwap      float64 `json:"vwap,string"`
-	Volume    float64 `json:"volume,string"`
-	Bid       float64 `json:"bid,string"`
-	Ask       float64 `json:"ask,string"`
-	Timestamp int64   `json:"timestamp,string"`
-	Open      float64 `json:"open,string"`
+	Last            float64   `json:"last,string"`
+	High            float64   `json:"high,string"`
+	Low             float64   `json:"low,string"`
+	Vwap            float64   `json:"vwap,string"`
+	Volume          float64   `json:"volume,string"`
+	Bid             float64   `json:"bid,string"`
+	Ask             float64   `json:"ask,string"`
+	Timestamp       int64     `json:"timestamp,string"`
+	Open            float64   `json:"open,string"`
+	Open24          float64   `json:"open_24,string"`
+	Side            orderSide `json:"side,string"`
+	PercentChange24 float64   `json:"percent_change_24,string"`
 }
 
 // OrderbookBase holds singular price information
@@ -75,15 +78,24 @@ type EURUSDConversionRate struct {
 	Sell float64 `json:"sell,string"`
 }
 
+// TradingFees holds trading fee information
+type TradingFees struct {
+	Symbol string         `json:"currency_pair"`
+	Fees   MakerTakerFees `json:"fees"`
+}
+
+// MakerTakerFees holds maker and taker fee information
+type MakerTakerFees struct {
+	Maker float64 `json:"maker,string"`
+	Taker float64 `json:"taker,string"`
+}
+
 // Balance stores the balance info
 type Balance struct {
 	Available     float64
 	Balance       float64
 	Reserved      float64
 	WithdrawalFee float64
-	BTCFee        float64 // for cryptocurrency pairs
-	USDFee        float64
-	EURFee        float64
 }
 
 // Balances holds full balance information with the supplied APIKEYS
@@ -105,28 +117,35 @@ type UserTransactions struct {
 
 // Order holds current open order data
 type Order struct {
-	ID       int64   `json:"id,string"`
-	DateTime string  `json:"datetime"`
-	Type     int     `json:"type,string"`
-	Price    float64 `json:"price,string"`
-	Amount   float64 `json:"amount,string"`
-	Currency string  `json:"currency_pair"`
+	ID             int64   `json:"id,string"`
+	DateTime       string  `json:"datetime"`
+	Type           int     `json:"type,string"`
+	Price          float64 `json:"price,string"`
+	Amount         float64 `json:"amount,string"`
+	AmountAtCreate float64 `json:"amount_at_create,string"`
+	Currency       string  `json:"currency_pair"`
+	LimitPrice     float64 `json:"limit_price,string"`
+	ClientOrderID  string  `json:"client_order_id"`
+	Market         string  `json:"market"`
 }
 
 // OrderStatus holds order status information
 type OrderStatus struct {
-	Price        float64 `json:"price,string"`
-	Amount       float64 `json:"amount,string"`
-	Type         int     `json:"type"`
-	ID           string  `json:"id"`
-	DateTime     string  `json:"datetime"`
-	Status       string
-	Transactions []struct {
-		TradeID int64   `json:"tid"`
-		USD     float64 `json:"usd,string"`
-		Price   float64 `json:"price,string"`
-		Fee     float64 `json:"fee,string"`
-		BTC     float64 `json:"btc,string"`
+	AmountRemaining float64 `json:"amount_remaining,string"`
+	Type            int     `json:"type"`
+	ID              string  `json:"id"`
+	DateTime        string  `json:"datetime"`
+	Status          string  `json:"status"`
+	ClientOrderID   string  `json:"client_order_id"`
+	Market          string  `json:"market"`
+	Transactions    []struct {
+		TradeID      int64   `json:"tid"`
+		FromCurrency float64 `json:"{from_currency},string"`
+		ToCurrency   float64 `json:"{to_currency},string"`
+		Price        float64 `json:"price,string"`
+		Fee          float64 `json:"fee,string"`
+		DateTime     string  `json:"datetime"`
+		Type         int     `json:"type"`
 	}
 }
 
@@ -147,31 +166,33 @@ type DepositAddress struct {
 // WithdrawalRequests holds request information on withdrawals
 type WithdrawalRequests struct {
 	OrderID       int64         `json:"id"`
-	Date          time.Time     `json:"datetime"`
+	Date          string        `json:"datetime"`
 	Type          int64         `json:"type"`
 	Amount        float64       `json:"amount,string"`
 	Status        int64         `json:"status"`
 	Currency      currency.Code `json:"currency"`
 	Address       string        `json:"address"`
 	TransactionID string        `json:"transaction_id"`
+	Network       string        `json:"network"`
+	TxID          int64         `json:"txid"`
 }
 
 // CryptoWithdrawalResponse response from a crypto withdrawal request
 type CryptoWithdrawalResponse struct {
-	ID int64 `json:"id"`
+	ID int64 `json:"withdrawal_id"`
 }
 
 // FIATWithdrawalResponse response from a fiat withdrawal request
 type FIATWithdrawalResponse struct {
-	ID int64 `json:"id"`
+	ID int64 `json:"withdrawal_id"`
 }
 
 // UnconfirmedBTCTransactions holds address information about unconfirmed
 // transactions
 type UnconfirmedBTCTransactions struct {
-	Amount        float64 `json:"amount,string"`
-	Address       string  `json:"address"`
-	Confirmations int     `json:"confirmations"`
+	Address        string `json:"address"`
+	DestinationTag int    `json:"destination_tag"`
+	MemoID         string `json:"memo_id"`
 }
 
 // CaptureError is used to capture unmarshalled errors
@@ -195,11 +216,14 @@ type websocketEventRequest struct {
 
 type websocketData struct {
 	Channel string `json:"channel"`
+	Auth    string `json:"auth,omitempty"`
 }
 
 type websocketResponse struct {
-	Event   string `json:"event"`
-	Channel string `json:"channel"`
+	Event       string `json:"event"`
+	Channel     string `json:"channel"`
+	channelType string
+	pair        currency.Pair
 }
 
 type websocketTradeResponse struct {
@@ -218,6 +242,13 @@ type websocketTradeData struct {
 	Price          float64 `json:"price"`
 	Type           int     `json:"type"`
 	ID             int64   `json:"id"`
+}
+
+// WebsocketAuthResponse holds the auth token for subscribing to auth channels
+type WebsocketAuthResponse struct {
+	Token     string `json:"token"`
+	UserID    int64  `json:"user_id"`
+	ValidSecs int64  `json:"valid_sec"`
 }
 
 type websocketOrderBookResponse struct {
@@ -245,4 +276,22 @@ type OHLCResponse struct {
 			Volume    float64 `json:"volume,string"`
 		} `json:"ohlc"`
 	} `json:"data"`
+}
+
+type websocketOrderResponse struct {
+	websocketResponse
+	Order websocketOrderData `json:"data"`
+}
+
+type websocketOrderData struct {
+	ID              int64      `json:"id"`
+	IDStr           string     `json:"id_str"`
+	ClientOrderID   string     `json:"client_order_id"`
+	RemainingAmount float64    `json:"amount"`
+	ExecutedAmount  float64    `json:"amount_traded,string"` // Not Cumulative; Partial fill amount
+	Amount          float64    `json:"amount_at_create,string"`
+	Price           float64    `json:"price"`
+	Side            orderSide  `json:"order_type"`
+	Datetime        types.Time `json:"datetime"`
+	Microtimestamp  types.Time `json:"microtimestamp"`
 }
