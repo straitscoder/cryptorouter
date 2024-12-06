@@ -1,148 +1,152 @@
 package main
 
 import (
-	"errors"
+	"bufio"
+	"context"
 	"fmt"
-	"strconv"
+	"log"
+	"os"
+	"strings"
 	"time"
 
-	"github.com/urfave/cli/v2"
+	"github.com/quickfixgo/enum"
+	"github.com/quickfixgo/field"
+	"github.com/quickfixgo/fix42/newordersingle"
+	"github.com/quickfixgo/quickfix"
+	"github.com/shopspring/decimal"
+	"github.com/spf13/cobra"
 )
 
-var newOrderSingleCommand = &cli.Command{
-	Name:      "neworder",
-	Aliases:   []string{"order"},
-	Usage:     "submit order submits an exchange order",
-	ArgsUsage: "<exchange> <pair> <side> <type> <amount> <price> <asset> <handle>",
-	Action:    NewOrderSingle,
-	Flags: []cli.Flag{
-		&cli.StringFlag{
-			Name:  "exchange",
-			Usage: "the exchange to submit the order for",
+func Fili() error {
+	fili := &cobra.Command{
+		Use:   "fili",
+		Short: "Command line interface for interact with FIX API",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			fixEngine := new(FixEngine)
+			_, cancel := context.WithCancel(context.TODO())
+			fixEngine.Start()
+		Loop:
+			for {
+				action, err := Menu()
+				if err != nil {
+					log.Println(err)
+					break
+				}
+
+				switch action {
+				case "1":
+					if err := fixEngine.NewOrder(); err != nil {
+						log.Println(err)
+						break
+					}
+					continue Loop
+				case "2":
+					if err := fixEngine.CancelOrder(); err != nil {
+						log.Println(err)
+						break
+					}
+					continue Loop
+				case "0":
+					break Loop
+				default:
+					continue Loop
+				}
+			}
+
+			closeConn(fixEngine.initiator, cancel)
+			return cmd.Usage()
 		},
-		&cli.StringFlag{
-			Name:  "pair",
-			Usage: "the currency pair (BTC-USDT)",
-		},
-		&cli.StringFlag{
-			Name:  "side",
-			Usage: "the order side to use (BUY OR SELL)",
-		},
-		&cli.StringFlag{
-			Name:  "type",
-			Usage: "the order type (MARKET OR LIMIT)",
-		},
-		&cli.Float64Flag{
-			Name:  "amount",
-			Usage: "the amount for the order",
-		},
-		&cli.Float64Flag{
-			Name:  "price",
-			Usage: "the price for the order",
-		},
-		&cli.StringFlag{
-			Name:  "asset",
-			Usage: "required asset type",
-		},
-		&cli.StringFlag{
-			Name:  "handle",
-			Usage: "how to handle order request (Auto, Semi, or Manual)",
-		},
-	},
+	}
+
+	return fili.Execute()
 }
 
-func NewOrderSingle(c *cli.Context) error {
-	if c.NArg() == 0 && c.NumFlags() == 0 {
-		return cli.ShowSubcommandHelp(c)
+func Menu() (string, error) {
+	fmt.Println("Menu")
+	fmt.Println("1. Order Single")
+	fmt.Println("2. Cancel Order")
+	fmt.Println("0. Exit")
+	scanner := bufio.NewScanner(os.Stdin)
+	scanner.Scan()
+	return scanner.Text(), scanner.Err()
+}
+
+func stringField(fieldName string) string {
+	fmt.Printf("Please input %s: ", fieldName)
+	scanner := bufio.NewScanner(os.Stdin)
+	scanner.Scan()
+	if err := scanner.Err(); err != nil {
+		log.Fatalf("Error reading %s input: %+v", fieldName, err)
 	}
+	return scanner.Text()
+}
 
-	var exchangeName string
-	if c.IsSet("exchange") {
-		exchangeName = c.String("exchange")
-	} else {
-		exchangeName = c.Args().First()
-	}
-
-	var pair string
-	if c.IsSet("pair") {
-		pair = c.String("pair")
-	} else {
-		pair = c.Args().Get(1)
-	}
-
-	var side string
-	if c.IsSet("side") {
-		side = c.String("side")
-	} else {
-		side = c.Args().Get(2)
-	}
-
-	var orderType string
-	if c.IsSet("type") {
-		orderType = c.String("type")
-	} else {
-		orderType = c.Args().Get(3)
-	}
-
-	var amount float64
-	if c.IsSet("amount") {
-		amount = c.Float64("amount")
-	} else {
-		var err error
-		amount, err = strconv.ParseFloat(c.Args().Get(4), 64)
-		if err != nil {
-			return err
-		}
-	}
-
-	var price float64
-	if c.IsSet("price") {
-		price = c.Float64("price")
-	} else {
-		var err error
-		price, err = strconv.ParseFloat(c.Args().Get(5), 64)
-		if err != nil {
-			return err
-		}
-	}
-
-	var assetType string
-	if c.IsSet("asset") {
-		assetType = c.String("asset")
-	} else {
-		assetType = c.Args().Get(6)
-	}
-
-	var handleIns string
-	if c.IsSet("handle") {
-		handleIns = c.String("handle")
-	} else {
-		handleIns = c.Args().Get(7)
-	}
-
-	if amount == 0 || price == 0 {
-		return errors.New("amount and price must be greater than 0")
-	}
-
-	req := &NewOrderRequest{
-		CliOrdID:  fmt.Sprint(int(time.Now().Unix())),
-		Exchange:  exchangeName,
-		Pair:      pair,
-		Side:      side,
-		Type:      orderType,
-		Amount:    amount,
-		Price:     price,
-		Asset:     assetType,
-		HandleIns: handleIns,
-	}
-	jsonOutput(req)
-
-	engine := FixEngine{}
-
-	msg, err := engine.NewOrder(req)
+func decimalField(fieldName string) decimal.Decimal {
+	val, err := decimal.NewFromString(stringField(fieldName))
 	if err != nil {
-		return errors.New(err.Error())
+		log.Fatalf("Error reading %s input: %+v", fieldName, err)
 	}
-	jsonOutput(msg)
-	return nil
+
+	return val
+}
+
+func HandleIns() enum.HandlInst {
+	fmt.Println("You can choose either Auto, Semi, or Manual")
+	handleInsStr := stringField("Handle Instruction")
+	return convertHandleInst(strings.ToUpper(handleInsStr))
+}
+
+func Symbol() string {
+	fmt.Println("Please input symbol you want to trade")
+	return stringField("Symbol")
+}
+
+func Side() enum.Side {
+	fmt.Println("You can choose either Buy or Sell")
+	sideStr := stringField("Side")
+	return convertSide(strings.ToUpper(sideStr))
+}
+
+func Price() decimal.Decimal {
+	return decimalField("Price")
+}
+
+func Amount() decimal.Decimal {
+	return decimalField("Amount")
+}
+
+func OrderType() enum.OrdType {
+	fmt.Println("You can choose either Limit or Market")
+	ordTypeStr := stringField("Order Type")
+	return convertOrdType(ordTypeStr)
+}
+
+func AssetType() enum.SecurityType {
+	fmt.Println("You can choose either Future or Spot")
+	assetTypeStr := stringField("Asset Type")
+	return convertAsset(assetTypeStr)
+}
+
+func Exchange() string {
+	return stringField("Exchange")
+}
+
+func ClOrdID() string {
+	return stringField("Client Order ID")
+}
+
+func NewOrderSingle() (msg *quickfix.Message) {
+	order := newordersingle.New(
+		field.NewClOrdID(string(time.Now().Unix())),
+		field.NewHandlInst(HandleIns()),
+		field.NewSymbol(Symbol()),
+		field.NewSide(Side()),
+		field.NewTransactTime(time.Now().UTC()),
+		field.NewOrdType(OrderType()),
+	)
+
+	order.Set(field.NewPrice(Price(), 8))
+	order.Set(field.NewOrderQty(Amount(), 8))
+
+	return order.ToMessage()
 }

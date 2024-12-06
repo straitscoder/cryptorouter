@@ -7,17 +7,21 @@ import (
 	"os"
 	"path"
 	"runtime"
-	"strings"
 	"time"
 
+	"github.com/quickfixgo/field"
 	"github.com/quickfixgo/fix42/newordersingle"
+	"github.com/quickfixgo/fix42/ordercancelrequest"
 	"github.com/quickfixgo/quickfix"
-	"github.com/shopspring/decimal"
+	"github.com/quickfixgo/tag"
 	"github.com/thrasher-corp/gocryptotrader/common"
 	"github.com/thrasher-corp/gocryptotrader/common/file"
+	"gopkg.in/ini.v1"
 )
 
-type fixApplication struct{}
+type fixApplication struct {
+	*quickfix.MessageRouter
+}
 
 func (c *fixApplication) OnCreate(sessionID quickfix.SessionID) {}
 
@@ -30,6 +34,21 @@ func (c *fixApplication) FromAdmin(msg *quickfix.Message, sessionID quickfix.Ses
 }
 
 func (c *fixApplication) FromApp(msg *quickfix.Message, sessionID quickfix.SessionID) (reject quickfix.MessageRejectError) {
+	msgType, _ := msg.Header.GetString(tag.MsgType)
+	if msgType == "8" {
+		parsed := parseFIXMessage(msg)
+		jsonOutput(parsed)
+		clOrdID, _ := msg.Body.GetString(tag.ClOrdID)
+		orderId, _ := msg.Body.GetString(tag.OrderID)
+		ordStatus, _ := msg.Body.GetString(tag.OrdStatus)
+		if ordStatus == "0" {
+			saveOrderId(orderId, clOrdID)
+			orderResponse := make(map[string]string)
+			orderResponse["Client_Order_ID"] = clOrdID
+			orderResponse["Order_ID"] = orderId
+			jsonOutput(orderResponse)
+		}
+	}
 	return nil
 }
 
@@ -39,8 +58,13 @@ func (c *fixApplication) ToApp(msg *quickfix.Message, sessionID quickfix.Session
 	return nil
 }
 
+func (c *fixApplication) NewOrderSingle(msg *quickfix.Message, sessionID quickfix.SessionID) error {
+	return quickfix.Send(msg)
+}
+
 func NewInitiator(settings *quickfix.Settings, storeFactory quickfix.MessageStoreFactory, logFactory *quickfix.LogFactory) (*quickfix.Initiator, error) {
-	initiator, err := quickfix.NewInitiator(&fixApplication{}, storeFactory, settings, *logFactory)
+	app := &fixApplication{MessageRouter: quickfix.NewMessageRouter()}
+	initiator, err := quickfix.NewInitiator(app, storeFactory, settings, *logFactory)
 	if err != nil {
 		return nil, err
 	}
@@ -49,6 +73,8 @@ func NewInitiator(settings *quickfix.Settings, storeFactory quickfix.MessageStor
 }
 
 type FixEngine struct {
+	senderCompId string
+	targetCompId string
 	initiator    *quickfix.Initiator
 	settings     *quickfix.Settings
 	logFactory   *quickfix.LogFactory
@@ -67,25 +93,36 @@ func (fe *FixEngine) Start() error {
 
 	cfg, err := os.Open(cfgFileName)
 	if err != nil {
-		return fmt.Errorf("Error opening %v, %v\n", cfgFileName, err)
+		return fmt.Errorf("error opening %v, %v", cfgFileName, err)
 	}
 	defer cfg.Close()
 	stringData, readErr := io.ReadAll(cfg)
 	if readErr != nil {
-		return fmt.Errorf("Error reading cfg: %s,", readErr)
+		return fmt.Errorf("error reading cfg: %s,", readErr)
 	}
+
+	config, err := ini.Load(cfgFileName)
+	if err != nil {
+		return fmt.Errorf("error reading cfg: %s,", err)
+	}
+	fe.senderCompId = config.Section("DEFAULT").Key("SenderCompID").String()
+	fe.targetCompId = config.Section("SESSION").Key("TargetCompID").String()
 
 	fe.settings, err = quickfix.ParseSettings(bytes.NewReader(stringData))
 	if err != nil {
-		return fmt.Errorf("Error reading setting cfg: %+v", err)
+		return fmt.Errorf("error reading setting cfg: %+v", err)
 	}
 
-	logFactory := quickfix.NewScreenLogFactory()
+	logFactory, err := quickfix.NewFileLogFactory(fe.settings)
+	if err != nil {
+		return fmt.Errorf("unable to create logger: %s", err)
+	}
 	fe.logFactory = &logFactory
 
 	fe.storeFactory = quickfix.NewMemoryStoreFactory()
 
-	initiator, err := NewInitiator(fe.settings, fe.storeFactory, fe.logFactory)
+	app := &fixApplication{MessageRouter: quickfix.NewMessageRouter()}
+	initiator, err := quickfix.NewInitiator(app, fe.storeFactory, fe.settings, *fe.logFactory)
 	if err != nil {
 		return fmt.Errorf("error when initiate initiator : %+v", err)
 	}
@@ -96,38 +133,60 @@ func (fe *FixEngine) Start() error {
 	return nil
 }
 
-type NewOrderRequest struct {
-	CliOrdID  string  `json:"cliOrdID"`
-	Exchange  string  `json:"exchange"`
-	Pair      string  `json:"pair"`
-	Side      string  `json:"side"`
-	Type      string  `json:"type"`
-	Amount    float64 `json:"amount"`
-	Price     float64 `json:"price"`
-	Asset     string  `json:"asset"`
-	HandleIns string  `json:"handleIns"`
+func (fe *FixEngine) NewOrder() error {
+	order := newordersingle.New(
+		field.NewClOrdID(generateClOrdID()),
+		field.NewHandlInst(HandleIns()),
+		field.NewSymbol(Symbol()),
+		field.NewSide(Side()),
+		field.NewTransactTime(time.Now().UTC()),
+		field.NewOrdType(OrderType()),
+	)
+
+	order.SetSecurityExchange(Exchange())
+	order.SetSecurityType(AssetType())
+	order.Set(field.NewPrice(Price(), 8))
+	order.Set(field.NewOrderQty(Amount(), 8))
+
+	orderMsg := order.ToMessage()
+	orderMsg.Header.Set(field.NewSenderCompID(fe.senderCompId))
+	orderMsg.Header.Set(field.NewTargetCompID(fe.targetCompId))
+	parsed := parseFIXMessage(orderMsg)
+	jsonOutput(parsed)
+	if !Confirmation() {
+		fmt.Println("Order canceled")
+		return nil
+	}
+	return quickfix.Send(orderMsg)
 }
 
-func (fe *FixEngine) NewOrder(req *NewOrderRequest) (*quickfix.Message, error) {
-	jsonOutput(req)
-	var orderRequest newordersingle.NewOrderSingle
-	orderRequest.SetClOrdID(req.CliOrdID)
-	orderRequest.SetHandlInst(convertHandleInst(req.HandleIns))
-	timestamp := time.Now().UTC()
-	orderRequest.SetTransactTime(timestamp)
-	orderRequest.SetOrdType(convertOrdType(req.Type))
-	orderRequest.SetPrice(decimal.NewFromFloat(req.Price), 8)
-	orderRequest.SetOrderQty(decimal.NewFromFloat(req.Amount), 8)
-	orderRequest.SetSecurityExchange(strings.ToLower(req.Exchange))
-	orderRequest.SetSecurityType(convertAsset(req.Asset))
-	orderRequest.SetSide(convertSide(req.Side))
-	orderRequest.SetSymbol(req.Pair)
-	jsonOutput(orderRequest)
-	orderMsg := orderRequest.ToMessage()
-
-	if err := quickfix.Send(orderMsg); err != nil {
-		return nil, err
+func (fe *FixEngine) CancelOrder() error {
+	clOrdId := ClOrdID()
+	orderId := getOrderId(clOrdId)
+	if orderId == nil {
+		jsonOutput("Order not found")
+		return nil
 	}
+	cancelReq := ordercancelrequest.New(
+		field.NewOrigClOrdID(clOrdId),
+		field.NewClOrdID(generateClOrdID()),
+		field.NewSymbol(Symbol()),
+		field.NewSide(Side()),
+		field.NewTransactTime(time.Now().UTC()),
+	)
 
-	return orderMsg, nil
+	cancelReq.SetOrderID(*orderId)
+	cancelReq.SetSecurityExchange(Exchange())
+	cancelReq.SetSecurityType(AssetType())
+	cancelReqMsg := cancelReq.ToMessage()
+	cancelReqMsg.Header.Set(field.NewSenderCompID(fe.senderCompId))
+	cancelReqMsg.Header.Set(field.NewTargetCompID(fe.targetCompId))
+	parsed := parseFIXMessage(cancelReqMsg)
+	jsonOutput(parsed)
+	if !Confirmation() {
+		fmt.Println("Abort cancel order")
+		return nil
+	}
+	deleteOrderId(clOrdId)
+	return quickfix.Send(cancelReqMsg)
 }

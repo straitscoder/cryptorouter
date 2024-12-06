@@ -1,12 +1,16 @@
 package main
 
 import (
+	"bufio"
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
+	"sync"
+	"time"
 
-	"github.com/gofrs/uuid"
 	"github.com/quickfixgo/enum"
 	"github.com/quickfixgo/quickfix"
 )
@@ -19,9 +23,44 @@ func closeConn(conn *quickfix.Initiator, cancel context.CancelFunc) {
 }
 
 // TODO: create function to generate client order id in 6 digits with prefix for quickfix
-func generateClientOrderID() int64 {
-	uuid, _ := uuid.NewV4()
-	return int64(uuid[0])
+func generateRandomString(n int) string {
+	const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+	b := make([]byte, n)
+	_, err := rand.Read(b)
+	if err != nil {
+		panic(err) // Handle error appropriately in production
+	}
+	for i := range b {
+		b[i] = charset[int(b[i])%len(charset)]
+	}
+	return string(b)
+}
+
+func generateClOrdID() string {
+	timestamp := time.Now().Unix()         // Unix timestamp for uniqueness
+	randomPart := generateRandomString(10) // Random alphanumeric string
+	clOrdId := fmt.Sprintf("%d-%s", timestamp, randomPart)
+	if len(clOrdId) > 36 {
+		clOrdId = clOrdId[:36]
+	}
+	return clOrdId
+}
+
+func parseFIXMessage(msg *quickfix.Message) map[string]interface{} {
+	parsed := make(map[string]interface{})
+	addFieldsToMap(parsed, &msg.Header.FieldMap)
+	addFieldsToMap(parsed, &msg.Body.FieldMap)
+	addFieldsToMap(parsed, &msg.Trailer.FieldMap)
+	return parsed
+}
+
+func addFieldsToMap(m map[string]interface{}, group *quickfix.FieldMap) {
+	tags := group.Tags()
+	for _, tag := range tags {
+		value, _ := group.GetString(tag)
+		fieldName := fmt.Sprintf("%d", tag)
+		m[fieldName] = value
+	}
 }
 
 func jsonOutput(in interface{}) {
@@ -29,7 +68,14 @@ func jsonOutput(in interface{}) {
 	if err != nil {
 		return
 	}
-	fmt.Print(string(j))
+	fmt.Printf("%s\n", string(j))
+}
+
+func Confirmation() bool {
+	fmt.Println("Are you sure? (Y/N)")
+	scanner := bufio.NewScanner(os.Stdin)
+	scanner.Scan()
+	return strings.ToUpper(scanner.Text()) == "Y"
 }
 
 func convertSide(side string) enum.Side {
@@ -74,4 +120,31 @@ func convertHandleInst(handleIns string) enum.HandlInst {
 	default:
 		return enum.HandlInst_AUTOMATED_EXECUTION_ORDER_PRIVATE_NO_BROKER_INTERVENTION
 	}
+}
+
+var (
+	orderIdStore = make(map[string]string)
+	tempMemory   sync.Mutex
+)
+
+func saveOrderId(orderId string, clOrdId string) {
+	tempMemory.Lock()
+	orderIdStore[clOrdId] = orderId
+	tempMemory.Unlock()
+}
+
+func getOrderId(clOrdId string) *string {
+	tempMemory.Lock()
+	defer tempMemory.Unlock()
+	orderId, ok := orderIdStore[clOrdId]
+	if !ok {
+		return nil
+	}
+	return &orderId
+}
+
+func deleteOrderId(clOrdId string) {
+	tempMemory.Lock()
+	delete(orderIdStore, clOrdId)
+	tempMemory.Unlock()
 }
