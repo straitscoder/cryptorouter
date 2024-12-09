@@ -104,7 +104,7 @@ func convertAsset(asset string) enum.SecurityType {
 	switch strings.ToUpper(asset) {
 	case "SPOT":
 		return enum.SecurityType_FX_SPOT
-	case "FUTURES":
+	case "FUTURE":
 		return enum.SecurityType_FUTURE
 	default:
 		return enum.SecurityType_FX_FORWARD
@@ -119,6 +119,54 @@ func convertHandleInst(handleIns string) enum.HandlInst {
 		return enum.HandlInst_MANUAL_ORDER_BEST_EXECUTION
 	default:
 		return enum.HandlInst_AUTOMATED_EXECUTION_ORDER_PRIVATE_NO_BROKER_INTERVENTION
+	}
+}
+
+func convertSubsReqType(subsReqType string) enum.SubscriptionRequestType {
+	switch strings.ToUpper(subsReqType) {
+	case "SNAPSHOT":
+		return enum.SubscriptionRequestType_SNAPSHOT
+	case "SNAPSHOTPLUS":
+		return enum.SubscriptionRequestType_SNAPSHOT_PLUS_UPDATES
+	case "DISABLEPREVIOUS":
+		return enum.SubscriptionRequestType_DISABLE_PREVIOUS_SNAPSHOT_PLUS_UPDATE_REQUEST
+	default:
+		return enum.SubscriptionRequestType_SNAPSHOT
+	}
+}
+
+func convertMarketDepth(marketDepth string) int {
+	switch strings.ToUpper(marketDepth) {
+	case "TOPOFBOOK":
+		return 1
+	case "FULLBOOK":
+		return 0
+	default:
+		return 0
+	}
+}
+
+func convertMDUpdateType(mdUpdateType string) enum.MDUpdateType {
+	switch strings.ToUpper(mdUpdateType) {
+	case "FULLREFRESH":
+		return enum.MDUpdateType_FULL_REFRESH
+	case "INCREMENTALREFRESH":
+		return enum.MDUpdateType_INCREMENTAL_REFRESH
+	default:
+		return enum.MDUpdateType_FULL_REFRESH
+	}
+}
+
+func convertMDEntryType(mDEntryType string) enum.MDEntryType {
+	switch strings.ToUpper(mDEntryType) {
+	case "BID":
+		return enum.MDEntryType_BID
+	case "OFFER":
+		return enum.MDEntryType_OFFER
+	case "TRADE":
+		return enum.MDEntryType_TRADE
+	default:
+		return enum.MDEntryType_TRADE
 	}
 }
 

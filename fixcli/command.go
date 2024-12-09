@@ -46,6 +46,22 @@ func Fili() error {
 						break
 					}
 					continue Loop
+				case "3":
+					if err := fixEngine.ModifyOrder(); err != nil {
+						log.Println(err)
+						break
+					}
+					continue Loop
+				case "4":
+					if err := fixEngine.MarketDataRequest(); err != nil {
+						log.Println(err)
+						break
+					}
+					scanner := bufio.NewScanner(os.Stdin)
+					scanner.Scan()
+					if scanner.Text() == "<esc>" {
+						continue Loop
+					}
 				case "0":
 					break Loop
 				default:
@@ -65,6 +81,8 @@ func Menu() (string, error) {
 	fmt.Println("Menu")
 	fmt.Println("1. Order Single")
 	fmt.Println("2. Cancel Order")
+	fmt.Println("3. Modify Order")
+	fmt.Println("4. Market Data Request")
 	fmt.Println("0. Exit")
 	scanner := bufio.NewScanner(os.Stdin)
 	scanner.Scan()
@@ -133,6 +151,30 @@ func Exchange() string {
 
 func ClOrdID() string {
 	return stringField("Client Order ID")
+}
+
+func SubsReqType() enum.SubscriptionRequestType {
+	fmt.Println("You can choose either Snapshot, SnapshotPlus, or DisablePrevious")
+	subStr := stringField("Subscription Request Type")
+	return convertSubsReqType(subStr)
+}
+
+func MarketDepth() int {
+	fmt.Println("You can choose either TopOfBook or Fullbook")
+	mdStr := stringField("Market Depth")
+	return convertMarketDepth(mdStr)
+}
+
+func MDUpdateType() enum.MDUpdateType {
+	fmt.Println("You can choose either FullRefresh or IncrementalRefresh")
+	mdUpdateTypeStr := stringField("Market Depth Update Type")
+	return convertMDUpdateType(mdUpdateTypeStr)
+}
+
+func MDEntryType() enum.MDEntryType {
+	fmt.Println("You can choose either Bid, Offer, or Trade")
+	mDEntryTypeStr := stringField("Market Depth Entry Type")
+	return convertMDEntryType(mDEntryTypeStr)
 }
 
 func NewOrderSingle() (msg *quickfix.Message) {

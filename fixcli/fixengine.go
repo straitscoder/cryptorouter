@@ -10,7 +10,9 @@ import (
 	"time"
 
 	"github.com/quickfixgo/field"
+	"github.com/quickfixgo/fix42/marketdatarequest"
 	"github.com/quickfixgo/fix42/newordersingle"
+	"github.com/quickfixgo/fix42/ordercancelreplacerequest"
 	"github.com/quickfixgo/fix42/ordercancelrequest"
 	"github.com/quickfixgo/quickfix"
 	"github.com/quickfixgo/tag"
@@ -35,7 +37,8 @@ func (c *fixApplication) FromAdmin(msg *quickfix.Message, sessionID quickfix.Ses
 
 func (c *fixApplication) FromApp(msg *quickfix.Message, sessionID quickfix.SessionID) (reject quickfix.MessageRejectError) {
 	msgType, _ := msg.Header.GetString(tag.MsgType)
-	if msgType == "8" {
+	switch msgType {
+	case "8":
 		parsed := parseFIXMessage(msg)
 		jsonOutput(parsed)
 		clOrdID, _ := msg.Body.GetString(tag.ClOrdID)
@@ -48,6 +51,9 @@ func (c *fixApplication) FromApp(msg *quickfix.Message, sessionID quickfix.Sessi
 			orderResponse["Order_ID"] = orderId
 			jsonOutput(orderResponse)
 		}
+	case "W":
+		parsed := parseFIXMessage(msg)
+		jsonOutput(parsed)
 	}
 	return nil
 }
@@ -189,4 +195,58 @@ func (fe *FixEngine) CancelOrder() error {
 	}
 	deleteOrderId(clOrdId)
 	return quickfix.Send(cancelReqMsg)
+}
+
+func (fe *FixEngine) ModifyOrder() error {
+	cliOrdId := ClOrdID()
+	orderId := getOrderId(cliOrdId)
+	if orderId == nil {
+		jsonOutput("Order not found")
+		return nil
+	}
+	modOrder := ordercancelreplacerequest.New(
+		field.NewOrigClOrdID(cliOrdId),
+		field.NewClOrdID(generateClOrdID()),
+		field.NewHandlInst(HandleIns()),
+		field.NewSymbol(Symbol()),
+		field.NewSide(Side()),
+		field.NewTransactTime(time.Now().UTC()),
+		field.NewOrdType(OrderType()),
+	)
+
+	modOrder.SetOrderID(*orderId)
+	modOrder.SetSecurityExchange(Exchange())
+	modOrder.SetSecurityType(AssetType())
+	modOrder.Set(field.NewPrice(Price(), 8))
+	modOrder.Set(field.NewOrderQty(Amount(), 8))
+	modOrderMsg := modOrder.ToMessage()
+	modOrderMsg.Header.Set(field.NewSenderCompID(fe.senderCompId))
+	modOrderMsg.Header.Set(field.NewTargetCompID(fe.targetCompId))
+	parsed := parseFIXMessage(modOrderMsg)
+	jsonOutput(parsed)
+	if !Confirmation() {
+		fmt.Println("Abort modify order")
+		return nil
+	}
+	return quickfix.Send(modOrderMsg)
+}
+
+func (fe *FixEngine) MarketDataRequest() error {
+	marketRequest := marketdatarequest.New(
+		field.NewMDReqID(generateClOrdID()),
+		field.NewSubscriptionRequestType(SubsReqType()),
+		field.NewMarketDepth(MarketDepth()),
+	)
+
+	marketRequest.Set(field.NewMDUpdateType(MDUpdateType()))
+	marketRequest.Set(field.NewNoMDEntryTypes(1))
+	marketRequest.Set(field.NewMDEntryType(MDEntryType()))
+	marketRequest.Set(field.NewNoRelatedSym(1))
+	marketRequest.Set(field.NewSymbol(Symbol()))
+	marketRequestMsg := marketRequest.ToMessage()
+	marketRequestMsg.Header.Set(field.NewSenderCompID(fe.senderCompId))
+	marketRequestMsg.Header.Set(field.NewTargetCompID(fe.targetCompId))
+	parsed := parseFIXMessage(marketRequestMsg)
+	jsonOutput(parsed)
+	return quickfix.Send(marketRequestMsg)
 }
