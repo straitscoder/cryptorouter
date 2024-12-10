@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"net/url"
 	"slices"
@@ -687,7 +688,10 @@ func (b *Binance) UFuturesNewOrder(ctx context.Context, data *UFuturesNewOrderRe
 	if data.CallbackRate != 0 {
 		params.Set("callbackRate", strconv.FormatFloat(data.CallbackRate, 'f', -1, 64))
 	}
-	return resp, b.SendAuthHTTPRequest(ctx, exchange.RestUSDTMargined, http.MethodPost, ufuturesOrder, params, uFuturesOrdersDefaultRate, &resp)
+	if err := b.SendAuthHTTPRequest(ctx, exchange.RestUSDTMargined, http.MethodPost, ufuturesOrder, params, uFuturesOrdersDefaultRate, &resp); err != nil {
+		return resp, err
+	}
+	return resp, nil
 }
 
 // UPlaceBatchOrders places batch orders
@@ -746,6 +750,36 @@ func (b *Binance) UGetOrderData(ctx context.Context, symbol currency.Pair, order
 	return resp, b.SendAuthHTTPRequest(ctx, exchange.RestUSDTMargined, http.MethodGet, ufuturesOrder, params, uFuturesOrdersDefaultRate, &resp)
 }
 
+func (b *Binance) UModifyOrder(ctx context.Context, m *UFuturesModifyOrderRequest) (UFutureModifyOrderResponse, error) {
+	var resp UFutureModifyOrderResponse
+	params := url.Values{}
+	if m.OrderID != "" {
+		params.Set("orderId", m.OrderID)
+	}
+	if m.OrigClOrdID != "" {
+		params.Set("origClientOrderId", m.OrigClOrdID)
+	}
+	if m.Quantity != 0 {
+		params.Set("quantity", strconv.FormatFloat(m.Quantity, 'f', -1, 64))
+	}
+	if m.Price != 0 {
+		params.Set("price", strconv.FormatFloat(m.Price, 'f', -1, 64))
+	}
+	params.Set("side", m.Side)
+
+	symbolValue, err := b.FormatSymbol(m.Symbol, asset.USDTMarginedFutures)
+	if err != nil {
+		return resp, err
+	}
+	params.Set("symbol", symbolValue)
+
+	if err := b.SendAuthHTTPRequest(ctx, exchange.RestUSDTMargined, http.MethodPut, ufuturesOrder, params, uFuturesOrdersDefaultRate, &resp); err != nil {
+		return resp, err
+	}
+
+	return resp, nil
+}
+
 // UCancelOrder cancel an order for USDTMarginedFutures
 func (b *Binance) UCancelOrder(ctx context.Context, symbol currency.Pair, orderID, cliOrderID string) (UOrderData, error) {
 	var resp UOrderData
@@ -758,9 +792,11 @@ func (b *Binance) UCancelOrder(ctx context.Context, symbol currency.Pair, orderI
 	if orderID != "" {
 		params.Set("orderId", orderID)
 	}
+	log.Printf("Binance futures cancel order id: %s", orderID)
 	if cliOrderID != "" {
 		params.Set("origClientOrderId", cliOrderID)
 	}
+	log.Printf("Binance futures cancel params: %+v", params)
 	return resp, b.SendAuthHTTPRequest(ctx, exchange.RestUSDTMargined, http.MethodDelete, ufuturesOrder, params, uFuturesOrdersDefaultRate, &resp)
 }
 

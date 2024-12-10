@@ -9,6 +9,7 @@ import (
 	"runtime"
 	"time"
 
+	"github.com/quickfixgo/enum"
 	"github.com/quickfixgo/field"
 	"github.com/quickfixgo/fix42/marketdatarequest"
 	"github.com/quickfixgo/fix42/newordersingle"
@@ -140,17 +141,22 @@ func (fe *FixEngine) Start() error {
 }
 
 func (fe *FixEngine) NewOrder() error {
+	clOrdId := generateClOrdID()
 	order := newordersingle.New(
-		field.NewClOrdID(generateClOrdID()),
+		field.NewClOrdID(clOrdId),
 		field.NewHandlInst(HandleIns()),
 		field.NewSymbol(Symbol()),
 		field.NewSide(Side()),
 		field.NewTransactTime(time.Now().UTC()),
 		field.NewOrdType(OrderType()),
 	)
+	securityType := AssetType()
+	if securityType == enum.SecurityType_FUTURE {
+		saveOrderId(string(securityType), clOrdId)
+	}
 
 	order.SetSecurityExchange(Exchange())
-	order.SetSecurityType(AssetType())
+	order.SetSecurityType(securityType)
 	order.Set(field.NewPrice(Price(), 8))
 	order.Set(field.NewOrderQty(Amount(), 8))
 

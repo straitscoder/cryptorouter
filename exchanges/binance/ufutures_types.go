@@ -196,7 +196,6 @@ type UCompositeIndexInfoData struct {
 // UOrderData stores order data
 type UOrderData struct {
 	ClientOrderID      string    `json:"clientOrderId"`
-	Time               time.Time `json:"time"`
 	CumulativeQuantity float64   `json:"cumQty,string"`
 	CumulativeQuote    float64   `json:"cumQuote,string"`
 	ExecutedQuantity   float64   `json:"executedQty,string"`
@@ -455,4 +454,43 @@ type UFuturesNewOrderRequest struct {
 	ActivationPrice  float64       `json:"activation_price"`
 	CallbackRate     float64       `json:"callback_rate"`
 	ReduceOnly       bool          `json:"reduce_only"`
+}
+
+type UFuturesModifyOrderRequest struct {
+	OrderID     string        `json:"orderId"`
+	OrigClOrdID string        `json:"origClOrdId"`
+	Symbol      currency.Pair `json:"symbol"`
+	Side        string        `json:"side"`
+	Quantity    float64       `json:"quantity"`
+	Price       float64       `json:"price"`
+}
+
+type UFutureModifyOrderResponse struct {
+	OrderID                 int64   `json:"orderId"`
+	Symbol                  string  `json:"symbol"`
+	Pair                    string  `json:"pair"`
+	Status                  string  `json:"status"`
+	ClientOrderID           string  `json:"clientOrderId"`
+	Price                   float64 `json:"price,string"`
+	AvgPrice                float64 `json:"avgPrice,string"`
+	OrigQty                 float64 `json:"origQty,string"`
+	ExecutedQty             float64 `json:"executedQty,string"`
+	CumQty                  float64 `json:"cumQty,string"`
+	CumBase                 float64 `json:"cumBase,string"`
+	TimeInForce             string  `json:"timeInForce"`
+	Type                    string  `json:"type"`
+	Side                    string  `json:"side"`
+	StopPrice               float64 `json:"stopPrice,string"`
+	ReduceOnly              bool    `json:"reduceOnly"`
+	ClosePosition           bool    `json:"closePosition"`
+	PositionSide            string  `json:"positionSide"`
+	WorkingType             string  `json:"workingType"`
+	PriceProtect            bool    `json:"priceProtect,string"`
+	OrigType                string  `json:"origType"`
+	PriceMatch              string  `json:"priceMatch"`
+	SelfTradePreventionMode string  `json:"selfTradePreventionMode"`
+	UpdateTime              int64   `json:"updateTime"`
+	GoodTillDate            int64   `json:"goodTillDate"`
+	Code                    int     `json:"code"`
+	Message                 string  `json:"message"`
 }

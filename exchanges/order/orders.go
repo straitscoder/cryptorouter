@@ -1228,8 +1228,8 @@ func (o *ClassificationError) Error() string {
 // for a standard cancel
 func (c *Cancel) StandardCancel() validate.Checker {
 	return validate.Check(func() error {
-		if c.OrderID == "" {
-			return errors.New("ID not set")
+		if c.OrderID == "" && c.ClientOrderID == "" {
+			return errors.New("order ID or client order ID not set")
 		}
 		return nil
 	})
@@ -1335,6 +1335,9 @@ func (m *Modify) Validate(opt ...validate.Checker) error {
 	}
 	if m.ClientOrderID == "" && m.OrderID == "" {
 		return ErrOrderIDNotSet
+	}
+	if m.Price <= 0 && m.Amount <= 0 {
+		return fmt.Errorf("price or amount must be set")
 	}
 	return nil
 }
