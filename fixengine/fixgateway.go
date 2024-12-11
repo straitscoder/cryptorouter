@@ -371,7 +371,12 @@ func (a *Application) onOrderCancelReplaceRequest(msg ordercancelreplacerequest.
 		return err
 	}
 
-	clOrdID, err := msg.GetOrigClOrdID()
+	clOrdID, err := msg.GetClOrdID()
+	if err != nil {
+		return err
+	}
+
+	orgClOrdID, err := msg.GetOrigClOrdID()
 	if err != nil {
 		return err
 	}
@@ -401,6 +406,11 @@ func (a *Application) onOrderCancelReplaceRequest(msg ordercancelreplacerequest.
 		return err
 	}
 
+	orderType, err := msg.GetOrdType()
+	if err != nil {
+		return err
+	}
+
 	if securityType == enum.SecurityType_FUTURE {
 		orderID = ""
 	}
@@ -412,6 +422,8 @@ func (a *Application) onOrderCancelReplaceRequest(msg ordercancelreplacerequest.
 		Pair:          pair,
 		AssetType:     FromSecurityType(securityType),
 		ClientOrderID: clOrdID,
+		OrigClOrdID:   orgClOrdID,
+		Type:          FromOrdType(orderType),
 		Price:         price.InexactFloat64(),
 		Amount:        orderQty.InexactFloat64(),
 	}

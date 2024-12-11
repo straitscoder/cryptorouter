@@ -175,10 +175,6 @@ func (fe *FixEngine) NewOrder() error {
 func (fe *FixEngine) CancelOrder() error {
 	clOrdId := ClOrdID()
 	orderId := getOrderId(clOrdId)
-	if orderId == nil {
-		jsonOutput("Order not found")
-		return nil
-	}
 	cancelReq := ordercancelrequest.New(
 		field.NewOrigClOrdID(clOrdId),
 		field.NewClOrdID(generateClOrdID()),
@@ -187,7 +183,9 @@ func (fe *FixEngine) CancelOrder() error {
 		field.NewTransactTime(time.Now().UTC()),
 	)
 
-	cancelReq.SetOrderID(*orderId)
+	if orderId != nil {
+		cancelReq.SetOrderID(*orderId)
+	}
 	cancelReq.SetSecurityExchange(Exchange())
 	cancelReq.SetSecurityType(AssetType())
 	cancelReqMsg := cancelReq.ToMessage()

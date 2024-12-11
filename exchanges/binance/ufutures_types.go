@@ -196,25 +196,25 @@ type UCompositeIndexInfoData struct {
 // UOrderData stores order data
 type UOrderData struct {
 	ClientOrderID      string    `json:"clientOrderId"`
-	CumulativeQuantity float64   `json:"cumQty,string"`
-	CumulativeQuote    float64   `json:"cumQuote,string"`
-	ExecutedQuantity   float64   `json:"executedQty,string"`
+	CumulativeQuantity string    `json:"cumQty"`
+	CumulativeQuote    string    `json:"cumQuote"`
+	ExecutedQuantity   string    `json:"executedQty"`
 	OrderID            int64     `json:"orderId"`
-	AveragePrice       float64   `json:"avgPrice,string"`
-	OriginalQuantity   float64   `json:"origQty,string"`
-	Price              float64   `json:"price,string"`
+	AveragePrice       string    `json:"avgPrice"`
+	OriginalQuantity   string    `json:"origQty"`
+	Price              string    `json:"price"`
 	ReduceOnly         bool      `json:"reduceOnly"`
 	Side               string    `json:"side"`
 	PositionSide       string    `json:"positionSide"`
 	Status             string    `json:"status"`
-	StopPrice          float64   `json:"stopPrice,string"`
+	StopPrice          string    `json:"stopPrice"`
 	ClosePosition      bool      `json:"closePosition"`
 	Symbol             string    `json:"symbol"`
 	TimeInForce        string    `json:"timeInForce"`
 	OrderType          string    `json:"type"`
 	OriginalType       string    `json:"origType"`
-	ActivatePrice      float64   `json:"activatePrice,string"`
-	PriceRate          float64   `json:"priceRate,string"`
+	ActivatePrice      string    `json:"activatePrice"`
+	PriceRate          string    `json:"priceRate"`
 	UpdateTime         time.Time `json:"updateTime"`
 	WorkingType        string    `json:"workingType"`
 	Code               int64     `json:"code"`
@@ -223,26 +223,26 @@ type UOrderData struct {
 
 // UFuturesOrderData stores order data for ufutures
 type UFuturesOrderData struct {
-	AvgPrice      float64   `json:"avgPrice,string"`
+	AvgPrice      string    `json:"avgPrice"`
 	ClientOrderID string    `json:"clientOrderId"`
 	CumQuote      string    `json:"cumQuote"`
-	ExecutedQty   float64   `json:"executedQty,string"`
+	ExecutedQty   string    `json:"executedQty"`
 	OrderID       int64     `json:"orderId"`
-	OrigQty       float64   `json:"origQty,string"`
+	OrigQty       string    `json:"origQty"`
 	OrigType      string    `json:"origType"`
-	Price         float64   `json:"price,string"`
+	Price         string    `json:"price"`
 	ReduceOnly    bool      `json:"reduceOnly"`
 	Side          string    `json:"side"`
 	PositionSide  string    `json:"positionSide"`
 	Status        string    `json:"status"`
-	StopPrice     float64   `json:"stopPrice,string"`
+	StopPrice     string    `json:"stopPrice"`
 	ClosePosition bool      `json:"closePosition"`
 	Symbol        string    `json:"symbol"`
 	Time          time.Time `json:"time"`
 	TimeInForce   string    `json:"timeInForce"`
 	OrderType     string    `json:"type"`
-	ActivatePrice float64   `json:"activatePrice,string"`
-	PriceRate     float64   `json:"priceRate,string"`
+	ActivatePrice string    `json:"activatePrice"`
+	PriceRate     string    `json:"priceRate"`
 	UpdateTime    time.Time `json:"updateTime"`
 	WorkingType   string    `json:"workingType"`
 }
@@ -466,31 +466,31 @@ type UFuturesModifyOrderRequest struct {
 }
 
 type UFutureModifyOrderResponse struct {
-	OrderID                 int64   `json:"orderId"`
-	Symbol                  string  `json:"symbol"`
-	Pair                    string  `json:"pair"`
-	Status                  string  `json:"status"`
-	ClientOrderID           string  `json:"clientOrderId"`
-	Price                   float64 `json:"price,string"`
-	AvgPrice                float64 `json:"avgPrice,string"`
-	OrigQty                 float64 `json:"origQty,string"`
-	ExecutedQty             float64 `json:"executedQty,string"`
-	CumQty                  float64 `json:"cumQty,string"`
-	CumBase                 float64 `json:"cumBase,string"`
-	TimeInForce             string  `json:"timeInForce"`
-	Type                    string  `json:"type"`
-	Side                    string  `json:"side"`
-	StopPrice               float64 `json:"stopPrice,string"`
-	ReduceOnly              bool    `json:"reduceOnly"`
-	ClosePosition           bool    `json:"closePosition"`
-	PositionSide            string  `json:"positionSide"`
-	WorkingType             string  `json:"workingType"`
-	PriceProtect            bool    `json:"priceProtect,string"`
-	OrigType                string  `json:"origType"`
-	PriceMatch              string  `json:"priceMatch"`
-	SelfTradePreventionMode string  `json:"selfTradePreventionMode"`
-	UpdateTime              int64   `json:"updateTime"`
-	GoodTillDate            int64   `json:"goodTillDate"`
-	Code                    int     `json:"code"`
-	Message                 string  `json:"message"`
+	OrderID                 int64  `json:"orderId"`
+	Symbol                  string `json:"symbol"`
+	Pair                    string `json:"pair"`
+	Status                  string `json:"status"`
+	ClientOrderID           string `json:"clientOrderId"`
+	Price                   string `json:"price"`
+	AvgPrice                string `json:"avgPrice"`
+	OrigQty                 string `json:"origQty"`
+	ExecutedQty             string `json:"executedQty"`
+	CumQty                  string `json:"cumQty"`
+	CumBase                 string `json:"cumBase"`
+	TimeInForce             string `json:"timeInForce"`
+	Type                    string `json:"type"`
+	Side                    string `json:"side"`
+	StopPrice               string `json:"stopPrice"`
+	ReduceOnly              bool   `json:"reduceOnly"`
+	ClosePosition           bool   `json:"closePosition"`
+	PositionSide            string `json:"positionSide"`
+	WorkingType             string `json:"workingType"`
+	PriceProtect            bool   `json:"priceProtect"`
+	OrigType                string `json:"origType"`
+	PriceMatch              string `json:"priceMatch"`
+	SelfTradePreventionMode string `json:"selfTradePreventionMode"`
+	UpdateTime              int64  `json:"updateTime"`
+	GoodTillDate            int64  `json:"goodTillDate"`
+	Code                    int    `json:"code"`
+	Message                 string `json:"msg"`
 }

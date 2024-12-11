@@ -40,6 +40,13 @@ const (
 	Completed
 )
 
+type CancelReplaceMode string
+
+const (
+	stopOnFailure CancelReplaceMode = "STOP_ON_FAILURE"
+	allowFailure  CancelReplaceMode = "ALLOW_FAILURE"
+)
+
 // ExchangeInfo holds the full exchange information type
 type ExchangeInfo struct {
 	Code       int64     `json:"code"`
@@ -478,6 +485,56 @@ type CommonOrder struct {
 	Type                string  `json:"type"`
 	Side                string  `json:"side"`
 	StopPrice           float64 `json:"stopPrice,string"`
+}
+
+type OrderResponse struct {
+	Symbol            string  `json:"symbol"`
+	OrigClientOrderID string  `json:"origClientOrderId"`
+	OrderID           int64   `json:"orderId"`
+	OrderListID       int64   `json:"orderListId"`
+	ClientOrderID     string  `json:"clientOrderId"`
+	TransactionTime   int64   `json:"transactTime"`
+	Price             float64 `json:"price,string"`
+	OrigQty           float64 `json:"origQty,string"`
+	ExecutedQty       float64 `json:"executedQty,string"`
+	OrigQuoteOrderQty float64 `json:"origQuoteOrderQty,string"`
+	// The cumulative amount of the quote that has been spent (with a BUY order) or received (with a SELL order).
+	CumulativeQuoteQty  float64 `json:"cummulativeQuoteQty,string"`
+	Status              string  `json:"status"`
+	TimeInForce         string  `json:"timeInForce"`
+	Type                string  `json:"type"`
+	Side                string  `json:"side"`
+	SelfTradePrevention string  `json:"selfTradePreventionMode"`
+	Fills               []struct {
+		Price           float64 `json:"price,string"`
+		Qty             float64 `json:"qty,string"`
+		Commission      float64 `json:"commission,string"`
+		CommissionAsset string  `json:"commissionAsset"`
+	} `json:"fills"`
+}
+
+type CancelReplaceOrderRequest struct {
+	Symbol                  currency.Pair          `json:"symbol"`
+	Side                    string                 `json:"side"`
+	OrderType               RequestParamsOrderType `json:"type"`
+	CancelReplaceMode       CancelReplaceMode      `json:"cancelReplaceMode"`
+	TimeInForce             string                 `json:"timeInForce"`
+	Quantity                float64                `json:"quantity"`
+	QuoteOrderQty           float64                `json:"quoteOrderQty"`
+	Price                   float64                `json:"price"`
+	StopPrice               float64                `json:"stopPrice"`
+	CancelNewClientOrderID  string                 `json:"cancelNewClientOrderId"`
+	CancelOrigClientOrderID string                 `json:"cancelOrigClientOrderId"`
+	CancelOrderID           string                 `json:"cancelOrderId"`
+}
+
+type CancelReplaceOrderResponse struct {
+	Code             int           `json:"code"`
+	Msg              string        `json:"msg"`
+	CancelResult     string        `json:"cancelResult"`
+	NewOrderResult   string        `json:"newOrderResult"`
+	CancelResponse   OrderResponse `json:"cancelResponse"`
+	NewOrderResponse OrderResponse `json:"newOrderResponse"`
 }
 
 // Order struct represents an ordinary order response.

@@ -2,6 +2,7 @@ package binanceus
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strconv"
@@ -353,7 +354,8 @@ func (bi *Binanceus) UpdateOrderbook(ctx context.Context, pair currency.Pair, as
 
 	orderbookNew, err := bi.GetOrderBookDepth(ctx, &OrderBookDataRequestParams{
 		Symbol: pair,
-		Limit:  1000})
+		Limit:  1000,
+	})
 	if err != nil {
 		return book, err
 	}
@@ -586,8 +588,83 @@ func (bi *Binanceus) SubmitOrder(ctx context.Context, s *order.Submit) (*order.S
 
 // ModifyOrder will allow of changing orderbook placement and limit to
 // market conversion
-func (bi *Binanceus) ModifyOrder(_ context.Context, _ *order.Modify) (*order.ModifyResponse, error) {
-	return nil, common.ErrFunctionNotSupported
+func (b *Binanceus) ModifyOrder(ctx context.Context, m *order.Modify) (*order.ModifyResponse, error) {
+	if err := m.Validate(); err != nil {
+		return nil, err
+	}
+	status := order.New
+	var trades []order.TradeHistory
+
+	switch m.AssetType {
+	case asset.Spot:
+		var reqSide string
+		switch m.Side {
+		case order.Buy:
+			reqSide = "BUY"
+		case order.Sell:
+			reqSide = "SELL"
+		default:
+			return nil, errors.New("invalid side")
+		}
+
+		timeInForce := BinanceRequestParamsTimeGTC
+		var requestParamsOrderType RequestParamsOrderType
+		switch m.Type {
+		case order.Market:
+			timeInForce = ""
+			requestParamsOrderType = BinanceRequestParamsOrderMarket
+		case order.Limit:
+			if m.ImmediateOrCancel {
+				timeInForce = BinanceRequestParamsTimeIOC
+			}
+			requestParamsOrderType = BinanceRequestParamsOrderLimit
+		default:
+			return nil, fmt.Errorf("%w %v", order.ErrUnsupportedOrderType, m.Type)
+		}
+
+		var cancelReplaceResponse CancelReplaceOrderResponse
+		err := b.CancelReplaceOrder(
+			ctx,
+			&CancelReplaceOrderRequest{
+				Symbol:                  m.Pair,
+				Side:                    reqSide,
+				OrderType:               requestParamsOrderType,
+				CancelReplaceMode:       stopOnFailure,
+				TimeInForce:             string(timeInForce),
+				Quantity:                m.Amount,
+				Price:                   m.Price,
+				CancelNewClientOrderID:  m.ClientOrderID,
+				CancelOrigClientOrderID: m.OrigClOrdID,
+				CancelOrderID:           m.OrderID,
+			},
+			&cancelReplaceResponse,
+		)
+		if err != nil {
+			return nil, err
+		}
+		log.Debugf(log.OrderMgr, "Cancel Replace Response: %+v", cancelReplaceResponse)
+
+		trades = make([]order.TradeHistory, len(cancelReplaceResponse.NewOrderResponse.Fills))
+		for i := range cancelReplaceResponse.NewOrderResponse.Fills {
+			trades[i] = order.TradeHistory{
+				Price:    cancelReplaceResponse.NewOrderResponse.Fills[i].Price,
+				Amount:   cancelReplaceResponse.NewOrderResponse.Fills[i].Qty,
+				Fee:      cancelReplaceResponse.NewOrderResponse.Fills[i].Commission,
+				FeeAsset: cancelReplaceResponse.NewOrderResponse.Fills[i].CommissionAsset,
+			}
+		}
+
+	default:
+		return nil, common.ErrFunctionNotSupported
+	}
+
+	resp, err := m.DeriveModifyResponse()
+	if err != nil {
+		return nil, err
+	}
+
+	resp.Status = status
+	return resp, nil
 }
 
 // CancelOrder cancels an order by its corresponding ID number

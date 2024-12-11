@@ -676,7 +676,7 @@ func (b *Binance) UFuturesNewOrder(ctx context.Context, data *UFuturesNewOrderRe
 	if data.Quantity != 0 {
 		params.Set("quantity", strconv.FormatFloat(data.Quantity, 'f', -1, 64))
 	}
-	if data.Price != 0 {
+	if data.Price != 0 && data.OrderType != "MARKET" {
 		params.Set("price", strconv.FormatFloat(data.Price, 'f', -1, 64))
 	}
 	if data.StopPrice != 0 {
@@ -691,6 +691,7 @@ func (b *Binance) UFuturesNewOrder(ctx context.Context, data *UFuturesNewOrderRe
 	if err := b.SendAuthHTTPRequest(ctx, exchange.RestUSDTMargined, http.MethodPost, ufuturesOrder, params, uFuturesOrdersDefaultRate, &resp); err != nil {
 		return resp, err
 	}
+	log.Printf("Binance futures new order id: %+v", resp)
 	return resp, nil
 }
 
@@ -776,7 +777,7 @@ func (b *Binance) UModifyOrder(ctx context.Context, m *UFuturesModifyOrderReques
 	if err := b.SendAuthHTTPRequest(ctx, exchange.RestUSDTMargined, http.MethodPut, ufuturesOrder, params, uFuturesOrdersDefaultRate, &resp); err != nil {
 		return resp, err
 	}
-
+	log.Printf("Binance futures modify order id: %+v", resp)
 	return resp, nil
 }
 
@@ -792,11 +793,11 @@ func (b *Binance) UCancelOrder(ctx context.Context, symbol currency.Pair, orderI
 	if orderID != "" {
 		params.Set("orderId", orderID)
 	}
-	log.Printf("Binance futures cancel order id: %s", orderID)
+
 	if cliOrderID != "" {
 		params.Set("origClientOrderId", cliOrderID)
 	}
-	log.Printf("Binance futures cancel params: %+v", params)
+
 	return resp, b.SendAuthHTTPRequest(ctx, exchange.RestUSDTMargined, http.MethodDelete, ufuturesOrder, params, uFuturesOrdersDefaultRate, &resp)
 }
 

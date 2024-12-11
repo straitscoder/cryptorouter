@@ -73,6 +73,7 @@ const (
 	orderRequest       = "/api/v3/order"      // Used in Create {Method: POST}, Cancel {DELETE}, and get{GET} OrderRequest
 	openOrders         = "/api/v3/openOrders"
 	myTrades           = "/api/v3/myTrades"
+	cancelReplaceOrder = "/api/v3/order/cancelReplace"
 
 	// One-Cancels-the-Other Orders (OCO Orders)
 	ocoOrder        = "/api/v3/order/oco"
@@ -114,9 +115,7 @@ const (
 	recvWindowSize5000 = 5000
 )
 
-var (
-	recvWindowSize5000String = strconv.Itoa(recvWindowSize5000)
-)
+var recvWindowSize5000String = strconv.Itoa(recvWindowSize5000)
 
 // This is a list of error Messages to be returned by binanceus endpoint methods.
 var (
@@ -886,7 +885,8 @@ func (bi *Binanceus) GetSubaccountTransferHistory(ctx context.Context,
 	email string,
 	startTime uint64,
 	endTime uint64,
-	page, limit int) ([]TransferHistory, error) {
+	page, limit int,
+) ([]TransferHistory, error) {
 	timestamp := time.Now().UnixMilli()
 	params := url.Values{}
 	type response struct {
@@ -1121,6 +1121,49 @@ func (bi *Binanceus) GetAllOpenOrders(ctx context.Context, symbol string) ([]Ord
 		exchange.RestSpotSupplementary, http.MethodGet,
 		openOrders, params,
 		rateLimit, &response)
+}
+
+func (b *Binanceus) CancelReplaceOrder(ctx context.Context, m *CancelReplaceOrderRequest, resp *CancelReplaceOrderResponse) error {
+	params := url.Values{}
+	symbol, err := b.FormatSymbol(m.Symbol, asset.Spot)
+	if err != nil {
+		return err
+	}
+
+	params.Set("symbol", symbol)
+	params.Set("side", m.Side)
+	params.Set("type", string(m.OrderType))
+	params.Set("cancelReplaceMode", string(m.CancelReplaceMode))
+
+	if m.QuoteOrderQty > 0 {
+		params.Set("quoteOrderQty", strconv.FormatFloat(m.QuoteOrderQty, 'f', -1, 64))
+	} else {
+		params.Set("quantity", strconv.FormatFloat(m.Quantity, 'f', -1, 64))
+	}
+	if m.OrderType == BinanceRequestParamsOrderLimit {
+		params.Set("price", strconv.FormatFloat(m.Price, 'f', -1, 64))
+	}
+	if m.TimeInForce != "" {
+		params.Set("timeInForce", m.TimeInForce)
+	}
+	if m.CancelNewClientOrderID != "" {
+		params.Set("cancelNewClientOrderId", m.CancelNewClientOrderID)
+	}
+	if m.CancelOrigClientOrderID != "" {
+		params.Set("cancelOrigClientOrderId", m.CancelOrigClientOrderID)
+	}
+	if m.CancelOrderID != "" {
+		params.Set("cancelOrderId", m.CancelOrderID)
+	}
+
+	if m.StopPrice != 0 {
+		params.Set("stopPrice", strconv.FormatFloat(m.StopPrice, 'f', -1, 64))
+	}
+
+	if err := b.SendAuthHTTPRequest(ctx, exchange.RestSpotSupplementary, http.MethodPost, cancelReplaceOrder, params, spotOrderRate, &resp); err != nil {
+		return err
+	}
+	return nil
 }
 
 // CancelExistingOrder to cancel an active trade order.
@@ -1491,7 +1534,7 @@ func (bi *Binanceus) WithdrawCrypto(ctx context.Context, arg *withdraw.Request) 
 	}
 	params.Set("amount", strconv.FormatFloat(arg.Amount, 'f', 0, 64))
 	var response WithdrawalResponse
-	var er = bi.SendAuthHTTPRequest(ctx,
+	er := bi.SendAuthHTTPRequest(ctx,
 		exchange.RestSpotSupplementary,
 		http.MethodPost, applyWithdrawal,
 		params, spotDefaultRate, &response)
@@ -1721,7 +1764,8 @@ func (bi *Binanceus) GetSubAccountDepositAddress(ctx context.Context, arg SubAcc
 
 // GetSubAccountDepositHistory retrieves sub-account deposit history.
 func (bi *Binanceus) GetSubAccountDepositHistory(ctx context.Context, email string, coin currency.Code,
-	status int, startTime, endTime time.Time, limit, offset int) ([]SubAccountDepositItem, error) {
+	status int, startTime, endTime time.Time, limit, offset int,
+) ([]SubAccountDepositItem, error) {
 	params := url.Values{}
 	if !common.MatchesEmailPattern(email) {
 		return nil, errMissingSubAccountEmail
@@ -1811,7 +1855,8 @@ func (bi *Binanceus) SendAPIKeyHTTPRequest(ctx context.Context, ePath exchange.U
 		Result:        result,
 		Verbose:       bi.Verbose,
 		HTTPDebugging: bi.HTTPDebugging,
-		HTTPRecording: bi.HTTPRecording}
+		HTTPRecording: bi.HTTPRecording,
+	}
 
 	return bi.SendPayload(ctx, f, func() (*request.Item, error) {
 		return item, nil
@@ -1858,7 +1903,8 @@ func (bi *Binanceus) SendAuthHTTPRequest(ctx context.Context, ePath exchange.URL
 			Result:        &interim,
 			Verbose:       bi.Verbose,
 			HTTPDebugging: bi.HTTPDebugging,
-			HTTPRecording: bi.HTTPRecording}, nil
+			HTTPRecording: bi.HTTPRecording,
+		}, nil
 	}, request.AuthenticatedRequest)
 	if err != nil {
 		return err

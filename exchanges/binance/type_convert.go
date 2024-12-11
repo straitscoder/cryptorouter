@@ -260,7 +260,6 @@ func (a *UOrderData) UnmarshalJSON(data []byte) error {
 	if err := json.Unmarshal(data, &aux); err != nil {
 		return err
 	}
-	a.Time = aux.Time.Time()
 	a.UpdateTime = aux.UpdateTime.Time()
 	return nil
 }
