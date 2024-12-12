@@ -1045,8 +1045,8 @@ func (b *Binance) SubmitOrder(ctx context.Context, s *order.Submit) (*order.Subm
 		if err != nil {
 			return nil, err
 		}
-		orderID = strconv.FormatInt(o.OrderID, 13)
-		log.Debugf(log.OrderMgr, "NewOrder: %+v", orderID)
+		orderID = strconv.FormatInt(o.OrderID, 10)
+
 		if o.OriginalQuantity == o.ExecutedQuantity {
 			status = order.Filled
 		}
@@ -1120,7 +1120,6 @@ func (b *Binance) ModifyOrder(ctx context.Context, m *order.Modify) (*order.Modi
 		if err != nil {
 			return nil, err
 		}
-		log.Debugf(log.OrderMgr, "Cancel Replace Response: %+v", cancelReplaceResponse)
 
 		trades = make([]order.TradeHistory, len(cancelReplaceResponse.NewOrderResponse.Fills))
 		for i := range cancelReplaceResponse.NewOrderResponse.Fills {

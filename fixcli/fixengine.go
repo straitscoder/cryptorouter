@@ -182,12 +182,17 @@ func (fe *FixEngine) CancelOrder() error {
 		field.NewSide(Side()),
 		field.NewTransactTime(time.Now().UTC()),
 	)
-
+	assetType := AssetType()
 	if orderId != nil {
 		cancelReq.SetOrderID(*orderId)
+	} else if assetType == enum.SecurityType_FUTURE {
+		cancelReq.SetOrderID("FUT")
+	} else {
+		fmt.Println("Order not found")
+		return nil
 	}
 	cancelReq.SetSecurityExchange(Exchange())
-	cancelReq.SetSecurityType(AssetType())
+	cancelReq.SetSecurityType(assetType)
 	cancelReqMsg := cancelReq.ToMessage()
 	cancelReqMsg.Header.Set(field.NewSenderCompID(fe.senderCompId))
 	cancelReqMsg.Header.Set(field.NewTargetCompID(fe.targetCompId))
@@ -204,10 +209,6 @@ func (fe *FixEngine) CancelOrder() error {
 func (fe *FixEngine) ModifyOrder() error {
 	cliOrdId := ClOrdID()
 	orderId := getOrderId(cliOrdId)
-	if orderId == nil {
-		jsonOutput("Order not found")
-		return nil
-	}
 	modOrder := ordercancelreplacerequest.New(
 		field.NewOrigClOrdID(cliOrdId),
 		field.NewClOrdID(generateClOrdID()),
@@ -218,9 +219,17 @@ func (fe *FixEngine) ModifyOrder() error {
 		field.NewOrdType(OrderType()),
 	)
 
-	modOrder.SetOrderID(*orderId)
+	assetType := AssetType()
+	if orderId != nil {
+		modOrder.SetOrderID(*orderId)
+	} else if assetType == enum.SecurityType_FUTURE {
+		modOrder.SetOrderID("FUT")
+	} else {
+		fmt.Println("Order not found")
+		return nil
+	}
 	modOrder.SetSecurityExchange(Exchange())
-	modOrder.SetSecurityType(AssetType())
+	modOrder.SetSecurityType(assetType)
 	modOrder.Set(field.NewPrice(Price(), 8))
 	modOrder.Set(field.NewOrderQty(Amount(), 8))
 	modOrderMsg := modOrder.ToMessage()
@@ -247,6 +256,8 @@ func (fe *FixEngine) MarketDataRequest() error {
 	marketRequest.Set(field.NewMDEntryType(MDEntryType()))
 	marketRequest.Set(field.NewNoRelatedSym(1))
 	marketRequest.Set(field.NewSymbol(Symbol()))
+	marketRequest.Set(field.NewSecurityExchange(Exchange()))
+	marketRequest.Set(field.NewSecurityType(AssetType()))
 	marketRequestMsg := marketRequest.ToMessage()
 	marketRequestMsg.Header.Set(field.NewSenderCompID(fe.senderCompId))
 	marketRequestMsg.Header.Set(field.NewTargetCompID(fe.targetCompId))

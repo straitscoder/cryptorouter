@@ -295,6 +295,11 @@ func (a *Application) onOrderCancelRequest(msg ordercancelrequest.OrderCancelReq
 		return err
 	}
 
+	_, parseErr := strconv.ParseInt(orderID, 10, 64)
+	if parseErr != nil {
+		orderID = ""
+	}
+
 	side, err := msg.GetSide()
 	if err != nil {
 		return err
@@ -359,6 +364,10 @@ func (a *Application) onOrderCancelReplaceRequest(msg ordercancelreplacerequest.
 	orderID, err := msg.GetOrderID()
 	if err != nil {
 		return err
+	}
+	_, parseErr := strconv.ParseInt(orderID, 10, 64)
+	if parseErr != nil {
+		orderID = ""
 	}
 
 	side, err := msg.GetSide()
