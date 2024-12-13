@@ -502,6 +502,8 @@ func ToSecurityType(assetType asset.Item) enum.SecurityType {
 		return enum.SecurityType_NON_DELIVERABLE_FORWARD
 	case asset.Spot:
 		return enum.SecurityType_FX_SPOT
+	case asset.USDTMarginedFutures:
+		return enum.SecurityType_FUTURE
 	default:
 		return enum.SecurityType_FX_FORWARD
 	}
@@ -731,8 +733,16 @@ func (a *Application) UpdateOrder(msg *order.Detail, status enum.OrdStatus) {
 	execReport.SetSecurityType(ToSecurityType(msg.AssetType))
 
 	switch status {
-	case enum.OrdStatus_FILLED, enum.OrdStatus_PARTIALLY_FILLED:
-		execReport.SetExecType(enum.ExecType_TRADE)
+	case enum.OrdStatus_PARTIALLY_FILLED:
+		execReport.SetExecType(enum.ExecType_PARTIAL_FILL)
+		execReport.SetLastPx(decimal.NewFromFloat(msg.AverageExecutedPrice), 8)
+		execReport.SetLastShares(decimal.NewFromFloat(msg.ExecutedAmount), 8)
+	case enum.OrdStatus_FILLED:
+		execReport.SetExecType(enum.ExecType_FILL)
+		execReport.SetLastPx(decimal.NewFromFloat(msg.AverageExecutedPrice), 8)
+		execReport.SetLastShares(decimal.NewFromFloat(msg.ExecutedAmount), 8)
+	case enum.OrdStatus_CANCELED:
+		execReport.SetExecType(enum.ExecType_CANCELED)
 		execReport.SetLastPx(decimal.NewFromFloat(msg.AverageExecutedPrice), 8)
 		execReport.SetLastShares(decimal.NewFromFloat(msg.ExecutedAmount), 8)
 	}

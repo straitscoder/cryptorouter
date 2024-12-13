@@ -68,7 +68,7 @@ func main() {
 	if engine == nil || err != nil {
 		log.Fatalf("Unable to initialise FIX engine. Error: %s\n", err)
 	}
-	config.SetConfig(*&engine.Config)
+	config.SetConfig(engine.Config)
 
 	engine.Settings.PrintLoadedSettings()
 

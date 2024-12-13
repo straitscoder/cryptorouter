@@ -7,12 +7,8 @@ import (
 	"log"
 	"os"
 	"strings"
-	"time"
 
 	"github.com/quickfixgo/enum"
-	"github.com/quickfixgo/field"
-	"github.com/quickfixgo/fix42/newordersingle"
-	"github.com/quickfixgo/quickfix"
 	"github.com/shopspring/decimal"
 	"github.com/spf13/cobra"
 )
@@ -175,20 +171,4 @@ func MDEntryType() enum.MDEntryType {
 	fmt.Println("You can choose either Bid, Offer, or Trade")
 	mDEntryTypeStr := stringField("Market Depth Entry Type")
 	return convertMDEntryType(mDEntryTypeStr)
-}
-
-func NewOrderSingle() (msg *quickfix.Message) {
-	order := newordersingle.New(
-		field.NewClOrdID(string(time.Now().Unix())),
-		field.NewHandlInst(HandleIns()),
-		field.NewSymbol(Symbol()),
-		field.NewSide(Side()),
-		field.NewTransactTime(time.Now().UTC()),
-		field.NewOrdType(OrderType()),
-	)
-
-	order.Set(field.NewPrice(Price(), 8))
-	order.Set(field.NewOrderQty(Amount(), 8))
-
-	return order.ToMessage()
 }
