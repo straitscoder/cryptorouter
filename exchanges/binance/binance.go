@@ -59,12 +59,13 @@ const (
 	marginInterestHistory = "/sapi/v1/margin/interestHistory"
 
 	// Authenticated endpoints
-	newOrderTest      = "/api/v3/order/test"
-	orderEndpoint     = "/api/v3/order"
-	openOrders        = "/api/v3/openOrders"
-	allOrders         = "/api/v3/allOrders"
-	accountInfo       = "/api/v3/account"
-	marginAccountInfo = "/sapi/v1/margin/account"
+	newOrderTest       = "/api/v3/order/test"
+	orderEndpoint      = "/api/v3/order"
+	openOrders         = "/api/v3/openOrders"
+	allOrders          = "/api/v3/allOrders"
+	accountInfo        = "/api/v3/account"
+	marginAccountInfo  = "/sapi/v1/margin/account"
+	cancelReplaceOrder = "/api/v3/order/cancelReplace"
 
 	// Wallet endpoints
 	allCoinsInfo     = "/sapi/v1/capital/config/getall"
@@ -661,6 +662,49 @@ func (b *Binance) CancelExistingOrder(ctx context.Context, symbol currency.Pair,
 	return resp, b.SendAuthHTTPRequest(ctx, exchange.RestSpotSupplementary, http.MethodDelete, orderEndpoint, params, spotOrderRate, &resp)
 }
 
+func (b *Binance) CancelReplaceOrder(ctx context.Context, m *CancelReplaceOrderRequest, resp *CancelReplaceOrderResponse) error {
+	params := url.Values{}
+	symbol, err := b.FormatSymbol(m.Symbol, asset.Spot)
+	if err != nil {
+		return err
+	}
+
+	params.Set("symbol", symbol)
+	params.Set("side", m.Side)
+	params.Set("type", string(m.OrderType))
+	params.Set("cancelReplaceMode", string(m.CancelReplaceMode))
+
+	if m.QuoteOrderQty > 0 {
+		params.Set("quoteOrderQty", strconv.FormatFloat(m.QuoteOrderQty, 'f', -1, 64))
+	} else {
+		params.Set("quantity", strconv.FormatFloat(m.Quantity, 'f', -1, 64))
+	}
+	if m.OrderType == BinanceRequestParamsOrderLimit {
+		params.Set("price", strconv.FormatFloat(m.Price, 'f', -1, 64))
+	}
+	if m.TimeInForce != "" {
+		params.Set("timeInForce", m.TimeInForce)
+	}
+	if m.CancelNewClientOrderID != "" {
+		params.Set("cancelNewClientOrderId", m.CancelNewClientOrderID)
+	}
+	if m.CancelOrigClientOrderID != "" {
+		params.Set("cancelOrigClientOrderId", m.CancelOrigClientOrderID)
+	}
+	if m.CancelOrderID != "" {
+		params.Set("cancelOrderId", m.CancelOrderID)
+	}
+
+	if m.StopPrice != 0 {
+		params.Set("stopPrice", strconv.FormatFloat(m.StopPrice, 'f', -1, 64))
+	}
+
+	if err := b.SendAuthHTTPRequest(ctx, exchange.RestSpotSupplementary, http.MethodPost, cancelReplaceOrder, params, spotOrderRate, &resp); err != nil {
+		return err
+	}
+	return nil
+}
+
 // OpenOrders Current open orders. Get all open orders on a symbol.
 // Careful when accessing this with no symbol: The number of requests counted
 // against the rate limiter is significantly higher
@@ -807,7 +851,8 @@ func (b *Binance) SendHTTPRequest(ctx context.Context, ePath exchange.URL, path 
 		Result:        result,
 		Verbose:       b.Verbose,
 		HTTPDebugging: b.HTTPDebugging,
-		HTTPRecording: b.HTTPRecording}
+		HTTPRecording: b.HTTPRecording,
+	}
 
 	return b.SendPayload(ctx, f, func() (*request.Item, error) {
 		return item, nil
@@ -836,7 +881,8 @@ func (b *Binance) SendAPIKeyHTTPRequest(ctx context.Context, ePath exchange.URL,
 		Result:        result,
 		Verbose:       b.Verbose,
 		HTTPDebugging: b.HTTPDebugging,
-		HTTPRecording: b.HTTPRecording}
+		HTTPRecording: b.HTTPRecording,
+	}
 
 	return b.SendPayload(ctx, f, func() (*request.Item, error) {
 		return item, nil
@@ -887,7 +933,8 @@ func (b *Binance) SendAuthHTTPRequest(ctx context.Context, ePath exchange.URL, m
 			Result:        &interim,
 			Verbose:       b.Verbose,
 			HTTPDebugging: b.HTTPDebugging,
-			HTTPRecording: b.HTTPRecording}, nil
+			HTTPRecording: b.HTTPRecording,
+		}, nil
 	}, request.AuthenticatedRequest)
 	if err != nil {
 		return err

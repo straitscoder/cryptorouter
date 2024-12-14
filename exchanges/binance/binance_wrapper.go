@@ -578,7 +578,8 @@ func (b *Binance) UpdateOrderbook(ctx context.Context, p currency.Pair, assetTyp
 		orderbookNew, err = b.GetOrderBook(ctx,
 			OrderBookDataRequestParams{
 				Symbol: p,
-				Limit:  1000})
+				Limit:  1000,
+			})
 	case asset.USDTMarginedFutures:
 		orderbookNew, err = b.UFuturesOrderbook(ctx, p, 1000)
 	case asset.CoinMarginedFutures:
@@ -912,7 +913,7 @@ func (b *Binance) SubmitOrder(ctx context.Context, s *order.Submit) (*order.Subm
 			return nil, fmt.Errorf("%w %v", order.ErrUnsupportedOrderType, s.Type)
 		}
 
-		var orderRequest = NewOrderRequest{
+		orderRequest := NewOrderRequest{
 			Symbol:           s.Pair,
 			Side:             sideType,
 			Price:            s.Price,
@@ -1022,12 +1023,19 @@ func (b *Binance) SubmitOrder(ctx context.Context, s *order.Submit) (*order.Subm
 		default:
 			return nil, errors.New("invalid type, check api docs for updates")
 		}
+		var timeInForce string
+		switch s.Type {
+		case order.Market:
+			timeInForce = ""
+		default:
+			timeInForce = "GTC"
+		}
 		o, err := b.UFuturesNewOrder(ctx,
 			&UFuturesNewOrderRequest{
 				Symbol:           s.Pair,
 				Side:             reqSide,
 				OrderType:        oType,
-				TimeInForce:      "GTC",
+				TimeInForce:      timeInForce,
 				NewClientOrderID: s.ClientOrderID,
 				Quantity:         s.Amount,
 				Price:            s.Price,
@@ -1038,6 +1046,11 @@ func (b *Binance) SubmitOrder(ctx context.Context, s *order.Submit) (*order.Subm
 			return nil, err
 		}
 		orderID = strconv.FormatInt(o.OrderID, 10)
+
+		if o.OriginalQuantity == o.ExecutedQuantity {
+			status = order.Filled
+		}
+
 	default:
 		return nil, fmt.Errorf("%w %v", asset.ErrNotSupported, s.AssetType)
 	}
@@ -1053,8 +1066,111 @@ func (b *Binance) SubmitOrder(ctx context.Context, s *order.Submit) (*order.Subm
 
 // ModifyOrder will allow of changing orderbook placement and limit to
 // market conversion
-func (b *Binance) ModifyOrder(_ context.Context, _ *order.Modify) (*order.ModifyResponse, error) {
-	return nil, common.ErrFunctionNotSupported
+func (b *Binance) ModifyOrder(ctx context.Context, m *order.Modify) (*order.ModifyResponse, error) {
+	if err := m.Validate(); err != nil {
+		return nil, err
+	}
+	status := order.New
+	var trades []order.TradeHistory
+
+	switch m.AssetType {
+	case asset.Spot:
+		var reqSide string
+		switch m.Side {
+		case order.Buy:
+			reqSide = "BUY"
+		case order.Sell:
+			reqSide = "SELL"
+		default:
+			return nil, errors.New("invalid side")
+		}
+
+		timeInForce := BinanceRequestParamsTimeGTC
+		var requestParamsOrderType RequestParamsOrderType
+		switch m.Type {
+		case order.Market:
+			timeInForce = ""
+			requestParamsOrderType = BinanceRequestParamsOrderMarket
+		case order.Limit:
+			if m.ImmediateOrCancel {
+				timeInForce = BinanceRequestParamsTimeIOC
+			}
+			requestParamsOrderType = BinanceRequestParamsOrderLimit
+		default:
+			return nil, fmt.Errorf("%w %v", order.ErrUnsupportedOrderType, m.Type)
+		}
+
+		var cancelReplaceResponse CancelReplaceOrderResponse
+		err := b.CancelReplaceOrder(
+			ctx,
+			&CancelReplaceOrderRequest{
+				Symbol:                  m.Pair,
+				Side:                    reqSide,
+				OrderType:               requestParamsOrderType,
+				CancelReplaceMode:       stopOnFailure,
+				TimeInForce:             string(timeInForce),
+				Quantity:                m.Amount,
+				Price:                   m.Price,
+				CancelNewClientOrderID:  m.ClientOrderID,
+				CancelOrigClientOrderID: m.OrigClOrdID,
+				CancelOrderID:           m.OrderID,
+			},
+			&cancelReplaceResponse,
+		)
+		if err != nil {
+			return nil, err
+		}
+
+		trades = make([]order.TradeHistory, len(cancelReplaceResponse.NewOrderResponse.Fills))
+		for i := range cancelReplaceResponse.NewOrderResponse.Fills {
+			trades[i] = order.TradeHistory{
+				Price:    cancelReplaceResponse.NewOrderResponse.Fills[i].Price,
+				Amount:   cancelReplaceResponse.NewOrderResponse.Fills[i].Qty,
+				Fee:      cancelReplaceResponse.NewOrderResponse.Fills[i].Commission,
+				FeeAsset: cancelReplaceResponse.NewOrderResponse.Fills[i].CommissionAsset,
+			}
+		}
+
+	case asset.USDTMarginedFutures:
+		var reqSide string
+		switch m.Side {
+		case order.Buy:
+			reqSide = "BUY"
+		case order.Sell:
+			reqSide = "SELL"
+		default:
+			return nil, errors.New("invalid side")
+		}
+		modifiedOrder, err := b.UModifyOrder(
+			ctx,
+			&UFuturesModifyOrderRequest{
+				Symbol:      m.Pair,
+				OrderID:     m.OrderID,
+				OrigClOrdID: m.OrigClOrdID,
+				Side:        reqSide,
+				Quantity:    m.Amount,
+				Price:       m.Price,
+			},
+		)
+		if err != nil {
+			return nil, err
+		}
+
+		if modifiedOrder.OrigQty == modifiedOrder.ExecutedQty {
+			status = order.Filled
+		}
+
+	default:
+		return nil, common.ErrFunctionNotSupported
+	}
+
+	resp, err := m.DeriveModifyResponse()
+	if err != nil {
+		return nil, err
+	}
+
+	resp.Status = status
+	return resp, nil
 }
 
 // CancelOrder cancels an order by its corresponding ID number
@@ -1081,10 +1197,11 @@ func (b *Binance) CancelOrder(ctx context.Context, o *order.Cancel) error {
 			return err
 		}
 	case asset.USDTMarginedFutures:
-		_, err := b.UCancelOrder(ctx, o.Pair, o.OrderID, "")
+		resp, err := b.UCancelOrder(ctx, o.Pair, "", o.ClientOrderID)
 		if err != nil {
 			return err
 		}
+		log.Debugf(log.OrderMgr, "CancelOrder: %+v", resp)
 	}
 	return nil
 }
@@ -1243,28 +1360,28 @@ func (b *Binance) GetOrderInfo(ctx context.Context, orderID string, pair currenc
 			return nil, err
 		}
 		var feeBuilder exchange.FeeBuilder
-		feeBuilder.Amount = orderData.ExecutedQuantity
-		feeBuilder.PurchasePrice = orderData.AveragePrice
+		feeBuilder.Amount, _ = strconv.ParseFloat(orderData.ExecutedQuantity, 64)
+		feeBuilder.PurchasePrice, _ = strconv.ParseFloat(orderData.AveragePrice, 64)
 		feeBuilder.Pair = pair
 		fee, err := b.GetFee(ctx, &feeBuilder)
 		if err != nil {
 			return nil, err
 		}
 		orderVars := compatibleOrderVars(orderData.Side, orderData.Status, orderData.OrderType)
-		respData.Amount = orderData.OriginalQuantity
+		respData.Amount, _ = strconv.ParseFloat(orderData.OriginalQuantity, 64)
 		respData.AssetType = assetType
 		respData.ClientOrderID = orderData.ClientOrderID
 		respData.Exchange = b.Name
-		respData.ExecutedAmount = orderData.ExecutedQuantity
+		respData.ExecutedAmount, _ = strconv.ParseFloat(orderData.ExecutedQuantity, 64)
 		respData.Fee = fee
 		respData.OrderID = orderID
 		respData.Pair = pair
-		respData.Price = orderData.Price
-		respData.RemainingAmount = orderData.OriginalQuantity - orderData.ExecutedQuantity
+		respData.Price, _ = strconv.ParseFloat(orderData.Price, 64)
+		respData.RemainingAmount = respData.Amount - respData.ExecutedAmount
 		respData.Side = orderVars.Side
 		respData.Status = orderVars.Status
 		respData.Type = orderVars.OrderType
-		respData.Date = orderData.Time
+		respData.Date = orderData.UpdateTime
 		respData.LastUpdated = orderData.UpdateTime
 	default:
 		return nil, fmt.Errorf("%w %v", asset.ErrNotSupported, assetType)
@@ -1421,8 +1538,12 @@ func (b *Binance) GetActiveOrders(ctx context.Context, req *order.MultiOrderRequ
 			}
 			for y := range openOrders {
 				var feeBuilder exchange.FeeBuilder
-				feeBuilder.Amount = openOrders[y].ExecutedQuantity
-				feeBuilder.PurchasePrice = openOrders[y].AveragePrice
+				executedQty, _ := strconv.ParseFloat(openOrders[y].ExecutedQuantity, 64)
+				avgPrice, _ := strconv.ParseFloat(openOrders[y].AveragePrice, 64)
+				price, _ := strconv.ParseFloat(openOrders[y].Price, 64)
+				oriQty, _ := strconv.ParseFloat(openOrders[y].OriginalQuantity, 64)
+				feeBuilder.Amount = executedQty
+				feeBuilder.PurchasePrice = avgPrice
 				feeBuilder.Pair = req.Pairs[i]
 				fee, err := b.GetFee(ctx, &feeBuilder)
 				if err != nil {
@@ -1430,10 +1551,10 @@ func (b *Binance) GetActiveOrders(ctx context.Context, req *order.MultiOrderRequ
 				}
 				orderVars := compatibleOrderVars(openOrders[y].Side, openOrders[y].Status, openOrders[y].OrderType)
 				orders = append(orders, order.Detail{
-					Price:           openOrders[y].Price,
-					Amount:          openOrders[y].OriginalQuantity,
-					ExecutedAmount:  openOrders[y].ExecutedQuantity,
-					RemainingAmount: openOrders[y].OriginalQuantity - openOrders[y].ExecutedQuantity,
+					Price:           price,
+					Amount:          oriQty,
+					ExecutedAmount:  executedQty,
+					RemainingAmount: oriQty - executedQty,
 					Fee:             fee,
 					Exchange:        b.Name,
 					OrderID:         strconv.FormatInt(openOrders[y].OrderID, 10),
@@ -1443,7 +1564,7 @@ func (b *Binance) GetActiveOrders(ctx context.Context, req *order.MultiOrderRequ
 					Status:          orderVars.Status,
 					Pair:            req.Pairs[i],
 					AssetType:       asset.USDTMarginedFutures,
-					Date:            openOrders[y].Time,
+					Date:            openOrders[y].UpdateTime,
 					LastUpdated:     openOrders[y].UpdateTime,
 				})
 			}
@@ -1611,9 +1732,13 @@ func (b *Binance) GetOrderHistory(ctx context.Context, req *order.MultiOrderRequ
 				return nil, errors.New("invalid combination of input params")
 			}
 			for y := range orderHistory {
+				executedQty, _ := strconv.ParseFloat(orderHistory[y].ExecutedQty, 64)
+				avgPrice, _ := strconv.ParseFloat(orderHistory[y].AvgPrice, 64)
+				price, _ := strconv.ParseFloat(orderHistory[y].Price, 64)
+				oriQty, _ := strconv.ParseFloat(orderHistory[y].OrigQty, 64)
 				var feeBuilder exchange.FeeBuilder
-				feeBuilder.Amount = orderHistory[y].ExecutedQty
-				feeBuilder.PurchasePrice = orderHistory[y].AvgPrice
+				feeBuilder.Amount = executedQty
+				feeBuilder.PurchasePrice = avgPrice
 				feeBuilder.Pair = req.Pairs[i]
 				fee, err := b.GetFee(ctx, &feeBuilder)
 				if err != nil {
@@ -1621,10 +1746,10 @@ func (b *Binance) GetOrderHistory(ctx context.Context, req *order.MultiOrderRequ
 				}
 				orderVars := compatibleOrderVars(orderHistory[y].Side, orderHistory[y].Status, orderHistory[y].OrderType)
 				orders = append(orders, order.Detail{
-					Price:           orderHistory[y].Price,
-					Amount:          orderHistory[y].OrigQty,
-					ExecutedAmount:  orderHistory[y].ExecutedQty,
-					RemainingAmount: orderHistory[y].OrigQty - orderHistory[y].ExecutedQty,
+					Price:           price,
+					Amount:          oriQty,
+					ExecutedAmount:  executedQty,
+					RemainingAmount: oriQty - executedQty,
 					Fee:             fee,
 					Exchange:        b.Name,
 					OrderID:         strconv.FormatInt(orderHistory[y].OrderID, 10),
@@ -2696,7 +2821,7 @@ func (b *Binance) GetFuturesPositionOrders(ctx context.Context, req *futures.Pos
 	sd := req.StartDate
 	switch req.Asset {
 	case asset.USDTMarginedFutures:
-		var orderLimit = 1000
+		orderLimit := 1000
 		for x := range req.Pairs {
 			fPair, err := b.FormatExchangeCurrency(req.Pairs[x], req.Asset)
 			if err != nil {
@@ -2729,14 +2854,19 @@ func (b *Binance) GetFuturesPositionOrders(ctx context.Context, req *futures.Pos
 								return nil, err
 							}
 						}
+						executedQty, _ := strconv.ParseFloat(orders[i].ExecutedQty, 64)
+						origQty, _ := strconv.ParseFloat(orders[i].OrigQty, 64)
+						price, _ := strconv.ParseFloat(orders[i].Price, 64)
+						avgPrice, _ := strconv.ParseFloat(orders[i].AvgPrice, 64)
+						activatePrice, _ := strconv.ParseFloat(orders[i].ActivatePrice, 64)
 						currencyPosition.Orders = append(currencyPosition.Orders, order.Detail{
 							ReduceOnly:           orders[i].ClosePosition,
-							Price:                orders[i].Price,
-							Amount:               orders[i].ExecutedQty,
-							TriggerPrice:         orders[i].ActivatePrice,
-							AverageExecutedPrice: orders[i].AvgPrice,
-							ExecutedAmount:       orders[i].ExecutedQty,
-							RemainingAmount:      orders[i].OrigQty - orders[i].ExecutedQty,
+							Price:                price,
+							Amount:               executedQty,
+							TriggerPrice:         activatePrice,
+							AverageExecutedPrice: avgPrice,
+							ExecutedAmount:       executedQty,
+							RemainingAmount:      origQty - executedQty,
 							CostAsset:            req.Pairs[x].Quote,
 							Leverage:             result[y].Leverage,
 							Exchange:             b.Name,
@@ -2761,7 +2891,7 @@ func (b *Binance) GetFuturesPositionOrders(ctx context.Context, req *futures.Pos
 			}
 		}
 	case asset.CoinMarginedFutures:
-		var orderLimit = 100
+		orderLimit := 100
 		for x := range req.Pairs {
 			fPair, err := b.FormatExchangeCurrency(req.Pairs[x], req.Asset)
 			if err != nil {

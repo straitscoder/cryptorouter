@@ -36,6 +36,13 @@ const (
 	maxNumAlgoOrdersFilter   filterType = "MAX_NUM_ALGO_ORDERS"
 )
 
+type cancelReplaceMode string
+
+const (
+	stopOnFailure cancelReplaceMode = "STOP_ON_FAILURE"
+	allowFailure  cancelReplaceMode = "ALLOW_FAILURE"
+)
+
 // ExchangeInfo holds the full exchange information type
 type ExchangeInfo struct {
 	Code       int       `json:"code"`
@@ -412,12 +419,62 @@ type NewOrderResponse struct {
 	} `json:"fills"`
 }
 
+type OrderResponse struct {
+	Symbol            string  `json:"symbol"`
+	OrigClientOrderID string  `json:"origClientOrderId"`
+	OrderID           int64   `json:"orderId"`
+	OrderListID       int64   `json:"orderListId"`
+	ClientOrderID     string  `json:"clientOrderId"`
+	TransactionTime   int64   `json:"transactTime"`
+	Price             float64 `json:"price,string"`
+	OrigQty           float64 `json:"origQty,string"`
+	ExecutedQty       float64 `json:"executedQty,string"`
+	OrigQuoteOrderQty float64 `json:"origQuoteOrderQty,string"`
+	// The cumulative amount of the quote that has been spent (with a BUY order) or received (with a SELL order).
+	CumulativeQuoteQty  float64 `json:"cummulativeQuoteQty,string"`
+	Status              string  `json:"status"`
+	TimeInForce         string  `json:"timeInForce"`
+	Type                string  `json:"type"`
+	Side                string  `json:"side"`
+	SelfTradePrevention string  `json:"selfTradePreventionMode"`
+	Fills               []struct {
+		Price           float64 `json:"price,string"`
+		Qty             float64 `json:"qty,string"`
+		Commission      float64 `json:"commission,string"`
+		CommissionAsset string  `json:"commissionAsset"`
+	} `json:"fills"`
+}
+
 // CancelOrderResponse is the return structured response from the exchange
 type CancelOrderResponse struct {
 	Symbol            string `json:"symbol"`
 	OrigClientOrderID string `json:"origClientOrderId"`
 	OrderID           int64  `json:"orderId"`
 	ClientOrderID     string `json:"clientOrderId"`
+}
+
+type CancelReplaceOrderRequest struct {
+	Symbol                  currency.Pair          `json:"symbol"`
+	Side                    string                 `json:"side"`
+	OrderType               RequestParamsOrderType `json:"type"`
+	CancelReplaceMode       cancelReplaceMode      `json:"cancelReplaceMode"`
+	TimeInForce             string                 `json:"timeInForce"`
+	Quantity                float64                `json:"quantity"`
+	QuoteOrderQty           float64                `json:"quoteOrderQty"`
+	Price                   float64                `json:"price"`
+	StopPrice               float64                `json:"stopPrice"`
+	CancelNewClientOrderID  string                 `json:"cancelNewClientOrderId"`
+	CancelOrigClientOrderID string                 `json:"cancelOrigClientOrderId"`
+	CancelOrderID           string                 `json:"cancelOrderId"`
+}
+
+type CancelReplaceOrderResponse struct {
+	Code             int           `json:"code"`
+	Msg              string        `json:"msg"`
+	CancelResult     string        `json:"cancelResult"`
+	NewOrderResult   string        `json:"newOrderResult"`
+	CancelResponse   OrderResponse `json:"cancelResponse"`
+	NewOrderResponse OrderResponse `json:"newOrderResponse"`
 }
 
 // QueryOrderData holds query order data

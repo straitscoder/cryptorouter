@@ -137,6 +137,7 @@ type Modify struct {
 	// Order Identifiers
 	Exchange      string
 	OrderID       string
+	OrigClOrdID   string
 	ClientOrderID string
 	Type          Type
 	Side          Side

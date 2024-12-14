@@ -16,6 +16,7 @@ import (
 	"github.com/thrasher-corp/gocryptotrader/config"
 	"github.com/thrasher-corp/gocryptotrader/currency"
 	"github.com/thrasher-corp/gocryptotrader/dispatch"
+	"github.com/thrasher-corp/gocryptotrader/engine"
 	exchange "github.com/thrasher-corp/gocryptotrader/exchanges"
 	"github.com/thrasher-corp/gocryptotrader/exchanges/asset"
 	gctlog "github.com/thrasher-corp/gocryptotrader/log"
@@ -132,9 +133,10 @@ var newEngineMutex sync.Mutex
 type FixEngine struct {
 	Config *config.Config
 	// apiServer               *apiServerManager
-	// connectionManager       *connectionManager
+	communicationManager    *engine.CommunicationManager
 	currencyPairSyncer      *syncManager
 	ExchangeManager         *ExchangeManager
+	OrderManager            *OrderManager
 	websocketRoutineManager *websocketRoutineManager
 	Settings                Settings
 	uptime                  time.Time
@@ -197,6 +199,16 @@ func NewFromSettings(settings *Settings, flagSet map[string]bool) (*FixEngine, e
 	}
 
 	b.ExchangeManager = NewExchangeManager()
+	if b.Settings.EnableCommsRelayer {
+		if c, err := engine.SetupCommunicationManager(&b.Config.Communications); err != nil {
+			return nil, fmt.Errorf("failed to setup communication manager. Err: %+v", err)
+		} else {
+			b.communicationManager = c
+			if err := b.communicationManager.Start(); err != nil {
+				return nil, fmt.Errorf("failed to start communication manager. Err: %+v", err)
+			}
+		}
+	}
 
 	return &b, nil
 }
@@ -357,6 +369,14 @@ func (fixengine *FixEngine) Start() error {
 	}
 
 	fixengine.fixgateway = NewFixGateway(fixengine.websocketRoutineManager, fixengine.ExchangeManager)
+	orderManager, err := SetupOrderManager(fixengine.ExchangeManager, fixengine.communicationManager, *fixengine.fixgateway, &fixengine.ServicesWG, &fixengine.Config.OrderManager)
+	if err != nil {
+		gctlog.Errorf(gctlog.Global, "Unable to initialise order manager. Err: %s", err)
+	}
+	if err := orderManager.Start(); err != nil {
+		gctlog.Errorf(gctlog.Global, "Unable to start order manager. Err: %s", err)
+	}
+	fixengine.OrderManager = orderManager
 	fixengine.fixgateway.Start()
 	return nil
 }
@@ -380,6 +400,14 @@ func (fixengine *FixEngine) Stop() {
 		if err := fixengine.websocketRoutineManager.Stop(); err != nil {
 			gctlog.Errorf(gctlog.Global, "websocket routine manager unable to stop. Error: %v", err)
 		}
+	}
+
+	if err := fixengine.OrderManager.Stop(); err != nil {
+		gctlog.Errorf(gctlog.Global, "Order manager unable to stop. Error: %v", err)
+	}
+
+	if err := fixengine.communicationManager.Stop(); err != nil {
+		gctlog.Errorf(gctlog.Global, "Communication manager unable to stop. Error: %v", err)
 	}
 
 	err := fixengine.ExchangeManager.Shutdown(fixengine.Settings.ExchangeShutdownTimeout)

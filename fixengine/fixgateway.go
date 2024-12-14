@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"path"
 	"runtime"
@@ -82,35 +83,35 @@ func (a *Application) Start() error {
 
 	cfg, err := os.Open(cfgFileName)
 	if err != nil {
-		return fmt.Errorf("Error opening %v, %v\n", cfgFileName, err)
+		return fmt.Errorf("error opening %v, %v", cfgFileName, err)
 	}
 	defer cfg.Close()
 	stringData, readErr := io.ReadAll(cfg)
 	if readErr != nil {
-		return fmt.Errorf("Error reading cfg: %s,", readErr)
+		return fmt.Errorf("error reading cfg: %s,", readErr)
 	}
 
 	a.settings, err = quickfix.ParseSettings(bytes.NewReader(stringData))
 	if err != nil {
-		return fmt.Errorf("Error reading cfg: %s,", err)
+		return fmt.Errorf("error reading cfg: %s,", err)
 	}
 
 	logFactory := quickfix.NewScreenLogFactory()
 	// logFactory, err := quickfix.NewFileLogFactory(settings)
-	if err != nil {
-		return fmt.Errorf("Unable to create logger: %s\n", err)
-	}
+	// if err != nil {
+	// 	return fmt.Errorf("unable to create logger: %s\n", err)
+	// }
 	a.logFactory = &logFactory
 
 	a.storeFactory = quickfix.NewMemoryStoreFactory()
 	// a.storeFactory = quickfix.NewFileStoreFactory(a.settings)
 	a.acceptor, err = quickfix.NewAcceptor(a, a.storeFactory, a.settings, logFactory)
 	if err != nil {
-		return fmt.Errorf("Unable to create Acceptor: %s\n", err)
+		return fmt.Errorf("unable to create Acceptor: %s", err)
 	}
 	err = a.acceptor.Start()
 	if err != nil {
-		return fmt.Errorf("Unable to start Acceptor: %s\n", err)
+		return fmt.Errorf("unable to start Acceptor: %s", err)
 	}
 
 	a.socketDispatcher.registerWebsocketDataHandler(a.WebsocketDataHandler, false)
@@ -182,7 +183,7 @@ func FromOrdType(orderType enum.OrdType) order.Type {
 func FromSecurityType(secType enum.SecurityType) asset.Item {
 	switch secType {
 	case enum.SecurityType_FUTURE:
-		return asset.Futures
+		return asset.USDTMarginedFutures
 	case enum.SecurityType_FX_SPOT:
 		return asset.Spot
 	case enum.SecurityType_NON_DELIVERABLE_FORWARD:
@@ -248,7 +249,7 @@ func (a *Application) onNewOrderSingle(msg newordersingle.NewOrderSingle, sessio
 		Exchange:      exchange,
 		AssetType:     asset.Item(FromSecurityType(securityType)),
 	}
-
+	log.Printf("Asset type: %+v", submission.AssetType)
 	exch, e := a.exchangeManager.GetExchangeByName(submission.Exchange)
 	if e != nil {
 		a.RejectOrderRequest(submission, e.Error())
@@ -256,18 +257,18 @@ func (a *Application) onNewOrderSingle(msg newordersingle.NewOrderSingle, sessio
 
 	// Checks for exchange min max limits for order amounts before order
 	// execution can occur
-	e = exch.CheckOrderExecutionLimits(submission.AssetType,
-		submission.Pair,
-		submission.Price,
-		submission.Amount,
-		submission.Type)
-	if e != nil {
-		msg := fmt.Errorf("order manager: exchange %s unable to place order: %w",
-			submission.Exchange,
-			e)
-		a.RejectOrderRequest(submission, msg.Error())
-		return nil
-	}
+	// e = exch.CheckOrderExecutionLimits(submission.AssetType,
+	// 	submission.Pair,
+	// 	submission.Price,
+	// 	submission.Amount,
+	// 	submission.Type)
+	// if e != nil {
+	// 	msg := fmt.Errorf("order manager: exchange %s unable to place order: %w",
+	// 		submission.Exchange,
+	// 		e)
+	// 	a.RejectOrderRequest(submission, msg.Error())
+	// 	return nil
+	// }
 
 	// Determines if current trading activity is turned off by the exchange for
 	// the currency pair
@@ -294,6 +295,11 @@ func (a *Application) onOrderCancelRequest(msg ordercancelrequest.OrderCancelReq
 		return err
 	}
 
+	_, parseErr := strconv.ParseInt(orderID, 10, 64)
+	if parseErr != nil {
+		orderID = ""
+	}
+
 	side, err := msg.GetSide()
 	if err != nil {
 		return err
@@ -305,6 +311,11 @@ func (a *Application) onOrderCancelRequest(msg ordercancelrequest.OrderCancelReq
 	}
 
 	clOrdID, err := msg.GetClOrdID()
+	if err != nil {
+		return err
+	}
+
+	orClOrdId, err := msg.GetOrigClOrdID()
 	if err != nil {
 		return err
 	}
@@ -324,13 +335,18 @@ func (a *Application) onOrderCancelRequest(msg ordercancelrequest.OrderCancelReq
 		return err
 	}
 
+	if securityType == enum.SecurityType_FUTURE {
+		orderID = ""
+	}
+
 	request := &order.Cancel{
 		Exchange:      exchange,
 		OrderID:       orderID,
 		Side:          FromSide(side),
 		Pair:          pair,
 		AssetType:     FromSecurityType(securityType),
-		ClientOrderID: clOrdID,
+		ClientOrderID: orClOrdId,
+		ClientID:      clOrdID,
 	}
 
 	exch, e := a.exchangeManager.GetExchangeByName(request.Exchange)
@@ -338,7 +354,9 @@ func (a *Application) onOrderCancelRequest(msg ordercancelrequest.OrderCancelReq
 		return quickfix.ValueIsIncorrect(tag.SecurityExchange)
 	}
 
-	exch.CancelOrder(context.TODO(), request)
+	if err := exch.CancelOrder(context.TODO(), request); err != nil {
+		log.Println(err)
+	}
 	return nil
 }
 
@@ -346,6 +364,10 @@ func (a *Application) onOrderCancelReplaceRequest(msg ordercancelreplacerequest.
 	orderID, err := msg.GetOrderID()
 	if err != nil {
 		return err
+	}
+	_, parseErr := strconv.ParseInt(orderID, 10, 64)
+	if parseErr != nil {
+		orderID = ""
 	}
 
 	side, err := msg.GetSide()
@@ -359,6 +381,11 @@ func (a *Application) onOrderCancelReplaceRequest(msg ordercancelreplacerequest.
 	}
 
 	clOrdID, err := msg.GetClOrdID()
+	if err != nil {
+		return err
+	}
+
+	orgClOrdID, err := msg.GetOrigClOrdID()
 	if err != nil {
 		return err
 	}
@@ -388,6 +415,15 @@ func (a *Application) onOrderCancelReplaceRequest(msg ordercancelreplacerequest.
 		return err
 	}
 
+	orderType, err := msg.GetOrdType()
+	if err != nil {
+		return err
+	}
+
+	if securityType == enum.SecurityType_FUTURE {
+		orderID = ""
+	}
+
 	request := &order.Modify{
 		Exchange:      exchange,
 		OrderID:       orderID,
@@ -395,6 +431,8 @@ func (a *Application) onOrderCancelReplaceRequest(msg ordercancelreplacerequest.
 		Pair:          pair,
 		AssetType:     FromSecurityType(securityType),
 		ClientOrderID: clOrdID,
+		OrigClOrdID:   orgClOrdID,
+		Type:          FromOrdType(orderType),
 		Price:         price.InexactFloat64(),
 		Amount:        orderQty.InexactFloat64(),
 	}
@@ -404,7 +442,9 @@ func (a *Application) onOrderCancelReplaceRequest(msg ordercancelreplacerequest.
 		return quickfix.ValueIsIncorrect(tag.SecurityExchange)
 	}
 
-	exch.ModifyOrder(context.TODO(), request)
+	if _, err := exch.ModifyOrder(context.TODO(), request); err != nil {
+		log.Printf("Error when modified the order: %+v", err)
+	}
 	return nil
 }
 
@@ -462,6 +502,8 @@ func ToSecurityType(assetType asset.Item) enum.SecurityType {
 		return enum.SecurityType_NON_DELIVERABLE_FORWARD
 	case asset.Spot:
 		return enum.SecurityType_FX_SPOT
+	case asset.USDTMarginedFutures:
+		return enum.SecurityType_FUTURE
 	default:
 		return enum.SecurityType_FX_FORWARD
 	}
@@ -691,8 +733,16 @@ func (a *Application) UpdateOrder(msg *order.Detail, status enum.OrdStatus) {
 	execReport.SetSecurityType(ToSecurityType(msg.AssetType))
 
 	switch status {
-	case enum.OrdStatus_FILLED, enum.OrdStatus_PARTIALLY_FILLED:
-		execReport.SetExecType(enum.ExecType_TRADE)
+	case enum.OrdStatus_PARTIALLY_FILLED:
+		execReport.SetExecType(enum.ExecType_PARTIAL_FILL)
+		execReport.SetLastPx(decimal.NewFromFloat(msg.AverageExecutedPrice), 8)
+		execReport.SetLastShares(decimal.NewFromFloat(msg.ExecutedAmount), 8)
+	case enum.OrdStatus_FILLED:
+		execReport.SetExecType(enum.ExecType_FILL)
+		execReport.SetLastPx(decimal.NewFromFloat(msg.AverageExecutedPrice), 8)
+		execReport.SetLastShares(decimal.NewFromFloat(msg.ExecutedAmount), 8)
+	case enum.OrdStatus_CANCELED:
+		execReport.SetExecType(enum.ExecType_CANCELED)
 		execReport.SetLastPx(decimal.NewFromFloat(msg.AverageExecutedPrice), 8)
 		execReport.SetLastShares(decimal.NewFromFloat(msg.ExecutedAmount), 8)
 	}
