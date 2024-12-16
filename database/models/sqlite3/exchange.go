@@ -7,6 +7,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"log"
 	"reflect"
 	"strings"
 	"sync"
@@ -1355,7 +1356,8 @@ func (o *Exchange) Insert(ctx context.Context, exec boil.ContextExecutor, column
 		fmt.Fprintln(boil.DebugWriter, vals)
 	}
 
-	_, err = exec.ExecContext(ctx, cache.query, vals...)
+	res, err := exec.ExecContext(ctx, cache.query, vals...)
+	log.Printf("Saved exchange: %+v", res)
 
 	if err != nil {
 		return errors.Wrap(err, "sqlite3: unable to insert into exchange")

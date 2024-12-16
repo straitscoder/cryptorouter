@@ -50,14 +50,14 @@ func (c *fixApplication) FromApp(msg *quickfix.Message, sessionID quickfix.Sessi
 			}
 			return nil
 		} else {
-			parsed := parseFIXMessage(msg)
-			jsonOutput(parsed)
+			saveOrderId(orderId, clOrdID)
 			if ordStatus == "0" {
+				parsed := parseFIXMessage(msg)
+				jsonOutput(parsed)
 				orderResponse := make(map[string]string)
 				orderResponse["Client_Order_ID"] = clOrdID
 				orderResponse["Order_ID"] = orderId
 				jsonOutput(orderResponse)
-				saveOrderId(orderId, clOrdID)
 			}
 		}
 	case "W":

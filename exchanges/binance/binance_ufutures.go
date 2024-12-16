@@ -691,7 +691,6 @@ func (b *Binance) UFuturesNewOrder(ctx context.Context, data *UFuturesNewOrderRe
 	if err := b.SendAuthHTTPRequest(ctx, exchange.RestUSDTMargined, http.MethodPost, ufuturesOrder, params, uFuturesOrdersDefaultRate, &resp); err != nil {
 		return resp, err
 	}
-	log.Printf("Binance futures new order id: %+v", resp)
 	return resp, nil
 }
 

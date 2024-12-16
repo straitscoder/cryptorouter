@@ -992,7 +992,7 @@ func (m *OrderManager) UpsertOrder(od *order.Detail) (resp *OrderUpsertResponse,
 		return nil, err
 	}
 
-	if !upsertResponse.IsNewOrder {
+	if !upsertResponse.IsNewOrder && upsertResponse.OrderDetails.Status != order.New {
 		m.fixGateway.UpdateOrder(&upsertResponse.OrderDetails, ToOrdStatus(upsertResponse.OrderDetails.Status))
 	}
 

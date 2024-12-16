@@ -672,14 +672,14 @@ func (bot *Engine) Stop() {
 		gctlog.Errorf(gctlog.Global, "Currency Converter unable to stop. Error: %v", err)
 	}
 
-	if !bot.Settings.EnableDryRun {
-		err = bot.Config.SaveConfigToFile(bot.Settings.ConfigFile)
-		if err != nil {
-			gctlog.Errorln(gctlog.Global, "Unable to save config.")
-		} else {
-			gctlog.Debugln(gctlog.Global, "Config file saved successfully.")
-		}
-	}
+	// if !bot.Settings.EnableDryRun {
+	// 	err = bot.Config.SaveConfigToFile(bot.Settings.ConfigFile)
+	// 	if err != nil {
+	// 		gctlog.Errorln(gctlog.Global, "Unable to save config.")
+	// 	} else {
+	// 		gctlog.Debugln(gctlog.Global, "Config file saved successfully.")
+	// 	}
+	// }
 
 	// Wait for services to gracefully shutdown
 	bot.ServicesWG.Wait()

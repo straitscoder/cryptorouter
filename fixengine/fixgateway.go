@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"fmt"
 	"io"
 	"log"
@@ -27,6 +28,8 @@ import (
 	"github.com/thrasher-corp/gocryptotrader/common"
 	"github.com/thrasher-corp/gocryptotrader/common/file"
 	"github.com/thrasher-corp/gocryptotrader/currency"
+	exchDb "github.com/thrasher-corp/gocryptotrader/database/repository/exchange"
+	tradeDb "github.com/thrasher-corp/gocryptotrader/database/repository/trade"
 	"github.com/thrasher-corp/gocryptotrader/exchanges/account"
 	"github.com/thrasher-corp/gocryptotrader/exchanges/asset"
 	"github.com/thrasher-corp/gocryptotrader/exchanges/fill"
@@ -41,6 +44,7 @@ type Application struct {
 	*quickfix.MessageRouter
 	execID                int
 	exchangeManager       *ExchangeManager
+	database              *sql.DB
 	pairFormater          *currency.PairFormat
 	acceptor              *quickfix.Acceptor
 	settings              *quickfix.Settings
@@ -51,7 +55,7 @@ type Application struct {
 	sessions              map[string]quickfix.SessionID
 }
 
-func NewFixGateway(eventDispacher *websocketRoutineManager, exchangeManager *ExchangeManager) *Application {
+func NewFixGateway(eventDispacher *websocketRoutineManager, exchangeManager *ExchangeManager, database *sql.DB) *Application {
 	app := &Application{MessageRouter: quickfix.NewMessageRouter()}
 	app.AddRoute(newordersingle.Route(app.onNewOrderSingle))
 	app.AddRoute(ordercancelrequest.Route(app.onOrderCancelRequest))
@@ -68,6 +72,7 @@ func NewFixGateway(eventDispacher *websocketRoutineManager, exchangeManager *Exc
 	}
 
 	app.exchangeManager = exchangeManager
+	app.database = database
 	app.execID = int(time.Now().Unix())
 	return app
 }
@@ -249,7 +254,7 @@ func (a *Application) onNewOrderSingle(msg newordersingle.NewOrderSingle, sessio
 		Exchange:      exchange,
 		AssetType:     asset.Item(FromSecurityType(securityType)),
 	}
-	log.Printf("Asset type: %+v", submission.AssetType)
+
 	exch, e := a.exchangeManager.GetExchangeByName(submission.Exchange)
 	if e != nil {
 		a.RejectOrderRequest(submission, e.Error())
@@ -282,9 +287,34 @@ func (a *Application) onNewOrderSingle(msg newordersingle.NewOrderSingle, sessio
 		a.RejectOrderRequest(submission, msg.Error())
 	}
 
-	_, e = exch.SubmitOrder(context.TODO(), submission)
+	submittedOrder, e := exch.SubmitOrder(context.TODO(), submission)
 	if e != nil {
 		a.RejectOrderRequest(submission, e.Error())
+	}
+	dbExchange, e := exchDb.One(submission.Exchange)
+	if e != nil {
+		a.RejectOrderRequest(submission, e.Error())
+	}
+	e = tradeDb.Insert(tradeDb.Data{
+		ID:        clOrdID,
+		TID:       submittedOrder.OrderID,
+		Exchange:  dbExchange.Name,
+		Base:      pair.Base.String(),
+		Quote:     pair.Quote.String(),
+		AssetType: submission.AssetType.String(),
+		Price:     price.InexactFloat64(),
+		Amount:    orderQty.InexactFloat64(),
+		Side:      submission.Side.String(),
+	})
+	if e != nil {
+		a.RejectOrderRequest(submission, e.Error())
+	}
+	orders, e := tradeDb.GetInRange(dbExchange.Name, submission.AssetType.String(), pair.Base.String(), pair.Quote.String(), time.Now().Add(-time.Hour*24), time.Now())
+	if e != nil {
+		a.RejectOrderRequest(submission, e.Error())
+	}
+	for _, order := range orders {
+		log.Printf("order: %+v", order)
 	}
 	return nil
 }
