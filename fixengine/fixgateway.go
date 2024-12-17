@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"context"
-	"database/sql"
 	"fmt"
 	"io"
 	"log"
@@ -44,7 +43,7 @@ type Application struct {
 	*quickfix.MessageRouter
 	execID                int
 	exchangeManager       *ExchangeManager
-	database              *sql.DB
+	orderManager          *OrderManager
 	pairFormater          *currency.PairFormat
 	acceptor              *quickfix.Acceptor
 	settings              *quickfix.Settings
@@ -55,7 +54,7 @@ type Application struct {
 	sessions              map[string]quickfix.SessionID
 }
 
-func NewFixGateway(eventDispacher *websocketRoutineManager, exchangeManager *ExchangeManager, database *sql.DB) *Application {
+func NewFixGateway(eventDispacher *websocketRoutineManager, exchangeManager *ExchangeManager, orderManager *OrderManager) *Application {
 	app := &Application{MessageRouter: quickfix.NewMessageRouter()}
 	app.AddRoute(newordersingle.Route(app.onNewOrderSingle))
 	app.AddRoute(ordercancelrequest.Route(app.onOrderCancelRequest))
@@ -72,7 +71,7 @@ func NewFixGateway(eventDispacher *websocketRoutineManager, exchangeManager *Exc
 	}
 
 	app.exchangeManager = exchangeManager
-	app.database = database
+	app.orderManager = orderManager
 	app.execID = int(time.Now().Unix())
 	return app
 }
@@ -255,10 +254,17 @@ func (a *Application) onNewOrderSingle(msg newordersingle.NewOrderSingle, sessio
 		AssetType:     asset.Item(FromSecurityType(securityType)),
 	}
 
-	exch, e := a.exchangeManager.GetExchangeByName(submission.Exchange)
+	submittedOrder, e := a.orderManager.Submit(context.TODO(), submission)
 	if e != nil {
 		a.RejectOrderRequest(submission, e.Error())
+		return nil
 	}
+	log.Printf("Submitted order: %+v", submittedOrder.Detail)
+
+	// exch, e := a.exchangeManager.GetExchangeByName(submission.Exchange)
+	// if e != nil {
+	// 	a.RejectOrderRequest(submission, e.Error())
+	// }
 
 	// Checks for exchange min max limits for order amounts before order
 	// execution can occur
@@ -277,34 +283,35 @@ func (a *Application) onNewOrderSingle(msg newordersingle.NewOrderSingle, sessio
 
 	// Determines if current trading activity is turned off by the exchange for
 	// the currency pair
-	e = exch.CanTradePair(submission.Pair, submission.AssetType)
-	if e != nil {
-		msg := fmt.Errorf("order manager: exchange %s cannot trade pair %s %s: %w",
-			submission.Exchange,
-			submission.Pair,
-			submission.AssetType,
-			e)
-		a.RejectOrderRequest(submission, msg.Error())
-	}
+	// e = exch.CanTradePair(submission.Pair, submission.AssetType)
+	// if e != nil {
+	// 	msg := fmt.Errorf("order manager: exchange %s cannot trade pair %s %s: %w",
+	// 		submission.Exchange,
+	// 		submission.Pair,
+	// 		submission.AssetType,
+	// 		e)
+	// 	a.RejectOrderRequest(submission, msg.Error())
+	// }
 
-	submittedOrder, e := exch.SubmitOrder(context.TODO(), submission)
-	if e != nil {
-		a.RejectOrderRequest(submission, e.Error())
-	}
+	// submittedOrder, e := exch.SubmitOrder(context.TODO(), submission)
+	// if e != nil {
+	// 	a.RejectOrderRequest(submission, e.Error())
+	// }
 	dbExchange, e := exchDb.One(submission.Exchange)
 	if e != nil {
 		a.RejectOrderRequest(submission, e.Error())
 	}
 	e = tradeDb.Insert(tradeDb.Data{
-		ID:        clOrdID,
-		TID:       submittedOrder.OrderID,
-		Exchange:  dbExchange.Name,
-		Base:      pair.Base.String(),
-		Quote:     pair.Quote.String(),
-		AssetType: submission.AssetType.String(),
-		Price:     price.InexactFloat64(),
-		Amount:    orderQty.InexactFloat64(),
-		Side:      submission.Side.String(),
+		ID:             clOrdID,
+		TID:            submittedOrder.Detail.OrderID,
+		Exchange:       dbExchange.Name,
+		ExchangeNameID: dbExchange.UUID.String(),
+		Base:           pair.Base.String(),
+		Quote:          pair.Quote.String(),
+		AssetType:      submission.AssetType.String(),
+		Price:          price.InexactFloat64(),
+		Amount:         orderQty.InexactFloat64(),
+		Side:           submission.Side.String(),
 	})
 	if e != nil {
 		a.RejectOrderRequest(submission, e.Error())
@@ -386,6 +393,7 @@ func (a *Application) onOrderCancelRequest(msg ordercancelrequest.OrderCancelReq
 
 	if err := exch.CancelOrder(context.TODO(), request); err != nil {
 		log.Println(err)
+		a.RejectOrderRequest(request, err.Error())
 	}
 	return nil
 }
@@ -474,6 +482,7 @@ func (a *Application) onOrderCancelReplaceRequest(msg ordercancelreplacerequest.
 
 	if _, err := exch.ModifyOrder(context.TODO(), request); err != nil {
 		log.Printf("Error when modified the order: %+v", err)
+		a.RejectOrderRequest(request, err.Error())
 	}
 	return nil
 }
@@ -699,33 +708,88 @@ func (a *Application) SendFill(fills []fill.Data) {
 		}*/
 }
 
-func (a *Application) RejectOrderRequest(msg *order.Submit, text string) {
-	symbol := a.pairFormater.Format(msg.Pair)
-	execReport := executionreport.New(
-		field.NewOrderID(a.genUUID()),
-		field.NewExecID(a.genExecID()),
-		field.NewExecTransType(enum.ExecTransType_NEW),
-		field.NewExecType(enum.ExecType_REJECTED),
-		field.NewOrdStatus(enum.OrdStatus_REJECTED),
-		field.NewSymbol(symbol),
-		field.NewSide(ToSide(msg.Side)),
-		field.NewLeavesQty(decimal.NewFromFloat(0), 8),
-		field.NewCumQty(decimal.NewFromFloat(0), 8),
-		field.NewAvgPx(decimal.NewFromFloat(0), 8),
-	)
+func (a *Application) RejectOrderRequest(msg interface{}, text string) {
+	var execReport executionreport.ExecutionReport
+	switch msg := msg.(type) {
+	case *order.Submit:
+		symbol := a.pairFormater.Format(msg.Pair)
+		execReport = executionreport.New(
+			field.NewOrderID(a.genUUID()),
+			field.NewExecID(a.genExecID()),
+			field.NewExecTransType(enum.ExecTransType_NEW),
+			field.NewExecType(enum.ExecType_REJECTED),
+			field.NewOrdStatus(enum.OrdStatus_REJECTED),
+			field.NewSymbol(symbol),
+			field.NewSide(ToSide(msg.Side)),
+			field.NewLeavesQty(decimal.NewFromFloat(0), 8),
+			field.NewCumQty(decimal.NewFromFloat(0), 8),
+			field.NewAvgPx(decimal.NewFromFloat(0), 8),
+		)
 
-	execReport.SetText(text)
-	if msg.Type == order.Limit || msg.Type == order.Stop {
-		execReport.SetPrice(decimal.NewFromFloat(msg.Price), 8)
-	} else if msg.Type == order.StopLimit {
-		execReport.SetPrice(decimal.NewFromFloat(msg.Price), 8)
-		execReport.SetStopPx(decimal.NewFromFloat(msg.TriggerPrice), 8)
+		execReport.SetText(text)
+		if msg.Type == order.Limit || msg.Type == order.Stop {
+			execReport.SetPrice(decimal.NewFromFloat(msg.Price), 8)
+		} else if msg.Type == order.StopLimit {
+			execReport.SetPrice(decimal.NewFromFloat(msg.Price), 8)
+			execReport.SetStopPx(decimal.NewFromFloat(msg.TriggerPrice), 8)
+		}
+
+		execReport.SetOrderQty(decimal.NewFromFloat(msg.Amount), 8)
+		execReport.SetClOrdID(msg.ClientOrderID)
+		execReport.SetSecurityExchange(msg.Exchange)
+		execReport.SetSecurityType(ToSecurityType(msg.AssetType))
+	case *order.Modify:
+		symbol := a.pairFormater.Format(msg.Pair)
+		execReport = executionreport.New(
+			field.NewOrderID(a.genUUID()),
+			field.NewExecID(a.genExecID()),
+			field.NewExecTransType(enum.ExecTransType_NEW),
+			field.NewExecType(enum.ExecType_REJECTED),
+			field.NewOrdStatus(enum.OrdStatus_REJECTED),
+			field.NewSymbol(symbol),
+			field.NewSide(ToSide(msg.Side)),
+			field.NewLeavesQty(decimal.NewFromFloat(0), 8),
+			field.NewCumQty(decimal.NewFromFloat(0), 8),
+			field.NewAvgPx(decimal.NewFromFloat(0), 8),
+		)
+		execReport.SetText(text)
+		if msg.Type == order.Limit || msg.Type == order.Stop {
+			execReport.SetPrice(decimal.NewFromFloat(msg.Price), 8)
+		} else if msg.Type == order.StopLimit {
+			execReport.SetPrice(decimal.NewFromFloat(msg.Price), 8)
+			execReport.SetStopPx(decimal.NewFromFloat(msg.TriggerPrice), 8)
+		}
+
+		execReport.SetOrderQty(decimal.NewFromFloat(msg.Amount), 8)
+		execReport.SetClOrdID(msg.ClientOrderID)
+		execReport.SetOrderID(msg.OrderID)
+		execReport.SetOrigClOrdID(msg.OrigClOrdID)
+		execReport.SetSecurityExchange(msg.Exchange)
+		execReport.SetSecurityType(ToSecurityType(msg.AssetType))
+	case *order.Cancel:
+		symbol := a.pairFormater.Format(msg.Pair)
+		execReport = executionreport.New(
+			field.NewOrderID(a.genUUID()),
+			field.NewExecID(a.genExecID()),
+			field.NewExecTransType(enum.ExecTransType_CANCEL),
+			field.NewExecType(enum.ExecType_REJECTED),
+			field.NewOrdStatus(enum.OrdStatus_REJECTED),
+			field.NewSymbol(symbol),
+			field.NewSide(ToSide(msg.Side)),
+			field.NewLeavesQty(decimal.NewFromFloat(0), 8),
+			field.NewCumQty(decimal.NewFromFloat(0), 8),
+			field.NewAvgPx(decimal.NewFromFloat(0), 8),
+		)
+		execReport.SetText(text)
+
+		execReport.SetClOrdID(msg.ClientID)
+		execReport.SetOrderID(msg.OrderID)
+		execReport.SetOrigClOrdID(msg.ClientOrderID)
+		execReport.SetSecurityExchange(msg.Exchange)
+		execReport.SetSecurityType(ToSecurityType(msg.AssetType))
+	default:
+		return
 	}
-
-	execReport.SetOrderQty(decimal.NewFromFloat(msg.Amount), 8)
-	execReport.SetClOrdID(msg.ClientOrderID)
-	execReport.SetSecurityExchange(msg.Exchange)
-	execReport.SetSecurityType(ToSecurityType(msg.AssetType))
 
 	for _, sessionID := range a.sessions {
 		sendErr := quickfix.SendToTarget(execReport, sessionID)
@@ -740,7 +804,7 @@ func (a *Application) UpdateOrder(msg *order.Detail, status enum.OrdStatus) {
 	execReport := executionreport.New(
 		field.NewOrderID(msg.OrderID),
 		field.NewExecID(a.genExecID()),
-		field.NewExecTransType(enum.ExecTransType_NEW),
+		field.NewExecTransType(enum.ExecTransType_STATUS),
 		field.NewExecType(enum.ExecType(status)),
 		field.NewOrdStatus(status),
 		field.NewSymbol(symbol),

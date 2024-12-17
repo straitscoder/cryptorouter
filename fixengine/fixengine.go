@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
 	"log"
@@ -21,6 +20,7 @@ import (
 	"github.com/thrasher-corp/gocryptotrader/engine"
 	exchange "github.com/thrasher-corp/gocryptotrader/exchanges"
 	"github.com/thrasher-corp/gocryptotrader/exchanges/asset"
+	"github.com/thrasher-corp/gocryptotrader/exchanges/order"
 	gctlog "github.com/thrasher-corp/gocryptotrader/log"
 	"github.com/thrasher-corp/gocryptotrader/utils"
 )
@@ -324,7 +324,6 @@ func (fixengine *FixEngine) Start() error {
 		fixengine.Config.PurgeExchangeAPICredentials()
 	}
 
-	var dbInstance *sql.DB
 	dbManager, err := engine.SetupDatabaseConnectionManager(&fixengine.Config.Database)
 	if err != nil {
 		gctlog.Errorf(gctlog.Global, "Unable to initialise database manager. Err: %s", err)
@@ -333,10 +332,6 @@ func (fixengine *FixEngine) Start() error {
 			gctlog.Errorf(gctlog.Global, "Unable to start database manager. Err: %s", err)
 		}
 		fixengine.DatabaseManager = dbManager
-		dbInstance, err = fixengine.DatabaseManager.GetInstance().GetSQL()
-		if err != nil {
-			gctlog.Errorf(gctlog.Global, "Unable to get database instance. Err: %s", err)
-		}
 	}
 	gctlog.Debugln(gctlog.Global, "Setting up exchanges..")
 	err = fixengine.SetupExchanges()
@@ -385,8 +380,7 @@ func (fixengine *FixEngine) Start() error {
 		}
 	}
 
-	fixengine.fixgateway = NewFixGateway(fixengine.websocketRoutineManager, fixengine.ExchangeManager, dbInstance)
-	orderManager, err := SetupOrderManager(fixengine.ExchangeManager, fixengine.communicationManager, *fixengine.fixgateway, &fixengine.ServicesWG, &fixengine.Config.OrderManager)
+	orderManager, err := SetupOrderManager(fixengine.ExchangeManager, fixengine.communicationManager, &fixengine.ServicesWG, &fixengine.Config.OrderManager)
 	if err != nil {
 		gctlog.Errorf(gctlog.Global, "Unable to initialise order manager. Err: %s", err)
 	}
@@ -394,7 +388,12 @@ func (fixengine *FixEngine) Start() error {
 		gctlog.Errorf(gctlog.Global, "Unable to start order manager. Err: %s", err)
 	}
 	fixengine.OrderManager = orderManager
-	fixengine.fixgateway.Start()
+	fixengine.fixgateway = NewFixGateway(fixengine.websocketRoutineManager, fixengine.ExchangeManager, fixengine.OrderManager)
+	go fixengine.StartUpsertOrder()
+	if err := fixengine.fixgateway.Start(); err != nil {
+		gctlog.Errorf(gctlog.Global, "Unable to start fix gateway. Err: %s", err)
+	}
+
 	return nil
 }
 
@@ -658,4 +657,73 @@ func (fixengine *FixEngine) SetupExchanges() error {
 // of the currency pair syncer management system.
 func (fixengine *FixEngine) WaitForInitialCurrencySync() error {
 	return fixengine.currencyPairSyncer.WaitForInitialSync()
+}
+
+func (fixEngine *FixEngine) upsertOrder() {
+	exchanges, err := fixEngine.ExchangeManager.GetExchanges()
+	if err != nil {
+		gctlog.Errorf(gctlog.ExchangeSys, "Unable to get exchanges: %s", err)
+		return
+	}
+
+	for x := range exchanges {
+		if !exchanges[x].IsRESTAuthenticationSupported() {
+			continue
+		}
+
+		enabledAssets := exchanges[x].GetAssetTypes(true)
+		for y := range enabledAssets {
+			pairs, err := exchanges[x].GetEnabledPairs(enabledAssets[y])
+			if err != nil {
+				gctlog.Errorf(gctlog.ExchangeSys, "Unable to get enabled pairs: %s", err)
+				continue
+			}
+
+			if len(pairs) == 0 {
+				continue
+			}
+
+			orders, err := exchanges[x].GetActiveOrders(context.TODO(), &order.MultiOrderRequest{
+				Side:      order.AnySide,
+				Type:      order.AnyType,
+				Pairs:     pairs,
+				AssetType: enabledAssets[y],
+			})
+			if err != nil {
+				gctlog.Errorf(gctlog.ExchangeSys, "Unable to get active orders: %s", err)
+				continue
+			}
+
+			if len(orders) == 0 {
+				continue
+			}
+
+			for z := range orders {
+				upsertResponse, err := fixEngine.OrderManager.UpsertOrder(&orders[z])
+				if err != nil {
+					gctlog.Errorf(gctlog.ExchangeSys, "Unable to upsert order: %s", err)
+					continue
+				}
+
+				if !upsertResponse.IsNewOrder && upsertResponse.OrderDetails.Status != order.New {
+					fixEngine.fixgateway.UpdateOrder(&orders[z], ToOrdStatus(upsertResponse.OrderDetails.Status))
+					continue
+				}
+			}
+		}
+	}
+}
+
+func (fixEngine *FixEngine) StartUpsertOrder() {
+	gctlog.Debugln(gctlog.ExchangeSys, "Starting upsert order routine")
+	fixEngine.upsertOrder()
+	for {
+		select {
+		case <-fixEngine.Settings.Shutdown:
+			gctlog.Debugln(gctlog.ExchangeSys, "Shutting down upsert order routine")
+			return
+		case <-time.After(orderManagerInterval):
+			go fixEngine.upsertOrder()
+		}
+	}
 }

@@ -43,6 +43,10 @@ func (c *fixApplication) FromApp(msg *quickfix.Message, sessionID quickfix.Sessi
 		orderId, _ := msg.Body.GetString(tag.OrderID)
 		ordStatus, _ := msg.Body.GetString(tag.OrdStatus)
 		savedOrderId := getOrderId(clOrdID)
+		if ordStatus == "4" || ordStatus == "3" {
+			parsed := parseFIXMessage(msg)
+			jsonOutput(parsed)
+		}
 		if savedOrderId != nil {
 			if ordStatus != "0" {
 				parsed := parseFIXMessage(msg)

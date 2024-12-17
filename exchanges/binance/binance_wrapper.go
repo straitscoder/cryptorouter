@@ -1113,7 +1113,7 @@ func (b *Binance) ModifyOrder(ctx context.Context, m *order.Modify) (*order.Modi
 				Price:                   m.Price,
 				CancelNewClientOrderID:  m.ClientOrderID,
 				CancelOrigClientOrderID: m.OrigClOrdID,
-				CancelOrderID:           m.OrderID,
+				CancelOrderID:           "",
 			},
 			&cancelReplaceResponse,
 		)
@@ -1145,7 +1145,7 @@ func (b *Binance) ModifyOrder(ctx context.Context, m *order.Modify) (*order.Modi
 			ctx,
 			&UFuturesModifyOrderRequest{
 				Symbol:      m.Pair,
-				OrderID:     m.OrderID,
+				OrderID:     "",
 				OrigClOrdID: m.OrigClOrdID,
 				Side:        reqSide,
 				Quantity:    m.Amount,

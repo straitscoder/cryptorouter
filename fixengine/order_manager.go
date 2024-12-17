@@ -65,7 +65,7 @@ type OrderManager struct {
 	activelyTrackFuturesPositions bool
 	futuresPositionSeekDuration   time.Duration
 	respectOrderHistoryLimits     bool
-	fixGateway                    Application
+	// fixGateway                    Application
 }
 
 // store holds all orders by exchange
@@ -92,7 +92,7 @@ type OrderUpsertResponse struct {
 }
 
 // SetupOrderManager will boot up the OrderManager
-func SetupOrderManager(exchangeManager iExchangeManager, communicationsManager iCommsManager, fixApplication Application, wg *sync.WaitGroup, cfg *config.OrderManager) (*OrderManager, error) {
+func SetupOrderManager(exchangeManager iExchangeManager, communicationsManager iCommsManager, wg *sync.WaitGroup, cfg *config.OrderManager) (*OrderManager, error) {
 	if exchangeManager == nil {
 		return nil, errNilExchangeManager
 	}
@@ -125,7 +125,7 @@ func SetupOrderManager(exchangeManager iExchangeManager, communicationsManager i
 		cfg: orderManagerConfig{
 			CancelOrdersOnShutdown: cfg.CancelOrdersOnShutdown,
 		},
-		fixGateway: fixApplication,
+		// fixGateway: fixApplication,
 	}
 	if cfg.ActivelyTrackFuturesPositions {
 		if cfg.FuturesTrackingSeekDuration > 0 {
@@ -200,7 +200,7 @@ func (m *OrderManager) run() {
 			return
 		case <-time.After(orderManagerInterval):
 			// Process orders go routine allows shutdown procedures to continue
-			go m.processOrders()
+			// go m.processOrders()
 		}
 	}
 }
@@ -700,6 +700,63 @@ func (m *OrderManager) processSubmittedOrder(newOrderResp *order.SubmitResponse)
 	return &OrderSubmitResponse{Detail: detail, InternalOrderID: detail.InternalOrderID.String()}, nil
 }
 
+// Define custom function to update order status
+func (m *OrderManager) updateOrderStatus() {
+	if !atomic.CompareAndSwapInt32(&m.processingOrders, 0, 1) {
+		return
+	}
+	defer atomic.StoreInt32(&m.processingOrders, 0)
+
+	exchanges, err := m.orderStore.exchangeManager.GetExchanges()
+	if err != nil {
+		log.Errorf(log.OrderMgr, "order manager cannot get exchanges: %+v", err)
+		return
+	}
+
+	// var wg sync.WaitGroup
+	for x := range exchanges {
+		if !exchanges[x].IsRESTAuthenticationSupported() {
+			continue
+		}
+
+		enabledAssets := exchanges[x].GetAssetTypes(true)
+		for y := range enabledAssets {
+			pairs, err := exchanges[x].GetEnabledPairs(enabledAssets[y])
+			if err != nil {
+				log.Errorf(log.OrderMgr, "order manager cannot get enabled pairs: %+v", err)
+				continue
+			}
+
+			if len(pairs) == 0 {
+				continue
+			}
+
+			orderDetails, err := exchanges[x].GetActiveOrders(context.TODO(), &order.MultiOrderRequest{
+				Side:      order.AnySide,
+				Type:      order.AnyType,
+				Pairs:     pairs,
+				AssetType: enabledAssets[y],
+			})
+			if err != nil {
+				log.Errorf(log.OrderMgr, "order manager cannot get active orders: %+v", err)
+				continue
+			}
+
+			if len(orderDetails) == 0 {
+				continue
+			}
+
+			for z := range orderDetails {
+				_, err := m.UpsertOrder(&orderDetails[z])
+				if err != nil {
+					log.Errorf(log.OrderMgr, "order manager cannot upsert order: %+v", err)
+					continue
+				}
+			}
+		}
+	}
+}
+
 // processOrders iterates over all exchange orders via API
 // and adds them to the internal order store
 func (m *OrderManager) processOrders() {
@@ -992,9 +1049,9 @@ func (m *OrderManager) UpsertOrder(od *order.Detail) (resp *OrderUpsertResponse,
 		return nil, err
 	}
 
-	if !upsertResponse.IsNewOrder && upsertResponse.OrderDetails.Status != order.New {
-		m.fixGateway.UpdateOrder(&upsertResponse.OrderDetails, ToOrdStatus(upsertResponse.OrderDetails.Status))
-	}
+	// if !upsertResponse.IsNewOrder && upsertResponse.OrderDetails.Status != order.New {
+	// 	m.fixGateway.UpdateOrder(&upsertResponse.OrderDetails, ToOrdStatus(upsertResponse.OrderDetails.Status))
+	// }
 
 	// GCT original code to notifies order updates using logger
 	// status := "updated"
