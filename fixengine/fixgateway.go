@@ -27,8 +27,6 @@ import (
 	"github.com/thrasher-corp/gocryptotrader/common"
 	"github.com/thrasher-corp/gocryptotrader/common/file"
 	"github.com/thrasher-corp/gocryptotrader/currency"
-	exchDb "github.com/thrasher-corp/gocryptotrader/database/repository/exchange"
-	tradeDb "github.com/thrasher-corp/gocryptotrader/database/repository/trade"
 	"github.com/thrasher-corp/gocryptotrader/exchanges/account"
 	"github.com/thrasher-corp/gocryptotrader/exchanges/asset"
 	"github.com/thrasher-corp/gocryptotrader/exchanges/fill"
@@ -36,6 +34,7 @@ import (
 	"github.com/thrasher-corp/gocryptotrader/exchanges/orderbook"
 	"github.com/thrasher-corp/gocryptotrader/exchanges/ticker"
 	"github.com/thrasher-corp/gocryptotrader/exchanges/trade"
+	model "github.com/thrasher-corp/gocryptotrader/fixengine/models"
 )
 
 // Application implements the quickfix.Application interface
@@ -259,7 +258,6 @@ func (a *Application) onNewOrderSingle(msg newordersingle.NewOrderSingle, sessio
 		a.RejectOrderRequest(submission, e.Error())
 		return nil
 	}
-	log.Printf("Submitted order: %+v", submittedOrder.Detail)
 
 	// exch, e := a.exchangeManager.GetExchangeByName(submission.Exchange)
 	// if e != nil {
@@ -297,32 +295,45 @@ func (a *Application) onNewOrderSingle(msg newordersingle.NewOrderSingle, sessio
 	// if e != nil {
 	// 	a.RejectOrderRequest(submission, e.Error())
 	// }
-	dbExchange, e := exchDb.One(submission.Exchange)
-	if e != nil {
-		a.RejectOrderRequest(submission, e.Error())
+
+	var trades []model.Trade
+	orderIDInt, _ := strconv.ParseInt(submittedOrder.Detail.OrderID, 10, 64)
+	if len(submittedOrder.Detail.Trades) > 0 {
+		trades = make([]model.Trade, len(submittedOrder.Detail.Trades))
+		for i := range submittedOrder.Detail.Trades {
+			tradeID, _ := strconv.ParseInt(submittedOrder.Detail.Trades[i].TID, 10, 64)
+			trades[i] = model.Trade{
+				OrderID:        orderIDInt,
+				TradeID:        tradeID,
+				Price:          submittedOrder.Detail.Trades[i].Price,
+				Quantity:       submittedOrder.Detail.Trades[i].Amount,
+				Commision:      submittedOrder.Detail.Trades[i].Fee,
+				CommisionAsset: submittedOrder.Detail.Trades[i].FeeAsset,
+			}
+		}
 	}
-	e = tradeDb.Insert(tradeDb.Data{
-		ID:             clOrdID,
-		TID:            submittedOrder.Detail.OrderID,
-		Exchange:       dbExchange.Name,
-		ExchangeNameID: dbExchange.UUID.String(),
-		Base:           pair.Base.String(),
-		Quote:          pair.Quote.String(),
-		AssetType:      submission.AssetType.String(),
-		Price:          price.InexactFloat64(),
-		Amount:         orderQty.InexactFloat64(),
-		Side:           submission.Side.String(),
+	e = model.CreateOrder(model.Order{
+		ClientOrderID: submittedOrder.Detail.ClientOrderID,
+		OrderID:       orderIDInt,
+		Exchange:      submittedOrder.Detail.Exchange,
+		Base:          submittedOrder.Detail.Pair.Base.String(),
+		Quote:         submittedOrder.Detail.Pair.Quote.String(),
+		Side:          submittedOrder.Detail.Side.String(),
+		AssetType:     submittedOrder.Detail.AssetType.String(),
+		OrderType:     submittedOrder.Detail.Type.String(),
+		Price:         submittedOrder.Detail.Price,
+		Amount:        submittedOrder.Detail.Amount,
+		Status:        submittedOrder.Detail.Status.String(),
+		Trades:        trades,
+		Timestamp:     submittedOrder.Detail.Date,
 	})
 	if e != nil {
-		a.RejectOrderRequest(submission, e.Error())
+		log.Printf("Error creating order: %+v", e)
+		return nil
 	}
-	orders, e := tradeDb.GetInRange(dbExchange.Name, submission.AssetType.String(), pair.Base.String(), pair.Quote.String(), time.Now().Add(-time.Hour*24), time.Now())
-	if e != nil {
-		a.RejectOrderRequest(submission, e.Error())
-	}
-	for _, order := range orders {
-		log.Printf("order: %+v", order)
-	}
+	orders := model.GetOrders(&model.Order{})
+	log.Printf("Orders: %+v", orders)
+
 	return nil
 }
 

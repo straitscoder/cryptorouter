@@ -746,6 +746,7 @@ func (bi *Binanceus) GetOrderInfo(ctx context.Context, orderID string, pair curr
 		return nil, fmt.Errorf("%s %w", assetType, asset.ErrNotSupported)
 	}
 	var orderType order.Type
+	var trades []order.TradeHistory
 	resp, err := bi.GetOrder(ctx, &OrderRequestParams{
 		Symbol:  symbolValue,
 		OrderID: uint64(orderIDInt),
@@ -765,7 +766,30 @@ func (bi *Binanceus) GetOrderInfo(ctx context.Context, orderID string, pair curr
 	if err != nil {
 		log.Errorf(log.ExchangeSys, "%s %v", bi.Name, err)
 	}
+	tradeHistoryResponse, err := bi.GetAccountTradeList(ctx, pair, orderID)
+	if err != nil {
+		return nil, err
+	}
 
+	if len(tradeHistoryResponse) > 0 {
+		trades = make([]order.TradeHistory, len(tradeHistoryResponse))
+		var total float64
+		for i := range tradeHistoryResponse {
+			total += tradeHistoryResponse[i].Qty
+			trades[i] = order.TradeHistory{
+				Price:     tradeHistoryResponse[i].Price,
+				Amount:    tradeHistoryResponse[i].Qty,
+				Fee:       tradeHistoryResponse[i].Commission,
+				Exchange:  bi.Name,
+				TID:       strconv.FormatInt(tradeHistoryResponse[i].ID, 10),
+				Type:      orderType,
+				Timestamp: time.UnixMilli(tradeHistoryResponse[i].Time),
+				IsMaker:   tradeHistoryResponse[i].IsMaker,
+				FeeAsset:  tradeHistoryResponse[i].CommissionAsset,
+				Total:     total,
+			}
+		}
+	}
 	return &order.Detail{
 		Amount:         resp.OrigQty,
 		Exchange:       bi.Name,

@@ -10,6 +10,7 @@ type Order struct {
 	Quote         string    `json:"quote"`
 	Side          string    `json:"side"`
 	AssetType     string    `json:"assetType"`
+	OrderType     string    `json:"orderType"`
 	Price         float64   `json:"price" gorm:"type:numeric(12,8)"`
 	Amount        float64   `json:"amount" gorm:"type:numeric(12,8)"`
 	Status        string    `json:"status"`
@@ -19,6 +20,11 @@ type Order struct {
 
 func GetOrders(cond *Order) (orders []Order) {
 	db.Model(&Order{}).Where(cond).Preload("Trades").Find(&orders)
+	return
+}
+
+func GetUnFilledOrders(cond *Order) (orders []Order) {
+	db.Model(&Order{}).Not(map[string]interface{}{"status": []string{"FILLED", "CANCELLED"}}).Where(cond).Find(&orders)
 	return
 }
 

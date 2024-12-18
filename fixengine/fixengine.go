@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -436,8 +437,6 @@ func (fixengine *FixEngine) Stop() {
 		gctlog.Errorf(gctlog.Global, "Database manager unable to stop. Error: %v", err)
 	}
 
-	model.CloseDB()
-
 	// Wait for services to gracefully shutdown
 	fixengine.ServicesWG.Wait()
 	gctlog.Infoln(gctlog.Global, "Exiting.")
@@ -686,23 +685,60 @@ func (fixEngine *FixEngine) upsertOrder() {
 				continue
 			}
 
-			orders, err := exchanges[x].GetActiveOrders(context.TODO(), &order.MultiOrderRequest{
-				Side:      order.AnySide,
-				Type:      order.AnyType,
-				Pairs:     pairs,
-				AssetType: enabledAssets[y],
+			orders := model.GetUnFilledOrders(&model.Order{
+				Exchange:  exchanges[x].GetName(),
+				AssetType: enabledAssets[y].String(),
 			})
-			if err != nil {
-				gctlog.Errorf(gctlog.ExchangeSys, "Unable to get active orders: %s", err)
-				continue
-			}
 
 			if len(orders) == 0 {
 				continue
 			}
 
 			for z := range orders {
-				upsertResponse, err := fixEngine.OrderManager.UpsertOrder(&orders[z])
+				assetType, err := asset.New(orders[z].AssetType)
+				if err != nil {
+					gctlog.Errorf(gctlog.ExchangeSys, "Unable to get asset type: %s", err)
+					gctlog.Debugf(gctlog.ExchangeSys, "From this order: %+v", orders[z])
+					continue
+				}
+				side, err := order.StringToOrderSide(orders[z].Side)
+				if err != nil {
+					gctlog.Errorf(gctlog.ExchangeSys, "Unable to get order side: %s", err)
+					gctlog.Debugf(gctlog.ExchangeSys, "From this order: %+v", orders[z])
+					continue
+				}
+				orderType, err := order.StringToOrderType(orders[z].OrderType)
+				if err != nil {
+					gctlog.Errorf(gctlog.ExchangeSys, "Unable to get order type: %s", err)
+					gctlog.Debugf(gctlog.ExchangeSys, "From this order: %+v", orders[z])
+					continue
+				}
+				status, err := order.StringToOrderStatus(orders[z].Status)
+				if err != nil {
+					gctlog.Errorf(gctlog.ExchangeSys, "Unable to get order status: %s", err)
+					gctlog.Debugf(gctlog.ExchangeSys, "From this order: %+v", orders[z])
+					continue
+				}
+				pair, err := currency.NewPairFromStrings(orders[z].Base, orders[z].Quote)
+				if err != nil {
+					gctlog.Errorf(gctlog.ExchangeSys, "Unable to get pair: %s", err)
+					gctlog.Debugf(gctlog.ExchangeSys, "From this order: %+v", orders[z])
+					continue
+				}
+				req := order.Detail{
+					Price:         orders[z].Price,
+					Amount:        orders[z].Amount,
+					OrderID:       strconv.Itoa(int(orders[z].OrderID)),
+					Exchange:      exchanges[x].GetName(),
+					ClientOrderID: orders[z].ClientOrderID,
+					AssetType:     assetType,
+					Side:          side,
+					Type:          orderType,
+					Pair:          pair,
+					Status:        status,
+					Date:          orders[z].Timestamp,
+				}
+				upsertResponse, err := fixEngine.OrderManager.UpsertOrder(&req)
 				if err != nil {
 					gctlog.Errorf(gctlog.ExchangeSys, "Unable to upsert order: %s", err)
 					continue
@@ -715,8 +751,38 @@ func (fixEngine *FixEngine) upsertOrder() {
 				}
 				gctlog.Debugf(gctlog.ExchangeSys, "Upserted order: %+v", orderDetail)
 
-				if !upsertResponse.IsNewOrder && upsertResponse.OrderDetails.Status != order.New {
-					fixEngine.fixgateway.UpdateOrder(&orders[z], ToOrdStatus(upsertResponse.OrderDetails.Status))
+				if len(orderDetail.Trades) > len(orders[z].Trades) {
+					for i := range orderDetail.Trades {
+						tradeId, err := strconv.ParseInt(orderDetail.Trades[i].TID, 10, 64)
+						if err != nil {
+							gctlog.Errorf(gctlog.ExchangeSys, "Unable to parse trade ID: %s", err)
+							continue
+						}
+						orderId, err := strconv.ParseInt(orderDetail.OrderID, 10, 64)
+						if err != nil {
+							gctlog.Errorf(gctlog.ExchangeSys, "Unable to parse order ID: %s", err)
+							continue
+						}
+						trade := model.Trade{
+							Price:          orderDetail.Trades[i].Price,
+							Quantity:       orderDetail.Trades[i].Amount,
+							TradeID:        tradeId,
+							OrderID:        orderId,
+							Commision:      orderDetail.Trades[i].Fee,
+							CommisionAsset: orderDetail.Trades[i].FeeAsset,
+						}
+						if err := model.UpdateOrCreateTrade(tradeId, trade); err != nil {
+							gctlog.Errorf(gctlog.ExchangeSys, "Unable to update or create trade: %s", err)
+							continue
+						}
+					}
+
+					orders[z].Status = orderDetail.Status.String()
+					if err := model.UpdateOrder(orders[z].ClientOrderID, orders[z]); err != nil {
+						gctlog.Errorf(gctlog.ExchangeSys, "Unable to update order: %s", err)
+					}
+
+					fixEngine.fixgateway.UpdateOrder(orderDetail, ToOrdStatus(orderDetail.Status))
 					continue
 				}
 			}

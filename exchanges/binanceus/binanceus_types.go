@@ -1233,3 +1233,19 @@ type SpotAssetsSnapshotResponse struct {
 	Msg         string   `json:"msg"`
 	SnapshotVos []string `json:"snapshotVos"`
 }
+
+type UAccountTradeListResponse struct {
+	Commission      float64 `json:"commission,string"`
+	CommissionAsset string  `json:"commissionAsset"`
+	ID              int64   `json:"id"`
+	IsBestMatch     bool    `json:"isBestMatch"`
+	IsBuyer         bool    `json:"isBuyer"`
+	IsMaker         bool    `json:"isMaker"`
+	OrderID         int64   `json:"orderId"`
+	OrderListID     int64   `json:"orderListId"`
+	Price           float64 `json:"price,string"`
+	Qty             float64 `json:"qty,string"`
+	QuotedQty       float64 `json:"quoteQty,string"`
+	Symbol          string  `json:"symbol"`
+	Time            int64   `json:"time"`
+}
