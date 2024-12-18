@@ -56,7 +56,8 @@ const (
 	historicalTrades  = "/api/v3/historicalTrades"
 
 	// Margin endpoints
-	marginInterestHistory = "/sapi/v1/margin/interestHistory"
+	marginInterestHistory  = "/sapi/v1/margin/interestHistory"
+	marginAccountTradeList = "/sapi/v1/margin/myTrades"
 
 	// Authenticated endpoints
 	newOrderTest       = "/api/v3/order/test"
@@ -1809,4 +1810,24 @@ func (b *Binance) FlexibleCollateralAssetsData(ctx context.Context, collateralCo
 
 	var resp FlexibleCollateralAssetsData
 	return &resp, b.SendAuthHTTPRequest(ctx, exchange.RestSpotSupplementary, http.MethodGet, flexibleLoanCollateralAssetsData, params, spotDefaultRate, &resp)
+}
+
+func (b *Binance) GetAccountTradeList(ctx context.Context, symbol currency.Pair, orderId string) ([]UAccountTradeListResponse, error) {
+	var resp []UAccountTradeListResponse
+	params := url.Values{}
+	if !symbol.IsEmpty() {
+		symbolValue, err := b.FormatSymbol(symbol, asset.USDTMarginedFutures)
+		if err != nil {
+			return resp, err
+		}
+		params.Set("symbol", symbolValue)
+	}
+	if orderId != "" {
+		params.Set("orderId", orderId)
+	}
+	if err := b.SendAuthHTTPRequest(ctx, exchange.RestSpot, http.MethodGet, marginAccountTradeList, params, spotDefaultRate, &resp); err != nil {
+		return resp, err
+	}
+
+	return resp, nil
 }

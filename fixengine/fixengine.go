@@ -21,6 +21,7 @@ import (
 	exchange "github.com/thrasher-corp/gocryptotrader/exchanges"
 	"github.com/thrasher-corp/gocryptotrader/exchanges/asset"
 	"github.com/thrasher-corp/gocryptotrader/exchanges/order"
+	model "github.com/thrasher-corp/gocryptotrader/fixengine/models"
 	gctlog "github.com/thrasher-corp/gocryptotrader/log"
 	"github.com/thrasher-corp/gocryptotrader/utils"
 )
@@ -435,6 +436,8 @@ func (fixengine *FixEngine) Stop() {
 		gctlog.Errorf(gctlog.Global, "Database manager unable to stop. Error: %v", err)
 	}
 
+	model.CloseDB()
+
 	// Wait for services to gracefully shutdown
 	fixengine.ServicesWG.Wait()
 	gctlog.Infoln(gctlog.Global, "Exiting.")
@@ -704,6 +707,13 @@ func (fixEngine *FixEngine) upsertOrder() {
 					gctlog.Errorf(gctlog.ExchangeSys, "Unable to upsert order: %s", err)
 					continue
 				}
+
+				orderDetail, err := exchanges[x].GetOrderInfo(context.TODO(), upsertResponse.OrderDetails.OrderID, upsertResponse.OrderDetails.Pair, upsertResponse.OrderDetails.AssetType)
+				if err != nil {
+					gctlog.Errorf(gctlog.ExchangeSys, "Unable to get trade history: %+v", err)
+					continue
+				}
+				gctlog.Debugf(gctlog.ExchangeSys, "Upserted order: %+v", orderDetail)
 
 				if !upsertResponse.IsNewOrder && upsertResponse.OrderDetails.Status != order.New {
 					fixEngine.fixgateway.UpdateOrder(&orders[z], ToOrdStatus(upsertResponse.OrderDetails.Status))
