@@ -1069,10 +1069,14 @@ func (bi *Binanceus) newOrder(ctx context.Context, api string, o *NewOrderReques
 	if o.NewOrderRespType != "" {
 		params.Set("newOrderRespType", o.NewOrderRespType)
 	}
-	return bi.SendAuthHTTPRequest(ctx,
+	if err := bi.SendAuthHTTPRequest(ctx,
 		exchange.RestSpotSupplementary,
 		http.MethodPost, api, params,
-		spotOrderRate, resp)
+		spotOrderRate, resp); err != nil {
+		return err
+	}
+
+	return nil
 }
 
 // GetOrder to check a trade order's status.

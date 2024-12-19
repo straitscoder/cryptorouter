@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -291,6 +290,11 @@ func (fixengine *FixEngine) Start() error {
 	var err error
 	newEngineMutex.Lock()
 	defer newEngineMutex.Unlock()
+	defer func() {
+		if r := recover(); r != nil {
+			gctlog.Errorf(gctlog.Global, "recover from panic: %+v", r)
+		}
+	}()
 
 	if fixengine.Settings.EnableDispatcher {
 		if err = dispatch.Start(fixengine.Settings.DispatchMaxWorkerAmount, fixengine.Settings.DispatchJobsLimit); err != nil {
@@ -382,7 +386,8 @@ func (fixengine *FixEngine) Start() error {
 		}
 	}
 
-	orderManager, err := SetupOrderManager(fixengine.ExchangeManager, fixengine.communicationManager, &fixengine.ServicesWG, &fixengine.Config.OrderManager)
+	fixengine.fixgateway = NewFixGateway(fixengine.websocketRoutineManager, fixengine.ExchangeManager)
+	orderManager, err := SetupOrderManager(fixengine.ExchangeManager, fixengine.communicationManager, *fixengine.fixgateway, &fixengine.ServicesWG, &fixengine.Config.OrderManager)
 	if err != nil {
 		gctlog.Errorf(gctlog.Global, "Unable to initialise order manager. Err: %s", err)
 	}
@@ -390,8 +395,6 @@ func (fixengine *FixEngine) Start() error {
 		gctlog.Errorf(gctlog.Global, "Unable to start order manager. Err: %s", err)
 	}
 	fixengine.OrderManager = orderManager
-	fixengine.fixgateway = NewFixGateway(fixengine.websocketRoutineManager, fixengine.ExchangeManager, fixengine.OrderManager)
-	go fixengine.StartUpsertOrder()
 	if err := fixengine.fixgateway.Start(); err != nil {
 		gctlog.Errorf(gctlog.Global, "Unable to start fix gateway. Err: %s", err)
 	}
@@ -686,8 +689,8 @@ func (fixEngine *FixEngine) upsertOrder() {
 			}
 
 			orders := model.GetUnFilledOrders(&model.Order{
-				Exchange:  exchanges[x].GetName(),
-				AssetType: enabledAssets[y].String(),
+				Exchange:  strings.ToLower(exchanges[x].GetName()),
+				AssetType: strings.ToLower(enabledAssets[y].String()),
 			})
 
 			if len(orders) == 0 {
@@ -728,7 +731,7 @@ func (fixEngine *FixEngine) upsertOrder() {
 				req := order.Detail{
 					Price:         orders[z].Price,
 					Amount:        orders[z].Amount,
-					OrderID:       strconv.Itoa(int(orders[z].OrderID)),
+					OrderID:       orders[z].OrderID,
 					Exchange:      exchanges[x].GetName(),
 					ClientOrderID: orders[z].ClientOrderID,
 					AssetType:     assetType,
@@ -749,29 +752,18 @@ func (fixEngine *FixEngine) upsertOrder() {
 					gctlog.Errorf(gctlog.ExchangeSys, "Unable to get trade history: %+v", err)
 					continue
 				}
-				gctlog.Debugf(gctlog.ExchangeSys, "Upserted order: %+v", orderDetail)
 
 				if len(orderDetail.Trades) > len(orders[z].Trades) {
 					for i := range orderDetail.Trades {
-						tradeId, err := strconv.ParseInt(orderDetail.Trades[i].TID, 10, 64)
-						if err != nil {
-							gctlog.Errorf(gctlog.ExchangeSys, "Unable to parse trade ID: %s", err)
-							continue
-						}
-						orderId, err := strconv.ParseInt(orderDetail.OrderID, 10, 64)
-						if err != nil {
-							gctlog.Errorf(gctlog.ExchangeSys, "Unable to parse order ID: %s", err)
-							continue
-						}
 						trade := model.Trade{
 							Price:          orderDetail.Trades[i].Price,
 							Quantity:       orderDetail.Trades[i].Amount,
-							TradeID:        tradeId,
-							OrderID:        orderId,
+							TradeID:        orderDetail.Trades[i].TID,
+							OrderID:        orderDetail.OrderID,
 							Commision:      orderDetail.Trades[i].Fee,
 							CommisionAsset: orderDetail.Trades[i].FeeAsset,
 						}
-						if err := model.UpdateOrCreateTrade(tradeId, trade); err != nil {
+						if err := model.UpdateOrCreateTrade(trade.TradeID, trade); err != nil {
 							gctlog.Errorf(gctlog.ExchangeSys, "Unable to update or create trade: %s", err)
 							continue
 						}

@@ -22,6 +22,7 @@ import (
 	"github.com/thrasher-corp/gocryptotrader/exchanges/fundingrate"
 	"github.com/thrasher-corp/gocryptotrader/exchanges/futures"
 	"github.com/thrasher-corp/gocryptotrader/exchanges/order"
+	model "github.com/thrasher-corp/gocryptotrader/fixengine/models"
 	"github.com/thrasher-corp/gocryptotrader/log"
 )
 
@@ -65,7 +66,7 @@ type OrderManager struct {
 	activelyTrackFuturesPositions bool
 	futuresPositionSeekDuration   time.Duration
 	respectOrderHistoryLimits     bool
-	// fixGateway                    Application
+	fixGateway                    Application
 }
 
 // store holds all orders by exchange
@@ -92,7 +93,7 @@ type OrderUpsertResponse struct {
 }
 
 // SetupOrderManager will boot up the OrderManager
-func SetupOrderManager(exchangeManager iExchangeManager, communicationsManager iCommsManager, wg *sync.WaitGroup, cfg *config.OrderManager) (*OrderManager, error) {
+func SetupOrderManager(exchangeManager iExchangeManager, communicationsManager iCommsManager, fixApplication Application, wg *sync.WaitGroup, cfg *config.OrderManager) (*OrderManager, error) {
 	if exchangeManager == nil {
 		return nil, errNilExchangeManager
 	}
@@ -125,7 +126,7 @@ func SetupOrderManager(exchangeManager iExchangeManager, communicationsManager i
 		cfg: orderManagerConfig{
 			CancelOrdersOnShutdown: cfg.CancelOrdersOnShutdown,
 		},
-		// fixGateway: fixApplication,
+		fixGateway: fixApplication,
 	}
 	if cfg.ActivelyTrackFuturesPositions {
 		if cfg.FuturesTrackingSeekDuration > 0 {
@@ -200,7 +201,7 @@ func (m *OrderManager) run() {
 			return
 		case <-time.After(orderManagerInterval):
 			// Process orders go routine allows shutdown procedures to continue
-			// go m.processOrders()
+			go m.processOrders()
 		}
 	}
 }
@@ -700,63 +701,6 @@ func (m *OrderManager) processSubmittedOrder(newOrderResp *order.SubmitResponse)
 	return &OrderSubmitResponse{Detail: detail, InternalOrderID: detail.InternalOrderID.String()}, nil
 }
 
-// Define custom function to update order status
-func (m *OrderManager) updateOrderStatus() {
-	if !atomic.CompareAndSwapInt32(&m.processingOrders, 0, 1) {
-		return
-	}
-	defer atomic.StoreInt32(&m.processingOrders, 0)
-
-	exchanges, err := m.orderStore.exchangeManager.GetExchanges()
-	if err != nil {
-		log.Errorf(log.OrderMgr, "order manager cannot get exchanges: %+v", err)
-		return
-	}
-
-	// var wg sync.WaitGroup
-	for x := range exchanges {
-		if !exchanges[x].IsRESTAuthenticationSupported() {
-			continue
-		}
-
-		enabledAssets := exchanges[x].GetAssetTypes(true)
-		for y := range enabledAssets {
-			pairs, err := exchanges[x].GetEnabledPairs(enabledAssets[y])
-			if err != nil {
-				log.Errorf(log.OrderMgr, "order manager cannot get enabled pairs: %+v", err)
-				continue
-			}
-
-			if len(pairs) == 0 {
-				continue
-			}
-
-			orderDetails, err := exchanges[x].GetActiveOrders(context.TODO(), &order.MultiOrderRequest{
-				Side:      order.AnySide,
-				Type:      order.AnyType,
-				Pairs:     pairs,
-				AssetType: enabledAssets[y],
-			})
-			if err != nil {
-				log.Errorf(log.OrderMgr, "order manager cannot get active orders: %+v", err)
-				continue
-			}
-
-			if len(orderDetails) == 0 {
-				continue
-			}
-
-			for z := range orderDetails {
-				_, err := m.UpsertOrder(&orderDetails[z])
-				if err != nil {
-					log.Errorf(log.OrderMgr, "order manager cannot upsert order: %+v", err)
-					continue
-				}
-			}
-		}
-	}
-}
-
 // processOrders iterates over all exchange orders via API
 // and adds them to the internal order store
 func (m *OrderManager) processOrders() {
@@ -781,52 +725,122 @@ func (m *OrderManager) processOrders() {
 		}
 		enabledAssets := exchanges[x].GetAssetTypes(true)
 		for y := range enabledAssets {
-			var pairs currency.Pairs
-			pairs, err = exchanges[x].GetEnabledPairs(enabledAssets[y])
+			filter := &order.Filter{Exchange: exchanges[x].GetName()}
+			orders := m.orderStore.getActiveOrders(filter)
+			pairs, err := exchanges[x].GetEnabledPairs(enabledAssets[y])
 			if err != nil {
-				log.Errorf(log.OrderMgr,
-					"Unable to get enabled pairs for %s and asset type %s: %s",
-					exchanges[x].GetName(),
-					enabledAssets[y],
-					err)
+				log.Errorf(log.OrderMgr, "Unable to get enabled pairs: %s", err)
 				continue
 			}
 
 			if len(pairs) == 0 {
-				if m.verbose {
-					log.Debugf(log.OrderMgr,
-						"No pairs enabled for %s and asset type %s, skipping...",
-						exchanges[x].GetName(),
-						enabledAssets[y])
-				}
 				continue
 			}
 
-			filter := &order.Filter{Exchange: exchanges[x].GetName()}
-			orders := m.orderStore.getActiveOrders(filter)
 			order.FilterOrdersByPairs(&orders, pairs)
-			var result []order.Detail
-			result, err = exchanges[x].GetActiveOrders(context.TODO(), &order.MultiOrderRequest{
-				Side:      order.AnySide,
-				Type:      order.AnyType,
-				Pairs:     pairs,
-				AssetType: enabledAssets[y],
+			results := model.GetUnFilledOrders(&model.Order{
+				Exchange:  strings.ToLower(exchanges[x].GetName()),
+				AssetType: strings.ToLower(enabledAssets[y].String()),
 			})
-			if err != nil {
-				log.Errorf(log.OrderMgr,
-					"Unable to get active orders for %s and asset type %s: %s",
-					exchanges[x].GetName(),
-					enabledAssets[y],
-					err)
+
+			if len(results) == 0 {
 				continue
 			}
-			for z := range result {
-				var upsertResponse *OrderUpsertResponse
-				upsertResponse, err = m.UpsertOrder(&result[z])
-				if err != nil {
-					log.Errorln(log.OrderMgr, err)
+
+			for z := range results {
+				if !m.fixGateway.IsConnected(results[z].SessionID) {
+					log.Debugf(log.OrderMgr, "fix session %s is not connected", results[z].SessionID)
 					continue
 				}
+				assetType, err := asset.New(results[z].AssetType)
+				if err != nil {
+					log.Errorf(log.OrderMgr, "Unable to get asset type: %s", err)
+					log.Debugf(log.OrderMgr, "From this order: %+v", results[z])
+					continue
+				}
+				side, err := order.StringToOrderSide(results[z].Side)
+				if err != nil {
+					log.Errorf(log.OrderMgr, "Unable to get order side: %s", err)
+					log.Debugf(log.OrderMgr, "From this order: %+v", results[z])
+					continue
+				}
+				orderType, err := order.StringToOrderType(results[z].OrderType)
+				if err != nil {
+					log.Errorf(log.OrderMgr, "Unable to get order type: %s", err)
+					log.Debugf(log.OrderMgr, "From this order: %+v", results[z])
+					continue
+				}
+				status, err := order.StringToOrderStatus(results[z].Status)
+				if err != nil {
+					log.Errorf(log.OrderMgr, "Unable to get order status: %s", err)
+					log.Debugf(log.OrderMgr, "From this order: %+v", results[z])
+					continue
+				}
+				pair, err := currency.NewPairFromStrings(results[z].Base, results[z].Quote)
+				if err != nil {
+					log.Errorf(log.OrderMgr, "Unable to get pair: %s", err)
+					log.Debugf(log.OrderMgr, "From this order: %+v", results[z])
+					continue
+				}
+				req := order.Detail{
+					Price:         results[z].Price,
+					Amount:        results[z].Amount,
+					OrderID:       results[z].OrderID,
+					Exchange:      exchanges[x].GetName(),
+					ClientOrderID: results[z].ClientOrderID,
+					AssetType:     assetType,
+					Side:          side,
+					Type:          orderType,
+					Pair:          pair,
+					Status:        status,
+					Date:          results[z].Timestamp,
+				}
+				upsertResponse, err := m.UpsertOrder(&req)
+				if err != nil {
+					log.Errorf(log.OrderMgr, "Unable to upsert order: %s", err)
+					continue
+				}
+
+				orderDetail, err := exchanges[x].GetOrderInfo(context.TODO(), upsertResponse.OrderDetails.OrderID, upsertResponse.OrderDetails.Pair, upsertResponse.OrderDetails.AssetType)
+				if err != nil {
+					log.Errorf(log.OrderMgr, "Unable to get trade history: %+v", err)
+					continue
+				}
+				if orderDetail.Trades == nil || len(orderDetail.Trades) == 0 {
+					log.Warnf(log.OrderBook, "No trades available for order: %+v", upsertResponse.OrderDetails.OrderID)
+					continue
+				}
+
+				if len(results) <= z || results[z].Trades == nil {
+					log.Debugf(log.OrderBook, "Invalid or uninitialized result for index: %d", z)
+					continue
+				}
+
+				if len(orderDetail.Trades) > len(results[z].Trades) {
+					for i := range orderDetail.Trades {
+						trade := model.Trade{
+							Price:          orderDetail.Trades[i].Price,
+							Quantity:       orderDetail.Trades[i].Amount,
+							TradeID:        orderDetail.Trades[i].TID,
+							OrderID:        orderDetail.OrderID,
+							Commision:      orderDetail.Trades[i].Fee,
+							CommisionAsset: orderDetail.Trades[i].FeeAsset,
+						}
+						if err := model.UpdateOrCreateTrade(trade.TradeID, trade); err != nil {
+							log.Errorf(log.OrderMgr, "Unable to update or create trade: %s", err)
+							continue
+						}
+					}
+
+					results[z].Status = orderDetail.Status.String()
+					if err := model.UpdateOrder(results[z].ClientOrderID, results[z]); err != nil {
+						log.Errorf(log.OrderMgr, "Unable to update order: %s", err)
+					}
+
+					m.fixGateway.UpdateOrder(orderDetail, ToOrdStatus(orderDetail.Status))
+					continue
+				}
+
 				for i := range orders {
 					if orders[i].InternalOrderID != upsertResponse.OrderDetails.InternalOrderID {
 						continue

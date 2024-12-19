@@ -42,7 +42,6 @@ type Application struct {
 	*quickfix.MessageRouter
 	execID                int
 	exchangeManager       *ExchangeManager
-	orderManager          *OrderManager
 	pairFormater          *currency.PairFormat
 	acceptor              *quickfix.Acceptor
 	settings              *quickfix.Settings
@@ -53,7 +52,7 @@ type Application struct {
 	sessions              map[string]quickfix.SessionID
 }
 
-func NewFixGateway(eventDispacher *websocketRoutineManager, exchangeManager *ExchangeManager, orderManager *OrderManager) *Application {
+func NewFixGateway(eventDispacher *websocketRoutineManager, exchangeManager *ExchangeManager) *Application {
 	app := &Application{MessageRouter: quickfix.NewMessageRouter()}
 	app.AddRoute(newordersingle.Route(app.onNewOrderSingle))
 	app.AddRoute(ordercancelrequest.Route(app.onOrderCancelRequest))
@@ -70,12 +69,16 @@ func NewFixGateway(eventDispacher *websocketRoutineManager, exchangeManager *Exc
 	}
 
 	app.exchangeManager = exchangeManager
-	app.orderManager = orderManager
 	app.execID = int(time.Now().Unix())
 	return app
 }
 
 func (a *Application) Start() error {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("Recover from this panic: %v", r)
+		}
+	}()
 	var cfgFileName string
 	filename := "fixgw.cfg"
 	execPath, _ := common.GetExecutablePath()
@@ -116,7 +119,6 @@ func (a *Application) Start() error {
 	if err != nil {
 		return fmt.Errorf("unable to start Acceptor: %s", err)
 	}
-
 	a.socketDispatcher.registerWebsocketDataHandler(a.WebsocketDataHandler, false)
 	return nil
 }
@@ -155,6 +157,11 @@ func (a *Application) FromAdmin(msg *quickfix.Message, sessionID quickfix.Sessio
 // FromApp implemented as part of Application interface, uses Router on incoming application messages
 func (a *Application) FromApp(msg *quickfix.Message, sessionID quickfix.SessionID) (reject quickfix.MessageRejectError) {
 	return a.Route(msg, sessionID)
+}
+
+func (a *Application) IsConnected(sessionIDStr string) bool {
+	_, ok := a.sessions[sessionIDStr]
+	return ok
 }
 
 func FromSide(side enum.Side) order.Side {
@@ -253,86 +260,77 @@ func (a *Application) onNewOrderSingle(msg newordersingle.NewOrderSingle, sessio
 		AssetType:     asset.Item(FromSecurityType(securityType)),
 	}
 
-	submittedOrder, e := a.orderManager.Submit(context.TODO(), submission)
+	exch, e := a.exchangeManager.GetExchangeByName(submission.Exchange)
 	if e != nil {
 		a.RejectOrderRequest(submission, e.Error())
-		return nil
 	}
-
-	// exch, e := a.exchangeManager.GetExchangeByName(submission.Exchange)
-	// if e != nil {
-	// 	a.RejectOrderRequest(submission, e.Error())
-	// }
 
 	// Checks for exchange min max limits for order amounts before order
 	// execution can occur
-	// e = exch.CheckOrderExecutionLimits(submission.AssetType,
-	// 	submission.Pair,
-	// 	submission.Price,
-	// 	submission.Amount,
-	// 	submission.Type)
-	// if e != nil {
-	// 	msg := fmt.Errorf("order manager: exchange %s unable to place order: %w",
-	// 		submission.Exchange,
-	// 		e)
-	// 	a.RejectOrderRequest(submission, msg.Error())
-	// 	return nil
-	// }
+	e = exch.CheckOrderExecutionLimits(submission.AssetType,
+		submission.Pair,
+		submission.Price,
+		submission.Amount,
+		submission.Type)
+	if e != nil {
+		msg := fmt.Errorf("order manager: exchange %s unable to place order: %w",
+			submission.Exchange,
+			e)
+		a.RejectOrderRequest(submission, msg.Error())
+		return nil
+	}
 
 	// Determines if current trading activity is turned off by the exchange for
 	// the currency pair
-	// e = exch.CanTradePair(submission.Pair, submission.AssetType)
-	// if e != nil {
-	// 	msg := fmt.Errorf("order manager: exchange %s cannot trade pair %s %s: %w",
-	// 		submission.Exchange,
-	// 		submission.Pair,
-	// 		submission.AssetType,
-	// 		e)
-	// 	a.RejectOrderRequest(submission, msg.Error())
-	// }
+	e = exch.CanTradePair(submission.Pair, submission.AssetType)
+	if e != nil {
+		msg := fmt.Errorf("order manager: exchange %s cannot trade pair %s %s: %w",
+			submission.Exchange,
+			submission.Pair,
+			submission.AssetType,
+			e)
+		a.RejectOrderRequest(submission, msg.Error())
+	}
 
-	// submittedOrder, e := exch.SubmitOrder(context.TODO(), submission)
-	// if e != nil {
-	// 	a.RejectOrderRequest(submission, e.Error())
-	// }
+	submittedOrder, e := exch.SubmitOrder(context.TODO(), submission)
+	if e != nil || submittedOrder == nil {
+		a.RejectOrderRequest(submission, e.Error())
+	}
 
 	var trades []model.Trade
-	orderIDInt, _ := strconv.ParseInt(submittedOrder.Detail.OrderID, 10, 64)
-	if len(submittedOrder.Detail.Trades) > 0 {
-		trades = make([]model.Trade, len(submittedOrder.Detail.Trades))
-		for i := range submittedOrder.Detail.Trades {
-			tradeID, _ := strconv.ParseInt(submittedOrder.Detail.Trades[i].TID, 10, 64)
+	if len(submittedOrder.Trades) > 0 {
+		trades = make([]model.Trade, len(submittedOrder.Trades))
+		for i := range submittedOrder.Trades {
 			trades[i] = model.Trade{
-				OrderID:        orderIDInt,
-				TradeID:        tradeID,
-				Price:          submittedOrder.Detail.Trades[i].Price,
-				Quantity:       submittedOrder.Detail.Trades[i].Amount,
-				Commision:      submittedOrder.Detail.Trades[i].Fee,
-				CommisionAsset: submittedOrder.Detail.Trades[i].FeeAsset,
+				OrderID:        submittedOrder.OrderID,
+				TradeID:        submittedOrder.Trades[i].TID,
+				Price:          submittedOrder.Trades[i].Price,
+				Quantity:       submittedOrder.Trades[i].Amount,
+				Commision:      submittedOrder.Trades[i].Fee,
+				CommisionAsset: submittedOrder.Trades[i].FeeAsset,
 			}
 		}
 	}
 	e = model.CreateOrder(model.Order{
-		ClientOrderID: submittedOrder.Detail.ClientOrderID,
-		OrderID:       orderIDInt,
-		Exchange:      submittedOrder.Detail.Exchange,
-		Base:          submittedOrder.Detail.Pair.Base.String(),
-		Quote:         submittedOrder.Detail.Pair.Quote.String(),
-		Side:          submittedOrder.Detail.Side.String(),
-		AssetType:     submittedOrder.Detail.AssetType.String(),
-		OrderType:     submittedOrder.Detail.Type.String(),
-		Price:         submittedOrder.Detail.Price,
-		Amount:        submittedOrder.Detail.Amount,
-		Status:        submittedOrder.Detail.Status.String(),
+		ClientOrderID: submittedOrder.ClientOrderID,
+		OrderID:       submittedOrder.OrderID,
+		SessionID:     sessionID.String(),
+		Exchange:      submittedOrder.Exchange,
+		Base:          submittedOrder.Pair.Base.String(),
+		Quote:         submittedOrder.Pair.Quote.String(),
+		Side:          submittedOrder.Side.String(),
+		AssetType:     submittedOrder.AssetType.String(),
+		OrderType:     submittedOrder.Type.String(),
+		Price:         submittedOrder.Price,
+		Amount:        submittedOrder.Amount,
+		Status:        submittedOrder.Status.String(),
 		Trades:        trades,
-		Timestamp:     submittedOrder.Detail.Date,
+		Timestamp:     submittedOrder.Date,
 	})
 	if e != nil {
 		log.Printf("Error creating order: %+v", e)
 		return nil
 	}
-	orders := model.GetOrders(&model.Order{})
-	log.Printf("Orders: %+v", orders)
 
 	return nil
 }
@@ -367,6 +365,10 @@ func (a *Application) onOrderCancelRequest(msg ordercancelrequest.OrderCancelReq
 	if err != nil {
 		return err
 	}
+	orderDB := model.GetOrderByClOrdID(orClOrdId)
+	if orderDB.OrderID == "" {
+		return quickfix.ValueIsIncorrect(tag.OrigClOrdID)
+	}
 
 	exchange, err := msg.GetSecurityExchange()
 	if err != nil {
@@ -389,7 +391,7 @@ func (a *Application) onOrderCancelRequest(msg ordercancelrequest.OrderCancelReq
 
 	request := &order.Cancel{
 		Exchange:      exchange,
-		OrderID:       orderID,
+		OrderID:       orderDB.OrderID,
 		Side:          FromSide(side),
 		Pair:          pair,
 		AssetType:     FromSecurityType(securityType),
@@ -406,6 +408,12 @@ func (a *Application) onOrderCancelRequest(msg ordercancelrequest.OrderCancelReq
 		log.Println(err)
 		a.RejectOrderRequest(request, err.Error())
 	}
+
+	orderDB.Status = order.Cancelled.String()
+	if err := model.UpdateOrder(orderDB.ClientOrderID, orderDB); err != nil {
+		log.Printf("Error updating cancelled order: %+v", err)
+	}
+
 	return nil
 }
 
@@ -439,6 +447,11 @@ func (a *Application) onOrderCancelReplaceRequest(msg ordercancelreplacerequest.
 		return err
 	}
 
+	orderDB := model.GetOrderByClOrdID(orgClOrdID)
+	if orderDB.OrderID == "" {
+		return quickfix.ValueIsIncorrect(tag.OrigClOrdID)
+	}
+
 	exchange, err := msg.GetSecurityExchange()
 	if err != nil {
 		return err
@@ -451,7 +464,7 @@ func (a *Application) onOrderCancelReplaceRequest(msg ordercancelreplacerequest.
 
 	pair, e := currency.NewPairFromString(symbol)
 	if e != nil {
-		return err
+		return quickfix.ValueIsIncorrect(tag.Symbol)
 	}
 
 	price, err := msg.GetPrice()
@@ -491,9 +504,30 @@ func (a *Application) onOrderCancelReplaceRequest(msg ordercancelreplacerequest.
 		return quickfix.ValueIsIncorrect(tag.SecurityExchange)
 	}
 
-	if _, err := exch.ModifyOrder(context.TODO(), request); err != nil {
-		log.Printf("Error when modified the order: %+v", err)
-		a.RejectOrderRequest(request, err.Error())
+	modifiedOrder, e := exch.ModifyOrder(context.TODO(), request)
+	if e != nil {
+		log.Printf("Error when modified the order: %+v", e)
+		a.RejectOrderRequest(request, e.Error())
+	}
+
+	savedOrder := model.Order{
+		ClientOrderID: modifiedOrder.ClientOrderID,
+		OrderID:       modifiedOrder.OrderID,
+		SessionID:     sessionID.String(),
+		Exchange:      modifiedOrder.Exchange,
+		Base:          modifiedOrder.Pair.Base.String(),
+		Quote:         modifiedOrder.Pair.Quote.String(),
+		Side:          modifiedOrder.Side.String(),
+		AssetType:     modifiedOrder.AssetType.String(),
+		OrderType:     modifiedOrder.Type.String(),
+		Price:         modifiedOrder.Price,
+		Amount:        modifiedOrder.Amount,
+		Status:        modifiedOrder.Status.String(),
+		Timestamp:     modifiedOrder.Date,
+	}
+
+	if e := model.UpdateOrCreateOrder(savedOrder); e != nil {
+		log.Printf("Error updating modified order: %+v", e)
 	}
 	return nil
 }

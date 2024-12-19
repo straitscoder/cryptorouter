@@ -9,6 +9,7 @@ import (
 	"runtime"
 	"time"
 
+	"github.com/quickfixgo/enum"
 	"github.com/quickfixgo/field"
 	"github.com/quickfixgo/fix42/marketdatarequest"
 	"github.com/quickfixgo/fix42/newordersingle"
@@ -192,6 +193,8 @@ func (fe *FixEngine) CancelOrder() error {
 	assetType := AssetType()
 	if orderId != nil {
 		cancelReq.SetOrderID(*orderId)
+	} else if orderId == nil && assetType == enum.SecurityType_FUTURE {
+		cancelReq.SetOrderID(string(enum.SecurityType_FUTURE))
 	} else {
 		fmt.Println("Order not found")
 		return nil
@@ -227,6 +230,8 @@ func (fe *FixEngine) ModifyOrder() error {
 	assetType := AssetType()
 	if orderId != nil {
 		modOrder.SetOrderID(*orderId)
+	} else if orderId == nil && assetType == enum.SecurityType_FUTURE {
+		modOrder.SetOrderID(string(enum.SecurityType_FUTURE))
 	} else {
 		fmt.Println("Order not found")
 		return nil

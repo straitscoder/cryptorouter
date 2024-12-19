@@ -4,7 +4,8 @@ import "time"
 
 type Order struct {
 	ClientOrderID string    `json:"clientOrderId" gorm:"primary_key"`
-	OrderID       int64     `json:"orderId" gorm:"unique"`
+	OrderID       string    `json:"orderId" gorm:"unique"`
+	SessionID     string    `json:"sessionId"`
 	Exchange      string    `json:"exchange"`
 	Base          string    `json:"base"`
 	Quote         string    `json:"quote"`
@@ -24,7 +25,7 @@ func GetOrders(cond *Order) (orders []Order) {
 }
 
 func GetUnFilledOrders(cond *Order) (orders []Order) {
-	db.Model(&Order{}).Not(map[string]interface{}{"status": []string{"FILLED", "CANCELLED"}}).Where(cond).Find(&orders)
+	db.Model(&Order{}).Not(map[string]interface{}{"status": []string{"FILLED", "CANCELLED"}}).Where(cond).Preload("Trades").Find(&orders)
 	return
 }
 
@@ -40,7 +41,7 @@ func GetOrderByClOrdID(clOrdID string) (order Order) {
 	return
 }
 
-func GetOrderByOrderID(orderID int64) (order Order) {
+func GetOrderByOrderID(orderID string) (order Order) {
 	db.Model(&Order{}).Where(&Order{OrderID: orderID}).Preload("Trades").First(&order)
 	return
 }
@@ -50,4 +51,13 @@ func UpdateOrder(clOrdId string, order Order) error {
 		return err
 	}
 	return nil
+}
+
+func UpdateOrCreateOrder(order Order) error {
+	existingOrder := GetOrderByOrderID(order.OrderID)
+	if existingOrder.ClientOrderID == "" {
+		return CreateOrder(order)
+	}
+
+	return UpdateOrder(existingOrder.ClientOrderID, order)
 }

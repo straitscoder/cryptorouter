@@ -529,7 +529,6 @@ func (bi *Binanceus) GetHistoricTrades(ctx context.Context, p currency.Pair, ass
 
 // SubmitOrder submits a new order
 func (bi *Binanceus) SubmitOrder(ctx context.Context, s *order.Submit) (*order.SubmitResponse, error) {
-	var submitOrderResponse order.SubmitResponse
 	var timeInForce RequestParamsTimeForceType
 	var sideType string
 	err := s.Validate(bi.GetTradingRequirements())
@@ -567,23 +566,38 @@ func (bi *Binanceus) SubmitOrder(ctx context.Context, s *order.Submit) (*order.S
 	if err != nil {
 		return nil, err
 	}
+
+	var orderID string
 	if response.OrderID > 0 {
-		submitOrderResponse.OrderID = strconv.FormatInt(response.OrderID, 10)
-	}
-	if response.ExecutedQty == response.OrigQty {
-		submitOrderResponse.Status = order.Filled
-	}
-	for i := range response.Fills {
-		submitOrderResponse.Trades = append(submitOrderResponse.Trades, order.TradeHistory{
-			Price:    response.Fills[i].Price,
-			Amount:   response.Fills[i].Qty,
-			Fee:      response.Fills[i].Commission,
-			FeeAsset: response.Fills[i].CommissionAsset,
-			Exchange: bi.Name,
-		})
+		orderID = strconv.FormatInt(response.OrderID, 10)
 	}
 
-	return &submitOrderResponse, nil
+	result, err := s.DeriveSubmitResponse(orderID)
+	if err != nil {
+		return nil, err
+	}
+
+	var status order.Status
+	if response.ExecutedQty == response.OrigQty {
+		status = order.Filled
+		result.Status = status
+	}
+
+	var trades []order.TradeHistory
+	if len(response.Fills) > 0 {
+		for i := range response.Fills {
+			trades = append(trades, order.TradeHistory{
+				Price:    response.Fills[i].Price,
+				Amount:   response.Fills[i].Qty,
+				Fee:      response.Fills[i].Commission,
+				FeeAsset: response.Fills[i].CommissionAsset,
+				Exchange: bi.Name,
+			})
+		}
+	}
+
+	result.Trades = trades
+	return result, nil
 }
 
 // ModifyOrder will allow of changing orderbook placement and limit to
@@ -592,8 +606,9 @@ func (b *Binanceus) ModifyOrder(ctx context.Context, m *order.Modify) (*order.Mo
 	if err := m.Validate(); err != nil {
 		return nil, err
 	}
-	status := order.New
+
 	var trades []order.TradeHistory
+	var cancelReplaceResponse CancelReplaceOrderResponse
 
 	switch m.AssetType {
 	case asset.Spot:
@@ -622,7 +637,6 @@ func (b *Binanceus) ModifyOrder(ctx context.Context, m *order.Modify) (*order.Mo
 			return nil, fmt.Errorf("%w %v", order.ErrUnsupportedOrderType, m.Type)
 		}
 
-		var cancelReplaceResponse CancelReplaceOrderResponse
 		err := b.CancelReplaceOrder(
 			ctx,
 			&CancelReplaceOrderRequest{
@@ -642,7 +656,6 @@ func (b *Binanceus) ModifyOrder(ctx context.Context, m *order.Modify) (*order.Mo
 		if err != nil {
 			return nil, err
 		}
-		log.Debugf(log.OrderMgr, "Cancel Replace Response: %+v", cancelReplaceResponse)
 
 		trades = make([]order.TradeHistory, len(cancelReplaceResponse.NewOrderResponse.Fills))
 		for i := range cancelReplaceResponse.NewOrderResponse.Fills {
@@ -658,13 +671,26 @@ func (b *Binanceus) ModifyOrder(ctx context.Context, m *order.Modify) (*order.Mo
 		return nil, common.ErrFunctionNotSupported
 	}
 
-	resp, err := m.DeriveModifyResponse()
-	if err != nil {
-		return nil, err
+	pair, _ := currency.NewPairFromString(cancelReplaceResponse.NewOrderResponse.Symbol)
+	orderType, _ := order.StringToOrderType(cancelReplaceResponse.NewOrderResponse.Type)
+	side, _ := order.StringToOrderSide(cancelReplaceResponse.NewOrderResponse.Side)
+	respStatus, _ := order.StringToOrderStatus(cancelReplaceResponse.NewOrderResponse.Status)
+	resp := order.ModifyResponse{
+		Exchange:      b.Name,
+		OrderID:       strconv.FormatInt(cancelReplaceResponse.NewOrderResponse.OrderID, 10),
+		ClientOrderID: cancelReplaceResponse.NewOrderResponse.ClientOrderID,
+		Pair:          pair,
+		Type:          orderType,
+		Side:          side,
+		Status:        respStatus,
+		AssetType:     asset.Spot,
+		Price:         cancelReplaceResponse.NewOrderResponse.Price,
+		Amount:        cancelReplaceResponse.NewOrderResponse.OrigQty,
+		Date:          time.UnixMilli(cancelReplaceResponse.NewOrderResponse.TransactionTime),
+		LastUpdated:   time.Now(),
 	}
 
-	resp.Status = status
-	return resp, nil
+	return &resp, nil
 }
 
 // CancelOrder cancels an order by its corresponding ID number
@@ -805,6 +831,7 @@ func (bi *Binanceus) GetOrderInfo(ctx context.Context, orderID string, pair curr
 		ExecutedAmount: resp.ExecutedQty,
 		Date:           resp.Time,
 		LastUpdated:    resp.UpdateTime,
+		Trades:         trades,
 	}, nil
 }
 
