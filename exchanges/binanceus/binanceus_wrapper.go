@@ -946,10 +946,73 @@ func (bi *Binanceus) GetActiveOrders(ctx context.Context, getOrdersRequest *orde
 }
 
 // GetOrderHistory retrieves account order information Can Limit response to specific order status
-func (bi *Binanceus) GetOrderHistory(_ context.Context, _ *order.MultiOrderRequest) (order.FilteredOrders, error) {
+func (bi *Binanceus) GetOrderHistory(ctx context.Context, req *order.MultiOrderRequest) (order.FilteredOrders, error) {
 	// An endpoint like /api/v3/allOrders does not exist in the binance us
-	// so This end point is left unimplemented
-	return nil, common.ErrFunctionNotSupported
+	// so it's implemented using the same method as binance global
+	err := req.Validate()
+	if err != nil {
+		return nil, err
+	}
+	if len(req.Pairs) == 0 {
+		return nil, errors.New("at least one currency is required to fetch order history")
+	}
+	var orders []order.Detail
+	for x := range req.Pairs {
+		resp, err := bi.AllOrders(ctx,
+			req.Pairs[x],
+			"",
+			"1000")
+		if err != nil {
+			return nil, err
+		}
+
+		for i := range resp {
+			var side order.Side
+			side, err = order.StringToOrderSide(resp[i].Side)
+			if err != nil {
+				log.Errorf(log.ExchangeSys, "%s %v", bi.Name, err)
+			}
+			var orderType order.Type
+			orderType, err = order.StringToOrderType(resp[i].Type)
+			if err != nil {
+				log.Errorf(log.ExchangeSys, "%s %v", bi.Name, err)
+			}
+			orderStatus, err := order.StringToOrderStatus(resp[i].Status)
+			if err != nil {
+				log.Errorf(log.ExchangeSys, "%s %v", bi.Name, err)
+			}
+			// New orders are covered in GetOpenOrders
+			if orderStatus == order.New {
+				continue
+			}
+
+			var cost float64
+			// For some historical orders cummulativeQuoteQty will be < 0,
+			// meaning the data is not available at this time.
+			if resp[i].CummulativeQuoteQty > 0 {
+				cost = resp[i].CummulativeQuoteQty
+			}
+			detail := order.Detail{
+				Amount:          resp[i].OrigQty,
+				ExecutedAmount:  resp[i].ExecutedQty,
+				RemainingAmount: resp[i].OrigQty - resp[i].ExecutedQty,
+				Cost:            cost,
+				CostAsset:       req.Pairs[x].Quote,
+				Date:            time.UnixMilli(resp[i].Time),
+				LastUpdated:     time.UnixMilli(resp[i].UpdateTime),
+				Exchange:        bi.Name,
+				OrderID:         strconv.FormatInt(resp[i].OrderID, 10),
+				Side:            side,
+				Type:            orderType,
+				Price:           resp[i].Price,
+				Pair:            req.Pairs[x],
+				Status:          orderStatus,
+			}
+			detail.InferCostsAndTimes()
+			orders = append(orders, detail)
+		}
+	}
+	return req.Filter(bi.Name, orders), nil
 }
 
 // GetFeeByType returns an estimate of fee based on the type of transaction

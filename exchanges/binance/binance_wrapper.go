@@ -1318,6 +1318,15 @@ func (b *Binance) GetOrderInfo(ctx context.Context, orderID string, pair currenc
 		if len(tradeHistoryResponse) > 0 {
 			trades = make([]order.TradeHistory, len(tradeHistoryResponse))
 			var total float64
+			var side order.Side
+			switch strings.ToUpper(resp.Side) {
+			case "BUY":
+				side = order.Buy
+			case "SELL":
+				side = order.Sell
+			default:
+				side = order.AnySide
+			}
 			for i := range tradeHistoryResponse {
 				total += tradeHistoryResponse[i].Qty
 				trades[i] = order.TradeHistory{
@@ -1327,6 +1336,7 @@ func (b *Binance) GetOrderInfo(ctx context.Context, orderID string, pair currenc
 					Exchange:  b.Name,
 					TID:       strconv.FormatInt(tradeHistoryResponse[i].ID, 10),
 					Type:      orderType,
+					Side:      side,
 					Timestamp: time.UnixMilli(tradeHistoryResponse[i].Time),
 					IsMaker:   tradeHistoryResponse[i].IsMaker,
 					FeeAsset:  tradeHistoryResponse[i].CommissionAsset,
@@ -1403,8 +1413,17 @@ func (b *Binance) GetOrderInfo(ctx context.Context, orderID string, pair currenc
 
 		if len(tradesHistoryResponse) > 0 {
 			var total float64
+			var side order.Side
 			trades = make([]order.TradeHistory, len(tradesHistoryResponse))
 			for i := range tradesHistoryResponse {
+				switch strings.ToUpper(tradesHistoryResponse[i].Side) {
+				case "BUY":
+					side = order.Buy
+				case "SELL":
+					side = order.Sell
+				default:
+					side = order.AnySide
+				}
 				total += tradesHistoryResponse[i].Qty
 				trades[i] = order.TradeHistory{
 					Price:     tradesHistoryResponse[i].Price,
@@ -1412,7 +1431,7 @@ func (b *Binance) GetOrderInfo(ctx context.Context, orderID string, pair currenc
 					Fee:       tradesHistoryResponse[i].Commission,
 					Exchange:  b.Name,
 					TID:       strconv.FormatInt(tradesHistoryResponse[i].ID, 10),
-					Side:      orderVars.Side,
+					Side:      side,
 					Type:      orderVars.OrderType,
 					Timestamp: time.UnixMilli(tradesHistoryResponse[i].Time),
 					IsMaker:   tradesHistoryResponse[i].Maker,

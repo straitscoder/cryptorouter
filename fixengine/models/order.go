@@ -9,6 +9,7 @@ type Order struct {
 	Exchange      string    `json:"exchange"`
 	Base          string    `json:"base"`
 	Quote         string    `json:"quote"`
+	Delimiter     string    `json:"delimiter"`
 	Side          string    `json:"side"`
 	AssetType     string    `json:"assetType"`
 	OrderType     string    `json:"orderType"`

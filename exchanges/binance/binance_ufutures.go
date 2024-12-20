@@ -692,6 +692,9 @@ func (b *Binance) UFuturesNewOrder(ctx context.Context, data *UFuturesNewOrderRe
 	if err := b.SendAuthHTTPRequest(ctx, exchange.RestUSDTMargined, http.MethodPost, ufuturesOrder, params, uFuturesOrdersDefaultRate, &resp); err != nil {
 		return resp, err
 	}
+	if resp.OrderID <= 0 {
+		return resp, errors.New("invalid orderID")
+	}
 	return resp, nil
 }
 

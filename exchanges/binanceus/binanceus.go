@@ -72,6 +72,7 @@ const (
 	testCreateNeworder     = "/api/v3/order/test" // Method: POST
 	orderRequest           = "/api/v3/order"      // Used in Create {Method: POST}, Cancel {DELETE}, and get{GET} OrderRequest
 	openOrders             = "/api/v3/openOrders"
+	allOrders              = "/api/v3/allOrders"
 	myTrades               = "/api/v3/myTrades"
 	cancelReplaceOrder     = "/api/v3/order/cancelReplace"
 	marginAccountTradeList = "/sapi/v1/margin/myTrades"
@@ -2064,5 +2065,32 @@ func (bi *Binanceus) GetAccountTradeList(ctx context.Context, symbol currency.Pa
 		return resp, err
 	}
 
+	return resp, nil
+}
+
+func (bi *Binanceus) AllOrders(ctx context.Context, symbol currency.Pair, orderID, limit string) ([]QueryOrderData, error) {
+	var resp []QueryOrderData
+
+	params := url.Values{}
+	symbolValue, err := bi.FormatSymbol(symbol, asset.Spot)
+	if err != nil {
+		return resp, err
+	}
+	params.Set("symbol", symbolValue)
+	if orderID != "" {
+		params.Set("orderId", orderID)
+	}
+	if limit != "" {
+		params.Set("limit", limit)
+	}
+	if err := bi.SendAuthHTTPRequest(ctx,
+		exchange.RestSpotSupplementary,
+		http.MethodGet,
+		allOrders,
+		params,
+		spotAllOrdersRate,
+		&resp); err != nil {
+		return resp, err
+	}
 	return resp, nil
 }

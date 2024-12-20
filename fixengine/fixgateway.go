@@ -259,11 +259,12 @@ func (a *Application) onNewOrderSingle(msg newordersingle.NewOrderSingle, sessio
 		Exchange:      exchange,
 		AssetType:     asset.Item(FromSecurityType(securityType)),
 	}
-
+	log.Printf("order submission: %+v", submission)
 	exch, e := a.exchangeManager.GetExchangeByName(submission.Exchange)
 	if e != nil {
 		a.RejectOrderRequest(submission, e.Error())
 	}
+	log.Printf("Exchange: %s", exch.GetName())
 
 	// Checks for exchange min max limits for order amounts before order
 	// execution can occur
@@ -292,46 +293,11 @@ func (a *Application) onNewOrderSingle(msg newordersingle.NewOrderSingle, sessio
 		a.RejectOrderRequest(submission, msg.Error())
 	}
 
-	submittedOrder, e := exch.SubmitOrder(context.TODO(), submission)
-	if e != nil || submittedOrder == nil {
+	submittedOrder, e := exch.SubmitOrder(context.Background(), submission)
+	if e != nil {
 		a.RejectOrderRequest(submission, e.Error())
 	}
-
-	var trades []model.Trade
-	if len(submittedOrder.Trades) > 0 {
-		trades = make([]model.Trade, len(submittedOrder.Trades))
-		for i := range submittedOrder.Trades {
-			trades[i] = model.Trade{
-				OrderID:        submittedOrder.OrderID,
-				TradeID:        submittedOrder.Trades[i].TID,
-				Price:          submittedOrder.Trades[i].Price,
-				Quantity:       submittedOrder.Trades[i].Amount,
-				Commision:      submittedOrder.Trades[i].Fee,
-				CommisionAsset: submittedOrder.Trades[i].FeeAsset,
-			}
-		}
-	}
-	e = model.CreateOrder(model.Order{
-		ClientOrderID: submittedOrder.ClientOrderID,
-		OrderID:       submittedOrder.OrderID,
-		SessionID:     sessionID.String(),
-		Exchange:      submittedOrder.Exchange,
-		Base:          submittedOrder.Pair.Base.String(),
-		Quote:         submittedOrder.Pair.Quote.String(),
-		Side:          submittedOrder.Side.String(),
-		AssetType:     submittedOrder.AssetType.String(),
-		OrderType:     submittedOrder.Type.String(),
-		Price:         submittedOrder.Price,
-		Amount:        submittedOrder.Amount,
-		Status:        submittedOrder.Status.String(),
-		Trades:        trades,
-		Timestamp:     submittedOrder.Date,
-	})
-	if e != nil {
-		log.Printf("Error creating order: %+v", e)
-		return nil
-	}
-
+	log.Printf("Submitted order: %+v", submittedOrder)
 	return nil
 }
 
@@ -409,7 +375,6 @@ func (a *Application) onOrderCancelRequest(msg ordercancelrequest.OrderCancelReq
 		a.RejectOrderRequest(request, err.Error())
 	}
 
-	orderDB.Status = order.Cancelled.String()
 	if err := model.UpdateOrder(orderDB.ClientOrderID, orderDB); err != nil {
 		log.Printf("Error updating cancelled order: %+v", err)
 	}
@@ -511,19 +476,17 @@ func (a *Application) onOrderCancelReplaceRequest(msg ordercancelreplacerequest.
 	}
 
 	savedOrder := model.Order{
-		ClientOrderID: modifiedOrder.ClientOrderID,
-		OrderID:       modifiedOrder.OrderID,
-		SessionID:     sessionID.String(),
-		Exchange:      modifiedOrder.Exchange,
-		Base:          modifiedOrder.Pair.Base.String(),
-		Quote:         modifiedOrder.Pair.Quote.String(),
-		Side:          modifiedOrder.Side.String(),
-		AssetType:     modifiedOrder.AssetType.String(),
-		OrderType:     modifiedOrder.Type.String(),
-		Price:         modifiedOrder.Price,
-		Amount:        modifiedOrder.Amount,
-		Status:        modifiedOrder.Status.String(),
-		Timestamp:     modifiedOrder.Date,
+		OrderID:   modifiedOrder.OrderID,
+		SessionID: sessionID.String(),
+		Exchange:  modifiedOrder.Exchange,
+		Base:      modifiedOrder.Pair.Base.String(),
+		Quote:     modifiedOrder.Pair.Quote.String(),
+		Side:      modifiedOrder.Side.String(),
+		AssetType: modifiedOrder.AssetType.String(),
+		OrderType: modifiedOrder.Type.String(),
+		Price:     modifiedOrder.Price,
+		Amount:    modifiedOrder.Amount,
+		Timestamp: modifiedOrder.Date,
 	}
 
 	if e := model.UpdateOrCreateOrder(savedOrder); e != nil {
