@@ -20,8 +20,6 @@ import (
 	"github.com/thrasher-corp/gocryptotrader/engine"
 	exchange "github.com/thrasher-corp/gocryptotrader/exchanges"
 	"github.com/thrasher-corp/gocryptotrader/exchanges/asset"
-	"github.com/thrasher-corp/gocryptotrader/exchanges/order"
-	model "github.com/thrasher-corp/gocryptotrader/fixengine/models"
 	gctlog "github.com/thrasher-corp/gocryptotrader/log"
 	"github.com/thrasher-corp/gocryptotrader/utils"
 )
@@ -385,7 +383,6 @@ func (fixengine *FixEngine) Start() error {
 			gctlog.Errorf(gctlog.Global, "failed to start websocket routine manager. Err: %s", err)
 		}
 	}
-
 	fixengine.fixgateway = NewFixGateway(fixengine.websocketRoutineManager, fixengine.ExchangeManager)
 	orderManager, err := SetupOrderManager(fixengine.ExchangeManager, fixengine.communicationManager, *fixengine.fixgateway, &fixengine.ServicesWG, &fixengine.Config.OrderManager)
 	if err != nil {
@@ -395,6 +392,7 @@ func (fixengine *FixEngine) Start() error {
 		gctlog.Errorf(gctlog.Global, "Unable to start order manager. Err: %s", err)
 	}
 	fixengine.OrderManager = orderManager
+
 	if err := fixengine.fixgateway.Start(); err != nil {
 		gctlog.Errorf(gctlog.Global, "Unable to start fix gateway. Err: %s", err)
 	}
@@ -662,136 +660,4 @@ func (fixengine *FixEngine) SetupExchanges() error {
 // of the currency pair syncer management system.
 func (fixengine *FixEngine) WaitForInitialCurrencySync() error {
 	return fixengine.currencyPairSyncer.WaitForInitialSync()
-}
-
-func (fixEngine *FixEngine) upsertOrder() {
-	exchanges, err := fixEngine.ExchangeManager.GetExchanges()
-	if err != nil {
-		gctlog.Errorf(gctlog.ExchangeSys, "Unable to get exchanges: %s", err)
-		return
-	}
-
-	for x := range exchanges {
-		if !exchanges[x].IsRESTAuthenticationSupported() {
-			continue
-		}
-
-		enabledAssets := exchanges[x].GetAssetTypes(true)
-		for y := range enabledAssets {
-			pairs, err := exchanges[x].GetEnabledPairs(enabledAssets[y])
-			if err != nil {
-				gctlog.Errorf(gctlog.ExchangeSys, "Unable to get enabled pairs: %s", err)
-				continue
-			}
-
-			if len(pairs) == 0 {
-				continue
-			}
-
-			orders := model.GetUnFilledOrders(&model.Order{
-				Exchange:  strings.ToLower(exchanges[x].GetName()),
-				AssetType: strings.ToLower(enabledAssets[y].String()),
-			})
-
-			if len(orders) == 0 {
-				continue
-			}
-
-			for z := range orders {
-				assetType, err := asset.New(orders[z].AssetType)
-				if err != nil {
-					gctlog.Errorf(gctlog.ExchangeSys, "Unable to get asset type: %s", err)
-					gctlog.Debugf(gctlog.ExchangeSys, "From this order: %+v", orders[z])
-					continue
-				}
-				side, err := order.StringToOrderSide(orders[z].Side)
-				if err != nil {
-					gctlog.Errorf(gctlog.ExchangeSys, "Unable to get order side: %s", err)
-					gctlog.Debugf(gctlog.ExchangeSys, "From this order: %+v", orders[z])
-					continue
-				}
-				orderType, err := order.StringToOrderType(orders[z].OrderType)
-				if err != nil {
-					gctlog.Errorf(gctlog.ExchangeSys, "Unable to get order type: %s", err)
-					gctlog.Debugf(gctlog.ExchangeSys, "From this order: %+v", orders[z])
-					continue
-				}
-				status, err := order.StringToOrderStatus(orders[z].Status)
-				if err != nil {
-					gctlog.Errorf(gctlog.ExchangeSys, "Unable to get order status: %s", err)
-					gctlog.Debugf(gctlog.ExchangeSys, "From this order: %+v", orders[z])
-					continue
-				}
-				pair, err := currency.NewPairFromStrings(orders[z].Base, orders[z].Quote)
-				if err != nil {
-					gctlog.Errorf(gctlog.ExchangeSys, "Unable to get pair: %s", err)
-					gctlog.Debugf(gctlog.ExchangeSys, "From this order: %+v", orders[z])
-					continue
-				}
-				req := order.Detail{
-					Price:         orders[z].Price,
-					Amount:        orders[z].Amount,
-					OrderID:       orders[z].OrderID,
-					Exchange:      exchanges[x].GetName(),
-					ClientOrderID: orders[z].ClientOrderID,
-					AssetType:     assetType,
-					Side:          side,
-					Type:          orderType,
-					Pair:          pair,
-					Status:        status,
-					Date:          orders[z].Timestamp,
-				}
-				upsertResponse, err := fixEngine.OrderManager.UpsertOrder(&req)
-				if err != nil {
-					gctlog.Errorf(gctlog.ExchangeSys, "Unable to upsert order: %s", err)
-					continue
-				}
-
-				orderDetail, err := exchanges[x].GetOrderInfo(context.TODO(), upsertResponse.OrderDetails.OrderID, upsertResponse.OrderDetails.Pair, upsertResponse.OrderDetails.AssetType)
-				if err != nil {
-					gctlog.Errorf(gctlog.ExchangeSys, "Unable to get trade history: %+v", err)
-					continue
-				}
-
-				if len(orderDetail.Trades) > len(orders[z].Trades) {
-					for i := range orderDetail.Trades {
-						trade := model.Trade{
-							Price:          orderDetail.Trades[i].Price,
-							Quantity:       orderDetail.Trades[i].Amount,
-							TradeID:        orderDetail.Trades[i].TID,
-							OrderID:        orderDetail.OrderID,
-							Commision:      orderDetail.Trades[i].Fee,
-							CommisionAsset: orderDetail.Trades[i].FeeAsset,
-						}
-						if err := model.UpdateOrCreateTrade(trade.TradeID, trade); err != nil {
-							gctlog.Errorf(gctlog.ExchangeSys, "Unable to update or create trade: %s", err)
-							continue
-						}
-					}
-
-					orders[z].Status = orderDetail.Status.String()
-					if err := model.UpdateOrder(orders[z].ClientOrderID, orders[z]); err != nil {
-						gctlog.Errorf(gctlog.ExchangeSys, "Unable to update order: %s", err)
-					}
-
-					fixEngine.fixgateway.UpdateOrder(orderDetail, ToOrdStatus(orderDetail.Status))
-					continue
-				}
-			}
-		}
-	}
-}
-
-func (fixEngine *FixEngine) StartUpsertOrder() {
-	gctlog.Debugln(gctlog.ExchangeSys, "Starting upsert order routine")
-	fixEngine.upsertOrder()
-	for {
-		select {
-		case <-fixEngine.Settings.Shutdown:
-			gctlog.Debugln(gctlog.ExchangeSys, "Shutting down upsert order routine")
-			return
-		case <-time.After(orderManagerInterval):
-			go fixEngine.upsertOrder()
-		}
-	}
 }

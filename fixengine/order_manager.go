@@ -835,6 +835,12 @@ func (m *OrderManager) processOrders() {
 					}
 
 					existingOrder.Status = updatedOrder.Status.String()
+					if existingOrder.Price != updatedOrder.Price {
+						existingOrder.Price = updatedOrder.Price
+					}
+					if existingOrder.Amount != updatedOrder.Amount {
+						existingOrder.Amount = updatedOrder.Amount
+					}
 
 					err := model.UpdateOrder(existingOrder.ClientOrderID, existingOrder)
 					if err != nil {
@@ -847,6 +853,12 @@ func (m *OrderManager) processOrders() {
 				} else {
 					if updatedOrder.Status.String() != existingOrder.Status {
 						existingOrder.Status = updatedOrder.Status.String()
+						if existingOrder.Price != updatedOrder.Price {
+							existingOrder.Price = updatedOrder.Price
+						}
+						if existingOrder.Amount != updatedOrder.Amount {
+							existingOrder.Amount = updatedOrder.Amount
+						}
 						err := model.UpdateOrder(existingOrder.ClientOrderID, existingOrder)
 						if err != nil {
 							log.Errorf(log.OrderMgr, "Unable to update order: %s", err)

@@ -801,11 +801,21 @@ func (bi *Binanceus) GetOrderInfo(ctx context.Context, orderID string, pair curr
 		trades = make([]order.TradeHistory, len(tradeHistoryResponse))
 		var total float64
 		for i := range tradeHistoryResponse {
+			var side order.Side
+			switch orderSide {
+			case order.Buy:
+				side = order.Sell
+			case order.Sell:
+				side = order.Buy
+			default:
+				side = order.UnknownSide
+			}
 			total += tradeHistoryResponse[i].Qty
 			trades[i] = order.TradeHistory{
 				Price:     tradeHistoryResponse[i].Price,
 				Amount:    tradeHistoryResponse[i].Qty,
 				Fee:       tradeHistoryResponse[i].Commission,
+				Side:      side,
 				Exchange:  bi.Name,
 				TID:       strconv.FormatInt(tradeHistoryResponse[i].ID, 10),
 				Type:      orderType,

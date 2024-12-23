@@ -291,6 +291,87 @@ func (b *Binance) wsHandleData(respRaw []byte) error {
 			}
 			b.Websocket.DataHandler <- data
 			return nil
+		case "ORDER_TRADE_UPDATE":
+			var orderTradeUpdate wsOrderTradeUpdate
+			err = json.Unmarshal(respRaw, &orderTradeUpdate)
+			if err != nil {
+				return fmt.Errorf("%v - Could not convert to wsOrderTradeUpdate structure %s",
+					b.Name,
+					err)
+			}
+
+			pair, assetAType, err := b.GetRequestFormattedPairAndAssetType(orderTradeUpdate.Data.Data.Symbol)
+			if err != nil {
+				return err
+			}
+			side, err := order.StringToOrderSide(orderTradeUpdate.Data.Data.Side)
+			if err != nil {
+				return err
+			}
+			var avgPrice float64
+			if orderTradeUpdate.Data.Data.AveragePrice == 0 {
+				avgPrice = orderTradeUpdate.Data.Data.LastExecutedPrice
+			} else {
+				avgPrice = orderTradeUpdate.Data.Data.AveragePrice
+			}
+			orderType, err := order.StringToOrderType(orderTradeUpdate.Data.Data.OrderType)
+			if err != nil {
+				return err
+			}
+			status, err := order.StringToOrderStatus(orderTradeUpdate.Data.Data.OrderStatus)
+			if err != nil {
+				return err
+			}
+			orderID := strconv.FormatInt(orderTradeUpdate.Data.Data.OrderID, 10)
+			remainingAmout := orderTradeUpdate.Data.Data.Quantity - orderTradeUpdate.Data.Data.CumulativeFilledQuantity
+			trades := make([]order.TradeHistory, 1)
+			var tradeSide order.Side
+			switch side {
+			case order.Buy:
+				tradeSide = order.Sell
+			case order.Sell:
+				tradeSide = order.Buy
+			default:
+				tradeSide = order.UnknownSide
+			}
+			tid := strconv.FormatInt(orderTradeUpdate.Data.Data.TradeID, 10)
+			trade := &order.TradeHistory{
+				Price:     orderTradeUpdate.Data.Data.LastExecutedPrice,
+				Amount:    orderTradeUpdate.Data.Data.LastExecutedQuantity,
+				FeeAsset:  orderTradeUpdate.Data.Data.CommissionAsset,
+				Fee:       orderTradeUpdate.Data.Data.Commission,
+				Side:      tradeSide,
+				TID:       tid,
+				Type:      orderType,
+				Exchange:  b.Name,
+				Total:     orderTradeUpdate.Data.Data.CumulativeFilledQuantity,
+				Timestamp: time.UnixMilli(orderTradeUpdate.Data.Data.TransactionTime),
+				IsMaker:   orderTradeUpdate.Data.Data.IsMaker,
+			}
+			trades[0] = *trade
+
+			orderDetail := &order.Detail{
+				Date:                 time.UnixMilli(orderTradeUpdate.Data.TransactionTime),
+				LastUpdated:          time.UnixMilli(orderTradeUpdate.Data.EventTime),
+				Pair:                 pair,
+				AssetType:            assetAType,
+				ClientOrderID:        orderTradeUpdate.Data.Data.ClientOrderID,
+				Side:                 side,
+				Type:                 orderType,
+				Amount:               orderTradeUpdate.Data.Data.Quantity,
+				Price:                orderTradeUpdate.Data.Data.Price,
+				AverageExecutedPrice: avgPrice,
+				TriggerPrice:         orderTradeUpdate.Data.Data.StopPrice,
+				Status:               status,
+				OrderID:              orderID,
+				ExecutedAmount:       orderTradeUpdate.Data.Data.CumulativeFilledQuantity,
+				Trades:               trades,
+				ReduceOnly:           orderTradeUpdate.Data.Data.IsReduceOnly,
+				RemainingAmount:      remainingAmout,
+				Exchange:             b.Name,
+			}
+			b.Websocket.DataHandler <- orderDetail
+			return nil
 		}
 	}
 
@@ -414,6 +495,7 @@ func (b *Binance) wsHandleData(respRaw []byte) error {
 				err)
 		}
 		return nil
+
 	default:
 		return fmt.Errorf("%s %s %s", b.Name, stream.UnhandledMessage, string(respRaw))
 	}
