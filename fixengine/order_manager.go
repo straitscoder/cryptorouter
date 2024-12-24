@@ -708,6 +708,10 @@ func (m *OrderManager) processOrders() {
 		return
 	}
 	defer atomic.StoreInt32(&m.processingOrders, 0)
+	if len(m.fixGateway.sessions) == 0 {
+		log.Debugf(log.OrderMgr, "No client connected. Skipping order processing.")
+		return
+	}
 	exchanges, err := m.orderStore.exchangeManager.GetExchanges()
 	if err != nil {
 		log.Errorf(log.OrderMgr, "order manager cannot get exchanges: %v", err)
@@ -725,12 +729,12 @@ func (m *OrderManager) processOrders() {
 		}
 		enabledAssets := exchanges[x].GetAssetTypes(true)
 		for y := range enabledAssets {
-			filter := &order.Filter{Exchange: exchanges[x].GetName(), Status: order.AnyStatus}
-			orders, err := m.orderStore.getFilteredOrders(filter)
-			if err != nil {
-				log.Errorf(log.OrderMgr, "Unable to get filtered orders: %s", err)
-				continue
-			}
+			// filter := &order.Filter{Exchange: exchanges[x].GetName(), Status: order.AnyStatus}
+			// orders, err := m.orderStore.getFilteredOrders(filter)
+			// if err != nil {
+			// 	log.Errorf(log.OrderMgr, "Unable to get filtered orders: %s", err)
+			// 	continue
+			// }
 			pairs, err := exchanges[x].GetEnabledPairs(enabledAssets[y])
 			if err != nil {
 				log.Errorf(log.OrderMgr, "Unable to get enabled pairs: %s", err)
@@ -741,8 +745,7 @@ func (m *OrderManager) processOrders() {
 				continue
 			}
 
-			order.FilterOrdersByPairs(&orders, pairs)
-
+			// order.FilterOrdersByPairs(&orders, pairs)
 			exchangeOrders, err := exchanges[x].GetOrderHistory(context.TODO(), &order.MultiOrderRequest{
 				AssetType: enabledAssets[y],
 				Pairs:     pairs,
@@ -812,7 +815,7 @@ func (m *OrderManager) processOrders() {
 						continue
 					}
 
-					m.fixGateway.UpdateOrder(updatedOrder, ToOrdStatus(updatedOrder.Status))
+					m.fixGateway.UpdateOrder(updatedOrder, ToOrdStatus(updatedOrder.Status), "Create order from order manager")
 					continue
 
 				} else if len(existingOrder.Trades) != len(updatedOrder.Trades) {
@@ -834,12 +837,21 @@ func (m *OrderManager) processOrders() {
 						}
 					}
 
-					existingOrder.Status = updatedOrder.Status.String()
 					if existingOrder.Price != updatedOrder.Price {
 						existingOrder.Price = updatedOrder.Price
 					}
 					if existingOrder.Amount != updatedOrder.Amount {
 						existingOrder.Amount = updatedOrder.Amount
+					}
+					if updatedOrder.Status.String() != existingOrder.Status {
+						existingOrder.Status = updatedOrder.Status.String()
+						err := model.UpdateOrder(existingOrder.ClientOrderID, existingOrder)
+						if err != nil {
+							log.Errorf(log.OrderMgr, "Unable to update order: %s", err)
+							continue
+						}
+						m.fixGateway.UpdateOrder(updatedOrder, ToOrdStatus(updatedOrder.Status), "Update order from order manager")
+						continue
 					}
 
 					err := model.UpdateOrder(existingOrder.ClientOrderID, existingOrder)
@@ -848,7 +860,6 @@ func (m *OrderManager) processOrders() {
 						continue
 					}
 
-					m.fixGateway.UpdateOrder(updatedOrder, ToOrdStatus(updatedOrder.Status))
 					continue
 				} else {
 					if updatedOrder.Status.String() != existingOrder.Status {
@@ -864,67 +875,68 @@ func (m *OrderManager) processOrders() {
 							log.Errorf(log.OrderMgr, "Unable to update order: %s", err)
 							continue
 						}
-						m.fixGateway.UpdateOrder(updatedOrder, ToOrdStatus(updatedOrder.Status))
+						log.Debugf(log.OrderMgr, "repeated update: %s = %s", updatedOrder.Status.String(), existingOrder.Status)
+						m.fixGateway.UpdateOrder(updatedOrder, ToOrdStatus(updatedOrder.Status), "Update order from order manager")
 					}
 
-					upsertResponse, err := m.UpsertOrder(updatedOrder)
-					if err != nil {
-						log.Errorf(log.OrderMgr, "Unable to upsert order: %s", err)
-						continue
-					}
+					// _, err := m.UpsertOrder(updatedOrder)
+					// if err != nil {
+					// 	log.Errorf(log.OrderMgr, "Unable to upsert order: %s", err)
+					// 	continue
+					// }
 
-					for i := range orders {
-						if orders[i].InternalOrderID != upsertResponse.OrderDetails.InternalOrderID {
-							continue
-						}
-						orders[i] = orders[len(orders)-1]
-						orders = orders[:len(orders)-1]
-						break
-					}
+					// for i := range orders {
+					// 	if orders[i].InternalOrderID != upsertResponse.OrderDetails.InternalOrderID {
+					// 		continue
+					// 	}
+					// 	orders[i] = orders[len(orders)-1]
+					// 	orders = orders[:len(orders)-1]
+					// 	break
+					// }
 					continue
 				}
 
 			}
 
-			if exchanges[x].GetBase().GetSupportedFeatures().RESTCapabilities.GetOrder {
-				wg.Add(1)
-				go m.processMatchingOrders(exchanges[x], orders, &wg)
-			}
+			// if exchanges[x].GetBase().GetSupportedFeatures().RESTCapabilities.GetOrder {
+			// 	wg.Add(1)
+			// 	go m.processMatchingOrders(exchanges[x], orders, &wg)
+			// }
 
-			supportedFeatures := exchanges[x].GetSupportedFeatures()
-			if m.activelyTrackFuturesPositions && enabledAssets[y].IsFutures() && supportedFeatures.FuturesCapabilities.OrderManagerPositionTracking {
-				var positions []futures.PositionResponse
-				var sd time.Time
-				sd, err = m.orderStore.futuresPositionController.LastUpdated()
-				if err != nil {
-					log.Errorln(log.OrderMgr, err)
-					return
-				}
-				if sd.IsZero() {
-					sd = time.Now().Add(m.futuresPositionSeekDuration)
-				}
-				positions, err = exchanges[x].GetFuturesPositionOrders(context.TODO(), &futures.PositionsRequest{
-					Asset:                     enabledAssets[y],
-					Pairs:                     pairs,
-					StartDate:                 sd,
-					RespectOrderHistoryLimits: m.respectOrderHistoryLimits,
-				})
-				if err != nil {
-					if !errors.Is(err, common.ErrNotYetImplemented) {
-						log.Errorln(log.OrderMgr, err)
-					}
-					return
-				}
-				for z := range positions {
-					if len(positions[z].Orders) == 0 {
-						continue
-					}
-					err = m.processFuturesPositions(exchanges[x], &positions[z])
-					if err != nil {
-						log.Errorf(log.OrderMgr, "unable to process future positions for %v %v %v. err: %v", exchanges[x].GetName(), positions[z].Asset, positions[z].Pair, err)
-					}
-				}
-			}
+			// supportedFeatures := exchanges[x].GetSupportedFeatures()
+			// if m.activelyTrackFuturesPositions && enabledAssets[y].IsFutures() && supportedFeatures.FuturesCapabilities.OrderManagerPositionTracking {
+			// 	var positions []futures.PositionResponse
+			// 	var sd time.Time
+			// 	sd, err = m.orderStore.futuresPositionController.LastUpdated()
+			// 	if err != nil {
+			// 		log.Errorln(log.OrderMgr, err)
+			// 		return
+			// 	}
+			// 	if sd.IsZero() {
+			// 		sd = time.Now().Add(m.futuresPositionSeekDuration)
+			// 	}
+			// 	positions, err = exchanges[x].GetFuturesPositionOrders(context.TODO(), &futures.PositionsRequest{
+			// 		Asset:                     enabledAssets[y],
+			// 		Pairs:                     pairs,
+			// 		StartDate:                 sd,
+			// 		RespectOrderHistoryLimits: m.respectOrderHistoryLimits,
+			// 	})
+			// 	if err != nil {
+			// 		if !errors.Is(err, common.ErrNotYetImplemented) {
+			// 			log.Errorln(log.OrderMgr, err)
+			// 		}
+			// 		return
+			// 	}
+			// 	for z := range positions {
+			// 		if len(positions[z].Orders) == 0 {
+			// 			continue
+			// 		}
+			// 		err = m.processFuturesPositions(exchanges[x], &positions[z])
+			// 		if err != nil {
+			// 			log.Errorf(log.OrderMgr, "unable to process future positions for %v %v %v. err: %v", exchanges[x].GetName(), positions[z].Asset, positions[z].Pair, err)
+			// 		}
+			// 	}
+			// }
 		}
 	}
 	wg.Wait()

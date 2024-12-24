@@ -468,29 +468,29 @@ func (a *Application) onOrderCancelReplaceRequest(msg ordercancelreplacerequest.
 		return quickfix.ValueIsIncorrect(tag.SecurityExchange)
 	}
 
-	modifiedOrder, e := exch.ModifyOrder(context.TODO(), request)
+	_, e = exch.ModifyOrder(context.TODO(), request)
 	if e != nil {
 		log.Printf("Error when modified the order: %+v", e)
 		a.RejectOrderRequest(request, e.Error())
 	}
 
-	savedOrder := model.Order{
-		OrderID:   modifiedOrder.OrderID,
-		SessionID: sessionID.String(),
-		Exchange:  modifiedOrder.Exchange,
-		Base:      modifiedOrder.Pair.Base.String(),
-		Quote:     modifiedOrder.Pair.Quote.String(),
-		Side:      modifiedOrder.Side.String(),
-		AssetType: modifiedOrder.AssetType.String(),
-		OrderType: modifiedOrder.Type.String(),
-		Price:     modifiedOrder.Price,
-		Amount:    modifiedOrder.Amount,
-		Timestamp: modifiedOrder.Date,
-	}
+	// savedOrder := model.Order{
+	// 	OrderID:   modifiedOrder.OrderID,
+	// 	SessionID: sessionID.String(),
+	// 	Exchange:  modifiedOrder.Exchange,
+	// 	Base:      modifiedOrder.Pair.Base.String(),
+	// 	Quote:     modifiedOrder.Pair.Quote.String(),
+	// 	Side:      modifiedOrder.Side.String(),
+	// 	AssetType: modifiedOrder.AssetType.String(),
+	// 	OrderType: modifiedOrder.Type.String(),
+	// 	Price:     modifiedOrder.Price,
+	// 	Amount:    modifiedOrder.Amount,
+	// 	Timestamp: modifiedOrder.Date,
+	// }
 
-	if e := model.UpdateOrCreateOrder(savedOrder); e != nil {
-		log.Printf("Error updating modified order: %+v", e)
-	}
+	// if e := model.UpdateOrCreateOrder(savedOrder); e != nil {
+	// 	log.Printf("Error updating modified order: %+v", e)
+	// }
 	return nil
 }
 
@@ -529,6 +529,10 @@ func (a *Application) WebsocketDataHandler(exchName string, data interface{}) er
 	case *orderbook.Depth:
 		a.BroadcastDepth(d)
 	case *order.Detail:
+		if len(a.sessions) == 0 {
+			return nil
+		}
+		log.Printf("websocket order detail: %+v", d)
 		existingOrder := model.GetOrderByOrderID(d.OrderID)
 		log.Printf("Existing order: %+v", existingOrder)
 		if existingOrder.ClientOrderID == "" {
@@ -578,11 +582,11 @@ func (a *Application) WebsocketDataHandler(exchName string, data interface{}) er
 				Status:        d.Status.String(),
 				Timestamp:     d.Date,
 			}
-			if err := model.UpdateOrCreateOrder(savedOrder); err != nil {
+			if err := model.CreateOrder(savedOrder); err != nil {
 				log.Printf("Error updating order: %+v", err)
 				return err
 			}
-			a.UpdateOrder(d, ToOrdStatus(d.Status))
+			a.UpdateOrder(d, ToOrdStatus(d.Status), "Create order websocket")
 			return nil
 		} else if len(d.Trades) != len(existingOrder.Trades) {
 			for i := range d.Trades {
@@ -626,7 +630,7 @@ func (a *Application) WebsocketDataHandler(exchName string, data interface{}) er
 					log.Printf("Error updating order: %+v", err)
 					return err
 				}
-				a.UpdateOrder(d, ToOrdStatus(d.Status))
+				a.UpdateOrder(d, ToOrdStatus(d.Status), "Update order websocket")
 				return nil
 			}
 			if err := model.UpdateOrder(existingOrder.ClientOrderID, existingOrder); err != nil {
@@ -641,7 +645,16 @@ func (a *Application) WebsocketDataHandler(exchName string, data interface{}) er
 					log.Printf("Error updating order: %+v", err)
 					return err
 				}
-				a.UpdateOrder(d, ToOrdStatus(d.Status))
+				a.UpdateOrder(d, ToOrdStatus(d.Status), "Update order websocket")
+				return nil
+			} else if d.Price != existingOrder.Price || d.Amount != existingOrder.Amount {
+				existingOrder.Price = d.Price
+				existingOrder.Amount = d.Amount
+				if err := model.UpdateOrder(existingOrder.ClientOrderID, existingOrder); err != nil {
+					log.Printf("Error updating order: %+v", err)
+					return err
+				}
+				a.UpdateOrder(d, ToOrdStatus(d.Status), "Update order websocket")
 				return nil
 			}
 			return nil
@@ -922,7 +935,8 @@ func (a *Application) RejectOrderRequest(msg interface{}, text string) {
 	}
 }
 
-func (a *Application) UpdateOrder(msg *order.Detail, status enum.OrdStatus) {
+func (a *Application) UpdateOrder(msg *order.Detail, status enum.OrdStatus, source string) {
+	log.Printf("UpdateOrder from %s: %+v", source, msg)
 	symbol := a.pairFormater.Format(msg.Pair)
 	execReport := executionreport.New(
 		field.NewOrderID(msg.OrderID),
@@ -986,7 +1000,7 @@ func (a *Application) genUUID() string {
 }
 
 func (a *Application) acceptOrder(order *order.Detail) {
-	a.UpdateOrder(order, enum.OrdStatus_NEW)
+	a.UpdateOrder(order, enum.OrdStatus_NEW, "not used for accept")
 }
 
 func (a *Application) fillOrder(order *order.Detail) {
@@ -994,9 +1008,9 @@ func (a *Application) fillOrder(order *order.Detail) {
 	if order.RemainingAmount > 0 {
 		status = enum.OrdStatus_PARTIALLY_FILLED
 	}
-	a.UpdateOrder(order, status)
+	a.UpdateOrder(order, status, "not used for fill")
 }
 
 func (a *Application) cancelOrder(order *order.Detail) {
-	a.UpdateOrder(order, enum.OrdStatus_CANCELED)
+	a.UpdateOrder(order, enum.OrdStatus_CANCELED, "not used for cancel")
 }

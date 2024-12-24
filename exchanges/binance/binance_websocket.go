@@ -324,31 +324,34 @@ func (b *Binance) wsHandleData(respRaw []byte) error {
 			}
 			orderID := strconv.FormatInt(orderTradeUpdate.Data.Data.OrderID, 10)
 			remainingAmout := orderTradeUpdate.Data.Data.Quantity - orderTradeUpdate.Data.Data.CumulativeFilledQuantity
-			trades := make([]order.TradeHistory, 1)
-			var tradeSide order.Side
-			switch side {
-			case order.Buy:
-				tradeSide = order.Sell
-			case order.Sell:
-				tradeSide = order.Buy
-			default:
-				tradeSide = order.UnknownSide
+			var trades []order.TradeHistory
+			if orderTradeUpdate.Data.Data.TradeID != 0 {
+				trades = make([]order.TradeHistory, 1)
+				var tradeSide order.Side
+				switch side {
+				case order.Buy:
+					tradeSide = order.Sell
+				case order.Sell:
+					tradeSide = order.Buy
+				default:
+					tradeSide = order.UnknownSide
+				}
+				tid := strconv.FormatInt(orderTradeUpdate.Data.Data.TradeID, 10)
+				trade := &order.TradeHistory{
+					Price:     orderTradeUpdate.Data.Data.LastExecutedPrice,
+					Amount:    orderTradeUpdate.Data.Data.LastExecutedQuantity,
+					FeeAsset:  orderTradeUpdate.Data.Data.CommissionAsset,
+					Fee:       orderTradeUpdate.Data.Data.Commission,
+					Side:      tradeSide,
+					TID:       tid,
+					Type:      orderType,
+					Exchange:  b.Name,
+					Total:     orderTradeUpdate.Data.Data.CumulativeFilledQuantity,
+					Timestamp: time.UnixMilli(orderTradeUpdate.Data.Data.TransactionTime),
+					IsMaker:   orderTradeUpdate.Data.Data.IsMaker,
+				}
+				trades[0] = *trade
 			}
-			tid := strconv.FormatInt(orderTradeUpdate.Data.Data.TradeID, 10)
-			trade := &order.TradeHistory{
-				Price:     orderTradeUpdate.Data.Data.LastExecutedPrice,
-				Amount:    orderTradeUpdate.Data.Data.LastExecutedQuantity,
-				FeeAsset:  orderTradeUpdate.Data.Data.CommissionAsset,
-				Fee:       orderTradeUpdate.Data.Data.Commission,
-				Side:      tradeSide,
-				TID:       tid,
-				Type:      orderType,
-				Exchange:  b.Name,
-				Total:     orderTradeUpdate.Data.Data.CumulativeFilledQuantity,
-				Timestamp: time.UnixMilli(orderTradeUpdate.Data.Data.TransactionTime),
-				IsMaker:   orderTradeUpdate.Data.Data.IsMaker,
-			}
-			trades[0] = *trade
 
 			orderDetail := &order.Detail{
 				Date:                 time.UnixMilli(orderTradeUpdate.Data.TransactionTime),
