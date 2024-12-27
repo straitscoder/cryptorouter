@@ -312,7 +312,7 @@ func (fixengine *FixEngine) Start() error {
 	}
 	gctlog.Debugf(gctlog.Global,
 		"Using %d out of %d logical processors for runtime performance\n",
-		runtime.GOMAXPROCS(-1), runtime.NumCPU())
+		runtime.GOMAXPROCS(-1), 4)
 
 	enabledExchanges := fixengine.Config.CountEnabledExchanges()
 	if fixengine.Settings.EnableAllExchanges {

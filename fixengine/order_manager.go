@@ -41,7 +41,7 @@ var (
 	errNilCommunicationsManager = errors.New("cannot start with nil communications manager")
 	errNilOrder                 = errors.New("nil order received")
 	errFuturesTrackingDisabled  = errors.New("tracking futures positions disabled. enable it via config under orderManager activelyTrackFuturesPositions")
-	orderManagerInterval        = time.Second * 10
+	orderManagerInterval        = time.Second * 5
 	defaultOrderSeekTime        = -time.Hour * 24 * 365
 )
 

@@ -588,7 +588,7 @@ func (a *Application) WebsocketDataHandler(exchName string, data interface{}) er
 			}
 			a.UpdateOrder(d, ToOrdStatus(d.Status), "Create order websocket")
 			return nil
-		} else if len(d.Trades) != len(existingOrder.Trades) {
+		} else if len(d.Trades) > 0 {
 			for i := range d.Trades {
 				var side string
 				switch d.Trades[i].Side {
@@ -636,6 +636,11 @@ func (a *Application) WebsocketDataHandler(exchName string, data interface{}) er
 			if err := model.UpdateOrder(existingOrder.ClientOrderID, existingOrder); err != nil {
 				log.Printf("Error updating order: %+v", err)
 				return err
+			}
+			updatedOrder := model.GetOrderByClOrdID(existingOrder.ClientOrderID)
+			if len(updatedOrder.Trades) != len(existingOrder.Trades) {
+				a.UpdateOrder(d, ToOrdStatus(d.Status), "Update order websocket")
+				return nil
 			}
 			return nil
 		} else {
@@ -966,12 +971,12 @@ func (a *Application) UpdateOrder(msg *order.Detail, status enum.OrdStatus, sour
 	switch status {
 	case enum.OrdStatus_PARTIALLY_FILLED:
 		execReport.SetExecType(enum.ExecType_PARTIAL_FILL)
-		execReport.SetLastPx(decimal.NewFromFloat(msg.Price), 8)
-		execReport.SetLastShares(decimal.NewFromFloat(msg.ExecutedAmount), 8)
+		execReport.SetLastPx(decimal.NewFromFloat(msg.AverageExecutedPrice), 8)
+		execReport.SetLastShares(decimal.NewFromFloat(msg.Trades[len(msg.Trades)-1].Amount), 8)
 	case enum.OrdStatus_FILLED:
 		execReport.SetExecType(enum.ExecType_FILL)
-		execReport.SetLastPx(decimal.NewFromFloat(msg.Price), 8)
-		execReport.SetLastShares(decimal.NewFromFloat(msg.ExecutedAmount), 8)
+		execReport.SetLastPx(decimal.NewFromFloat(msg.AverageExecutedPrice), 8)
+		execReport.SetLastShares(decimal.NewFromFloat(msg.Trades[len(msg.Trades)-1].Amount), 8)
 	case enum.OrdStatus_CANCELED:
 		execReport.SetExecType(enum.ExecType_CANCELED)
 		execReport.SetLastPx(decimal.NewFromFloat(msg.Price), 8)
@@ -1013,4 +1018,18 @@ func (a *Application) fillOrder(order *order.Detail) {
 
 func (a *Application) cancelOrder(order *order.Detail) {
 	a.UpdateOrder(order, enum.OrdStatus_CANCELED, "not used for cancel")
+}
+
+func checkExistingTrade(order model.Order, trade order.Detail) bool {
+	var result bool
+	for i := range order.Trades {
+		for j := range trade.Trades {
+			if order.Trades[i].TradeID == trade.Trades[j].TID {
+				result = true
+				return result
+			}
+			result = false
+		}
+	}
+	return result
 }
