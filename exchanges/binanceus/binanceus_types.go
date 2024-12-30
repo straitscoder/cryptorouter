@@ -1233,3 +1233,42 @@ type SpotAssetsSnapshotResponse struct {
 	Msg         string   `json:"msg"`
 	SnapshotVos []string `json:"snapshotVos"`
 }
+
+type UAccountTradeListResponse struct {
+	Commission      float64 `json:"commission,string"`
+	CommissionAsset string  `json:"commissionAsset"`
+	ID              int64   `json:"id"`
+	IsBestMatch     bool    `json:"isBestMatch"`
+	IsBuyer         bool    `json:"isBuyer"`
+	IsMaker         bool    `json:"isMaker"`
+	OrderID         int64   `json:"orderId"`
+	OrderListID     int64   `json:"orderListId"`
+	Price           float64 `json:"price,string"`
+	Qty             float64 `json:"qty,string"`
+	QuotedQty       float64 `json:"quoteQty,string"`
+	Symbol          string  `json:"symbol"`
+	Time            int64   `json:"time"`
+}
+
+type QueryOrderData struct {
+	Code                int     `json:"code"`
+	Msg                 string  `json:"msg"`
+	Symbol              string  `json:"symbol"`
+	OrderID             int64   `json:"orderId"`
+	ClientOrderID       string  `json:"clientOrderId"`
+	Price               float64 `json:"price,string"`
+	OrigQty             float64 `json:"origQty,string"`
+	ExecutedQty         float64 `json:"executedQty,string"`
+	Status              string  `json:"status"`
+	TimeInForce         string  `json:"timeInForce"`
+	Type                string  `json:"type"`
+	Side                string  `json:"side"`
+	StopPrice           float64 `json:"stopPrice,string"`
+	IcebergQty          float64 `json:"icebergQty,string"`
+	Time                int64   `json:"time"`
+	IsWorking           bool    `json:"isWorking"`
+	CummulativeQuoteQty float64 `json:"cummulativeQuoteQty,string"`
+	OrderListID         int64   `json:"orderListId"`
+	OrigQuoteOrderQty   float64 `json:"origQuoteOrderQty,string"`
+	UpdateTime          int64   `json:"updateTime"`
+}

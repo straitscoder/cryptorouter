@@ -50,7 +50,8 @@ type WebsocketDataHandler func(service string, incoming interface{}) error
 func setupWebsocketRoutineManager(exchangeManager iExchangeManager,
 	orderManager iOrderManager,
 	syncer iCurrencyPairSyncer,
-	cfg *currency.Config, verbose bool) (*websocketRoutineManager, error) {
+	cfg *currency.Config, verbose bool,
+) (*websocketRoutineManager, error) {
 	if exchangeManager == nil {
 		return nil, errNilExchangeManager
 	}
@@ -75,7 +76,8 @@ func setupWebsocketRoutineManager(exchangeManager iExchangeManager,
 		currencyConfig:  cfg,
 		shutdown:        make(chan struct{}),
 	}
-	return man, man.registerWebsocketDataHandler(man.websocketDataHandler, false)
+	// return man, man.registerWebsocketDataHandler(man.websocketDataHandler, false)
+	return man, nil
 }
 
 // Start runs the subsystem
@@ -324,6 +326,8 @@ func (m *websocketRoutineManager) websocketDataHandler(exchName string, data int
 		}
 	case order.ClassificationError:
 		return fmt.Errorf("%w %s", d.Err, d.Error())
+	case OrderTradeUpdate:
+		log.Debugf(log.WebsocketMgr, "%s websocket order trade update %+v", exchName, d)
 	case stream.UnhandledMessageWarning:
 		log.Warnln(log.WebsocketMgr, d.Message)
 	case account.Change:

@@ -42,21 +42,23 @@ const (
 	testnetFutures = "https://testnet.binancefuture.com"
 
 	// Public endpoints
-	exchangeInfo      = "/api/v3/exchangeInfo"
-	orderBookDepth    = "/api/v3/depth"
-	recentTrades      = "/api/v3/trades"
-	aggregatedTrades  = "/api/v3/aggTrades"
-	candleStick       = "/api/v3/klines"
-	averagePrice      = "/api/v3/avgPrice"
-	priceChange       = "/api/v3/ticker/24hr"
-	symbolPrice       = "/api/v3/ticker/price"
-	bestPrice         = "/api/v3/ticker/bookTicker"
-	userAccountStream = "/api/v3/userDataStream"
-	perpExchangeInfo  = "/fapi/v1/exchangeInfo"
-	historicalTrades  = "/api/v3/historicalTrades"
+	exchangeInfo          = "/api/v3/exchangeInfo"
+	orderBookDepth        = "/api/v3/depth"
+	recentTrades          = "/api/v3/trades"
+	aggregatedTrades      = "/api/v3/aggTrades"
+	candleStick           = "/api/v3/klines"
+	averagePrice          = "/api/v3/avgPrice"
+	priceChange           = "/api/v3/ticker/24hr"
+	symbolPrice           = "/api/v3/ticker/price"
+	bestPrice             = "/api/v3/ticker/bookTicker"
+	userAccountStream     = "/api/v3/userDataStream"
+	usdtUserAccountstream = "/fapi/v1/listenKey"
+	perpExchangeInfo      = "/fapi/v1/exchangeInfo"
+	historicalTrades      = "/api/v3/historicalTrades"
 
 	// Margin endpoints
-	marginInterestHistory = "/sapi/v1/margin/interestHistory"
+	marginInterestHistory  = "/sapi/v1/margin/interestHistory"
+	marginAccountTradeList = "/sapi/v1/margin/myTrades"
 
 	// Authenticated endpoints
 	newOrderTest       = "/api/v3/order/test"
@@ -1206,7 +1208,7 @@ func (b *Binance) GetDepositAddressForCurrency(ctx context.Context, currency, ch
 
 // GetWsAuthStreamKey will retrieve a key to use for authorised WS streaming
 func (b *Binance) GetWsAuthStreamKey(ctx context.Context) (string, error) {
-	endpointPath, err := b.API.Endpoints.GetURL(exchange.RestSpotSupplementary)
+	endpointPath, err := b.API.Endpoints.GetURL(exchange.RestUSDTMargined)
 	if err != nil {
 		return "", err
 	}
@@ -1221,7 +1223,7 @@ func (b *Binance) GetWsAuthStreamKey(ctx context.Context) (string, error) {
 	headers["X-MBX-APIKEY"] = creds.Key
 	item := &request.Item{
 		Method:        http.MethodPost,
-		Path:          endpointPath + userAccountStream,
+		Path:          endpointPath + usdtUserAccountstream,
 		Headers:       headers,
 		Result:        &resp,
 		Verbose:       b.Verbose,
@@ -1240,7 +1242,7 @@ func (b *Binance) GetWsAuthStreamKey(ctx context.Context) (string, error) {
 
 // MaintainWsAuthStreamKey will keep the key alive
 func (b *Binance) MaintainWsAuthStreamKey(ctx context.Context) error {
-	endpointPath, err := b.API.Endpoints.GetURL(exchange.RestSpotSupplementary)
+	endpointPath, err := b.API.Endpoints.GetURL(exchange.RestUSDTMargined)
 	if err != nil {
 		return err
 	}
@@ -1254,7 +1256,7 @@ func (b *Binance) MaintainWsAuthStreamKey(ctx context.Context) error {
 		return err
 	}
 
-	path := endpointPath + userAccountStream
+	path := endpointPath + usdtUserAccountstream
 	params := url.Values{}
 	params.Set("listenKey", listenKey)
 	path = common.EncodeURLValues(path, params)
@@ -1809,4 +1811,24 @@ func (b *Binance) FlexibleCollateralAssetsData(ctx context.Context, collateralCo
 
 	var resp FlexibleCollateralAssetsData
 	return &resp, b.SendAuthHTTPRequest(ctx, exchange.RestSpotSupplementary, http.MethodGet, flexibleLoanCollateralAssetsData, params, spotDefaultRate, &resp)
+}
+
+func (b *Binance) GetAccountTradeList(ctx context.Context, symbol currency.Pair, orderId string) ([]UAccountTradeListResponse, error) {
+	var resp []UAccountTradeListResponse
+	params := url.Values{}
+	if !symbol.IsEmpty() {
+		symbolValue, err := b.FormatSymbol(symbol, asset.USDTMarginedFutures)
+		if err != nil {
+			return resp, err
+		}
+		params.Set("symbol", symbolValue)
+	}
+	if orderId != "" {
+		params.Set("orderId", orderId)
+	}
+	if err := b.SendAuthHTTPRequest(ctx, exchange.RestSpot, http.MethodGet, marginAccountTradeList, params, spotDefaultRate, &resp); err != nil {
+		return resp, err
+	}
+
+	return resp, nil
 }

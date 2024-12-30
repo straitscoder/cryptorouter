@@ -369,7 +369,7 @@ type UAccountTradeHistory struct {
 	OrderID         int64   `json:"orderId"`
 	Price           float64 `json:"price,string"`
 	Qty             float64 `json:"qty,string"`
-	QuoteQty        float64 `json:"quoteQty"`
+	QuoteQty        float64 `json:"quoteQty,string"`
 	RealizedPNL     float64 `json:"realizedPnl,string"`
 	Side            string  `json:"side"`
 	PositionSide    string  `json:"positionSide"`
@@ -493,4 +493,19 @@ type UFutureModifyOrderResponse struct {
 	GoodTillDate            int64  `json:"goodTillDate"`
 	Code                    int    `json:"code"`
 	Message                 string `json:"msg"`
+}
+
+type UAccountTradeListResponse struct {
+	Commission      float64 `json:"commission"`
+	CommissionAsset string  `json:"commissionAsset"`
+	ID              int64   `json:"id"`
+	IsBestMatch     bool    `json:"isBestMatch"`
+	IsBuyer         bool    `json:"isBuyer"`
+	IsMaker         bool    `json:"isMaker"`
+	OrderID         int64   `json:"orderId"`
+	Price           float64 `json:"price"`
+	Qty             float64 `json:"qty"`
+	Symbol          string  `json:"symbol"`
+	IsIsolated      bool    `json:"isIsolated"`
+	Time            int64   `json:"time"`
 }

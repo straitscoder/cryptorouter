@@ -15,6 +15,7 @@ import (
 	"github.com/thrasher-corp/gocryptotrader/common"
 	"github.com/thrasher-corp/gocryptotrader/config"
 	"github.com/thrasher-corp/gocryptotrader/currency"
+	exchDb "github.com/thrasher-corp/gocryptotrader/database/repository/exchange"
 	"github.com/thrasher-corp/gocryptotrader/dispatch"
 	"github.com/thrasher-corp/gocryptotrader/engine"
 	exchange "github.com/thrasher-corp/gocryptotrader/exchanges"
@@ -137,6 +138,7 @@ type FixEngine struct {
 	currencyPairSyncer      *syncManager
 	ExchangeManager         *ExchangeManager
 	OrderManager            *OrderManager
+	DatabaseManager         *engine.DatabaseConnectionManager
 	websocketRoutineManager *websocketRoutineManager
 	Settings                Settings
 	uptime                  time.Time
@@ -224,7 +226,7 @@ func loadConfigWithSettings(settings *Settings, flagSet map[string]bool) (*confi
 	conf := &config.Config{}
 	err = conf.ReadConfigFromFile(filePath, settings.EnableDryRun)
 	if err != nil {
-		return nil, fmt.Errorf(config.ErrFailureOpeningConfig, filePath, err)
+		return nil, fmt.Errorf("%+v %s: %+v", config.ErrFailureOpeningConfig, filePath, err)
 	}
 	// Apply overrides from settings
 	if flagSet["datadir"] {
@@ -286,6 +288,11 @@ func (fixengine *FixEngine) Start() error {
 	var err error
 	newEngineMutex.Lock()
 	defer newEngineMutex.Unlock()
+	defer func() {
+		if r := recover(); r != nil {
+			gctlog.Errorf(gctlog.Global, "recover from panic: %+v", r)
+		}
+	}()
 
 	if fixengine.Settings.EnableDispatcher {
 		if err = dispatch.Start(fixengine.Settings.DispatchMaxWorkerAmount, fixengine.Settings.DispatchJobsLimit); err != nil {
@@ -305,7 +312,7 @@ func (fixengine *FixEngine) Start() error {
 	}
 	gctlog.Debugf(gctlog.Global,
 		"Using %d out of %d logical processors for runtime performance\n",
-		runtime.GOMAXPROCS(-1), runtime.NumCPU())
+		runtime.GOMAXPROCS(-1), 4)
 
 	enabledExchanges := fixengine.Config.CountEnabledExchanges()
 	if fixengine.Settings.EnableAllExchanges {
@@ -321,6 +328,15 @@ func (fixengine *FixEngine) Start() error {
 		fixengine.Config.PurgeExchangeAPICredentials()
 	}
 
+	dbManager, err := engine.SetupDatabaseConnectionManager(&fixengine.Config.Database)
+	if err != nil {
+		gctlog.Errorf(gctlog.Global, "Unable to initialise database manager. Err: %s", err)
+	} else {
+		if err := dbManager.Start(&fixengine.ServicesWG); err != nil {
+			gctlog.Errorf(gctlog.Global, "Unable to start database manager. Err: %s", err)
+		}
+		fixengine.DatabaseManager = dbManager
+	}
 	gctlog.Debugln(gctlog.Global, "Setting up exchanges..")
 	err = fixengine.SetupExchanges()
 	if err != nil {
@@ -367,7 +383,6 @@ func (fixengine *FixEngine) Start() error {
 			gctlog.Errorf(gctlog.Global, "failed to start websocket routine manager. Err: %s", err)
 		}
 	}
-
 	fixengine.fixgateway = NewFixGateway(fixengine.websocketRoutineManager, fixengine.ExchangeManager)
 	orderManager, err := SetupOrderManager(fixengine.ExchangeManager, fixengine.communicationManager, *fixengine.fixgateway, &fixengine.ServicesWG, &fixengine.Config.OrderManager)
 	if err != nil {
@@ -377,7 +392,11 @@ func (fixengine *FixEngine) Start() error {
 		gctlog.Errorf(gctlog.Global, "Unable to start order manager. Err: %s", err)
 	}
 	fixengine.OrderManager = orderManager
-	fixengine.fixgateway.Start()
+
+	if err := fixengine.fixgateway.Start(); err != nil {
+		gctlog.Errorf(gctlog.Global, "Unable to start fix gateway. Err: %s", err)
+	}
+
 	return nil
 }
 
@@ -413,6 +432,10 @@ func (fixengine *FixEngine) Stop() {
 	err := fixengine.ExchangeManager.Shutdown(fixengine.Settings.ExchangeShutdownTimeout)
 	if err != nil {
 		gctlog.Errorf(gctlog.Global, "Exchange manager unable to stop. Error: %v", err)
+	}
+
+	if err := fixengine.DatabaseManager.Stop(); err != nil {
+		gctlog.Errorf(gctlog.Global, "Database manager unable to stop. Error: %v", err)
 	}
 
 	// Wait for services to gracefully shutdown
@@ -578,6 +601,23 @@ func (fixengine *FixEngine) LoadExchange(name string, wg *sync.WaitGroup) error 
 			exchCfg.API.AuthenticatedSupport = false
 			exchCfg.API.AuthenticatedWebsocketSupport = false
 		}
+	}
+	dbExch, err := exchDb.One(exch.GetName())
+	if err != nil {
+		// if errors.Is(err, sql.ErrNoRows) {
+		// 	err = exchDb.Insert(exchDb.Details{
+		// 		Name: exch.GetName(),
+		// 	})
+		// }
+		log.Printf("Error getting exchange %s from db: %s\n", exch.GetName(), err)
+	}
+	if dbExch.Name == "" {
+		err = exchDb.Insert(exchDb.Details{
+			Name: exch.GetName(),
+		})
+	}
+	if err != nil {
+		return err
 	}
 
 	return exchange.Bootstrap(context.TODO(), exch)

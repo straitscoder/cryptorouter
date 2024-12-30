@@ -9,6 +9,7 @@ import (
 	"runtime"
 	"time"
 
+	"github.com/quickfixgo/enum"
 	"github.com/quickfixgo/field"
 	"github.com/quickfixgo/fix42/marketdatarequest"
 	"github.com/quickfixgo/fix42/newordersingle"
@@ -43,6 +44,10 @@ func (c *fixApplication) FromApp(msg *quickfix.Message, sessionID quickfix.Sessi
 		orderId, _ := msg.Body.GetString(tag.OrderID)
 		ordStatus, _ := msg.Body.GetString(tag.OrdStatus)
 		savedOrderId := getOrderId(clOrdID)
+		if ordStatus == "4" || ordStatus == "3" {
+			parsed := parseFIXMessage(msg)
+			jsonOutput(parsed)
+		}
 		if savedOrderId != nil {
 			if ordStatus != "0" {
 				parsed := parseFIXMessage(msg)
@@ -50,14 +55,14 @@ func (c *fixApplication) FromApp(msg *quickfix.Message, sessionID quickfix.Sessi
 			}
 			return nil
 		} else {
-			parsed := parseFIXMessage(msg)
-			jsonOutput(parsed)
+			saveOrderId(orderId, clOrdID)
 			if ordStatus == "0" {
+				parsed := parseFIXMessage(msg)
+				jsonOutput(parsed)
 				orderResponse := make(map[string]string)
 				orderResponse["Client_Order_ID"] = clOrdID
 				orderResponse["Order_ID"] = orderId
 				jsonOutput(orderResponse)
-				saveOrderId(orderId, clOrdID)
 			}
 		}
 	case "W":
@@ -188,6 +193,8 @@ func (fe *FixEngine) CancelOrder() error {
 	assetType := AssetType()
 	if orderId != nil {
 		cancelReq.SetOrderID(*orderId)
+	} else if orderId == nil && assetType == enum.SecurityType_FUTURE {
+		cancelReq.SetOrderID(string(enum.SecurityType_FUTURE))
 	} else {
 		fmt.Println("Order not found")
 		return nil
@@ -223,6 +230,8 @@ func (fe *FixEngine) ModifyOrder() error {
 	assetType := AssetType()
 	if orderId != nil {
 		modOrder.SetOrderID(*orderId)
+	} else if orderId == nil && assetType == enum.SecurityType_FUTURE {
+		modOrder.SetOrderID(string(enum.SecurityType_FUTURE))
 	} else {
 		fmt.Println("Order not found")
 		return nil

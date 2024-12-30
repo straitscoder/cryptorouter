@@ -68,12 +68,14 @@ const (
 	usersSpotAssetsSnapshot                = "/sapi/v1/accountSnapshot"
 
 	// Trade Order Endpoints
-	orderRateLimit     = "/api/v3/rateLimit/order"
-	testCreateNeworder = "/api/v3/order/test" // Method: POST
-	orderRequest       = "/api/v3/order"      // Used in Create {Method: POST}, Cancel {DELETE}, and get{GET} OrderRequest
-	openOrders         = "/api/v3/openOrders"
-	myTrades           = "/api/v3/myTrades"
-	cancelReplaceOrder = "/api/v3/order/cancelReplace"
+	orderRateLimit         = "/api/v3/rateLimit/order"
+	testCreateNeworder     = "/api/v3/order/test" // Method: POST
+	orderRequest           = "/api/v3/order"      // Used in Create {Method: POST}, Cancel {DELETE}, and get{GET} OrderRequest
+	openOrders             = "/api/v3/openOrders"
+	allOrders              = "/api/v3/allOrders"
+	myTrades               = "/api/v3/myTrades"
+	cancelReplaceOrder     = "/api/v3/order/cancelReplace"
+	marginAccountTradeList = "/sapi/v1/margin/myTrades"
 
 	// One-Cancels-the-Other Orders (OCO Orders)
 	ocoOrder        = "/api/v3/order/oco"
@@ -1068,10 +1070,14 @@ func (bi *Binanceus) newOrder(ctx context.Context, api string, o *NewOrderReques
 	if o.NewOrderRespType != "" {
 		params.Set("newOrderRespType", o.NewOrderRespType)
 	}
-	return bi.SendAuthHTTPRequest(ctx,
+	if err := bi.SendAuthHTTPRequest(ctx,
 		exchange.RestSpotSupplementary,
 		http.MethodPost, api, params,
-		spotOrderRate, resp)
+		spotOrderRate, resp); err != nil {
+		return err
+	}
+
+	return nil
 }
 
 // GetOrder to check a trade order's status.
@@ -2036,4 +2042,55 @@ func (bi *Binanceus) CloseUserDataStream(ctx context.Context) error {
 	return bi.SendPayload(ctx, spotDefaultRate, func() (*request.Item, error) {
 		return item, nil
 	}, request.AuthenticatedRequest)
+}
+
+func (bi *Binanceus) GetAccountTradeList(ctx context.Context, symbol currency.Pair, orderId string) ([]UAccountTradeListResponse, error) {
+	var resp []UAccountTradeListResponse
+	params := url.Values{}
+	if !symbol.IsEmpty() {
+		symbolValue, err := bi.FormatSymbol(symbol, asset.Spot)
+		if err != nil {
+			return resp, err
+		}
+		params.Set("symbol", symbolValue)
+	}
+	if orderId != "" {
+		orderIdInt, err := strconv.ParseInt(orderId, 10, 64)
+		if err != nil {
+			return resp, err
+		}
+		params.Set("orderId", strconv.Itoa(int(orderIdInt)))
+	}
+	if err := bi.SendAuthHTTPRequest(ctx, exchange.RestSpot, http.MethodGet, myTrades, params, spotDefaultRate, &resp); err != nil {
+		return resp, err
+	}
+
+	return resp, nil
+}
+
+func (bi *Binanceus) AllOrders(ctx context.Context, symbol currency.Pair, orderID, limit string) ([]QueryOrderData, error) {
+	var resp []QueryOrderData
+
+	params := url.Values{}
+	symbolValue, err := bi.FormatSymbol(symbol, asset.Spot)
+	if err != nil {
+		return resp, err
+	}
+	params.Set("symbol", symbolValue)
+	if orderID != "" {
+		params.Set("orderId", orderID)
+	}
+	if limit != "" {
+		params.Set("limit", limit)
+	}
+	if err := bi.SendAuthHTTPRequest(ctx,
+		exchange.RestSpotSupplementary,
+		http.MethodGet,
+		allOrders,
+		params,
+		spotAllOrdersRate,
+		&resp); err != nil {
+		return resp, err
+	}
+	return resp, nil
 }

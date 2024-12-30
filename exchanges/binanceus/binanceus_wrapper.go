@@ -529,7 +529,6 @@ func (bi *Binanceus) GetHistoricTrades(ctx context.Context, p currency.Pair, ass
 
 // SubmitOrder submits a new order
 func (bi *Binanceus) SubmitOrder(ctx context.Context, s *order.Submit) (*order.SubmitResponse, error) {
-	var submitOrderResponse order.SubmitResponse
 	var timeInForce RequestParamsTimeForceType
 	var sideType string
 	err := s.Validate(bi.GetTradingRequirements())
@@ -567,23 +566,38 @@ func (bi *Binanceus) SubmitOrder(ctx context.Context, s *order.Submit) (*order.S
 	if err != nil {
 		return nil, err
 	}
+
+	var orderID string
 	if response.OrderID > 0 {
-		submitOrderResponse.OrderID = strconv.FormatInt(response.OrderID, 10)
-	}
-	if response.ExecutedQty == response.OrigQty {
-		submitOrderResponse.Status = order.Filled
-	}
-	for i := range response.Fills {
-		submitOrderResponse.Trades = append(submitOrderResponse.Trades, order.TradeHistory{
-			Price:    response.Fills[i].Price,
-			Amount:   response.Fills[i].Qty,
-			Fee:      response.Fills[i].Commission,
-			FeeAsset: response.Fills[i].CommissionAsset,
-			Exchange: bi.Name,
-		})
+		orderID = strconv.FormatInt(response.OrderID, 10)
 	}
 
-	return &submitOrderResponse, nil
+	result, err := s.DeriveSubmitResponse(orderID)
+	if err != nil {
+		return nil, err
+	}
+
+	var status order.Status
+	if response.ExecutedQty == response.OrigQty {
+		status = order.Filled
+		result.Status = status
+	}
+
+	var trades []order.TradeHistory
+	if len(response.Fills) > 0 {
+		for i := range response.Fills {
+			trades = append(trades, order.TradeHistory{
+				Price:    response.Fills[i].Price,
+				Amount:   response.Fills[i].Qty,
+				Fee:      response.Fills[i].Commission,
+				FeeAsset: response.Fills[i].CommissionAsset,
+				Exchange: bi.Name,
+			})
+		}
+	}
+
+	result.Trades = trades
+	return result, nil
 }
 
 // ModifyOrder will allow of changing orderbook placement and limit to
@@ -592,8 +606,9 @@ func (b *Binanceus) ModifyOrder(ctx context.Context, m *order.Modify) (*order.Mo
 	if err := m.Validate(); err != nil {
 		return nil, err
 	}
-	status := order.New
+
 	var trades []order.TradeHistory
+	var cancelReplaceResponse CancelReplaceOrderResponse
 
 	switch m.AssetType {
 	case asset.Spot:
@@ -622,7 +637,6 @@ func (b *Binanceus) ModifyOrder(ctx context.Context, m *order.Modify) (*order.Mo
 			return nil, fmt.Errorf("%w %v", order.ErrUnsupportedOrderType, m.Type)
 		}
 
-		var cancelReplaceResponse CancelReplaceOrderResponse
 		err := b.CancelReplaceOrder(
 			ctx,
 			&CancelReplaceOrderRequest{
@@ -642,7 +656,6 @@ func (b *Binanceus) ModifyOrder(ctx context.Context, m *order.Modify) (*order.Mo
 		if err != nil {
 			return nil, err
 		}
-		log.Debugf(log.OrderMgr, "Cancel Replace Response: %+v", cancelReplaceResponse)
 
 		trades = make([]order.TradeHistory, len(cancelReplaceResponse.NewOrderResponse.Fills))
 		for i := range cancelReplaceResponse.NewOrderResponse.Fills {
@@ -658,13 +671,26 @@ func (b *Binanceus) ModifyOrder(ctx context.Context, m *order.Modify) (*order.Mo
 		return nil, common.ErrFunctionNotSupported
 	}
 
-	resp, err := m.DeriveModifyResponse()
-	if err != nil {
-		return nil, err
+	pair, _ := currency.NewPairFromString(cancelReplaceResponse.NewOrderResponse.Symbol)
+	orderType, _ := order.StringToOrderType(cancelReplaceResponse.NewOrderResponse.Type)
+	side, _ := order.StringToOrderSide(cancelReplaceResponse.NewOrderResponse.Side)
+	respStatus, _ := order.StringToOrderStatus(cancelReplaceResponse.NewOrderResponse.Status)
+	resp := order.ModifyResponse{
+		Exchange:      b.Name,
+		OrderID:       strconv.FormatInt(cancelReplaceResponse.NewOrderResponse.OrderID, 10),
+		ClientOrderID: cancelReplaceResponse.NewOrderResponse.ClientOrderID,
+		Pair:          pair,
+		Type:          orderType,
+		Side:          side,
+		Status:        respStatus,
+		AssetType:     asset.Spot,
+		Price:         cancelReplaceResponse.NewOrderResponse.Price,
+		Amount:        cancelReplaceResponse.NewOrderResponse.OrigQty,
+		Date:          time.UnixMilli(cancelReplaceResponse.NewOrderResponse.TransactionTime),
+		LastUpdated:   time.Now(),
 	}
 
-	resp.Status = status
-	return resp, nil
+	return &resp, nil
 }
 
 // CancelOrder cancels an order by its corresponding ID number
@@ -746,6 +772,7 @@ func (bi *Binanceus) GetOrderInfo(ctx context.Context, orderID string, pair curr
 		return nil, fmt.Errorf("%s %w", assetType, asset.ErrNotSupported)
 	}
 	var orderType order.Type
+	var trades []order.TradeHistory
 	resp, err := bi.GetOrder(ctx, &OrderRequestParams{
 		Symbol:  symbolValue,
 		OrderID: uint64(orderIDInt),
@@ -765,7 +792,40 @@ func (bi *Binanceus) GetOrderInfo(ctx context.Context, orderID string, pair curr
 	if err != nil {
 		log.Errorf(log.ExchangeSys, "%s %v", bi.Name, err)
 	}
+	tradeHistoryResponse, err := bi.GetAccountTradeList(ctx, pair, orderID)
+	if err != nil {
+		return nil, err
+	}
 
+	if len(tradeHistoryResponse) > 0 {
+		trades = make([]order.TradeHistory, len(tradeHistoryResponse))
+		var total float64
+		for i := range tradeHistoryResponse {
+			var side order.Side
+			switch orderSide {
+			case order.Buy:
+				side = order.Sell
+			case order.Sell:
+				side = order.Buy
+			default:
+				side = order.UnknownSide
+			}
+			total += tradeHistoryResponse[i].Qty
+			trades[i] = order.TradeHistory{
+				Price:     tradeHistoryResponse[i].Price,
+				Amount:    tradeHistoryResponse[i].Qty,
+				Fee:       tradeHistoryResponse[i].Commission,
+				Side:      side,
+				Exchange:  bi.Name,
+				TID:       strconv.FormatInt(tradeHistoryResponse[i].ID, 10),
+				Type:      orderType,
+				Timestamp: time.UnixMilli(tradeHistoryResponse[i].Time),
+				IsMaker:   tradeHistoryResponse[i].IsMaker,
+				FeeAsset:  tradeHistoryResponse[i].CommissionAsset,
+				Total:     total,
+			}
+		}
+	}
 	return &order.Detail{
 		Amount:         resp.OrigQty,
 		Exchange:       bi.Name,
@@ -781,6 +841,7 @@ func (bi *Binanceus) GetOrderInfo(ctx context.Context, orderID string, pair curr
 		ExecutedAmount: resp.ExecutedQty,
 		Date:           resp.Time,
 		LastUpdated:    resp.UpdateTime,
+		Trades:         trades,
 	}, nil
 }
 
@@ -895,10 +956,73 @@ func (bi *Binanceus) GetActiveOrders(ctx context.Context, getOrdersRequest *orde
 }
 
 // GetOrderHistory retrieves account order information Can Limit response to specific order status
-func (bi *Binanceus) GetOrderHistory(_ context.Context, _ *order.MultiOrderRequest) (order.FilteredOrders, error) {
+func (bi *Binanceus) GetOrderHistory(ctx context.Context, req *order.MultiOrderRequest) (order.FilteredOrders, error) {
 	// An endpoint like /api/v3/allOrders does not exist in the binance us
-	// so This end point is left unimplemented
-	return nil, common.ErrFunctionNotSupported
+	// so it's implemented using the same method as binance global
+	err := req.Validate()
+	if err != nil {
+		return nil, err
+	}
+	if len(req.Pairs) == 0 {
+		return nil, errors.New("at least one currency is required to fetch order history")
+	}
+	var orders []order.Detail
+	for x := range req.Pairs {
+		resp, err := bi.AllOrders(ctx,
+			req.Pairs[x],
+			"",
+			"1000")
+		if err != nil {
+			return nil, err
+		}
+
+		for i := range resp {
+			var side order.Side
+			side, err = order.StringToOrderSide(resp[i].Side)
+			if err != nil {
+				log.Errorf(log.ExchangeSys, "%s %v", bi.Name, err)
+			}
+			var orderType order.Type
+			orderType, err = order.StringToOrderType(resp[i].Type)
+			if err != nil {
+				log.Errorf(log.ExchangeSys, "%s %v", bi.Name, err)
+			}
+			orderStatus, err := order.StringToOrderStatus(resp[i].Status)
+			if err != nil {
+				log.Errorf(log.ExchangeSys, "%s %v", bi.Name, err)
+			}
+			// New orders are covered in GetOpenOrders
+			if orderStatus == order.New {
+				continue
+			}
+
+			var cost float64
+			// For some historical orders cummulativeQuoteQty will be < 0,
+			// meaning the data is not available at this time.
+			if resp[i].CummulativeQuoteQty > 0 {
+				cost = resp[i].CummulativeQuoteQty
+			}
+			detail := order.Detail{
+				Amount:          resp[i].OrigQty,
+				ExecutedAmount:  resp[i].ExecutedQty,
+				RemainingAmount: resp[i].OrigQty - resp[i].ExecutedQty,
+				Cost:            cost,
+				CostAsset:       req.Pairs[x].Quote,
+				Date:            time.UnixMilli(resp[i].Time),
+				LastUpdated:     time.UnixMilli(resp[i].UpdateTime),
+				Exchange:        bi.Name,
+				OrderID:         strconv.FormatInt(resp[i].OrderID, 10),
+				Side:            side,
+				Type:            orderType,
+				Price:           resp[i].Price,
+				Pair:            req.Pairs[x],
+				Status:          orderStatus,
+			}
+			detail.InferCostsAndTimes()
+			orders = append(orders, detail)
+		}
+	}
+	return req.Filter(bi.Name, orders), nil
 }
 
 // GetFeeByType returns an estimate of fee based on the type of transaction

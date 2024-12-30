@@ -1191,7 +1191,7 @@ func StringToOrderStatus(status string) (Status, error) {
 		return PendingCancel, nil
 	case Rejected.String(), "FAILED", "ORDER_FAILED":
 		return Rejected, nil
-	case Expired.String():
+	case Expired.String(), "EXPIRED_IN_MATCH":
 		return Expired, nil
 	case Hidden.String():
 		return Hidden, nil

@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
 	"net/http"
 	"net/url"
 	"slices"
@@ -66,6 +65,8 @@ const (
 	ufuturesUsersForceOrders      = "/fapi/v1/forceOrders"
 	ufuturesADLQuantile           = "/fapi/v1/adlQuantile"
 	uFuturesMultiAssetsMargin     = "/fapi/v1/multiAssetsMargin"
+
+	umarginAccountTradeList = "/sapi/v1/margin/myTrades"
 )
 
 // UServerTime gets the server time
@@ -691,7 +692,9 @@ func (b *Binance) UFuturesNewOrder(ctx context.Context, data *UFuturesNewOrderRe
 	if err := b.SendAuthHTTPRequest(ctx, exchange.RestUSDTMargined, http.MethodPost, ufuturesOrder, params, uFuturesOrdersDefaultRate, &resp); err != nil {
 		return resp, err
 	}
-	log.Printf("Binance futures new order id: %+v", resp)
+	if resp.OrderID <= 0 {
+		return resp, errors.New("invalid orderID")
+	}
 	return resp, nil
 }
 
@@ -777,7 +780,6 @@ func (b *Binance) UModifyOrder(ctx context.Context, m *UFuturesModifyOrderReques
 	if err := b.SendAuthHTTPRequest(ctx, exchange.RestUSDTMargined, http.MethodPut, ufuturesOrder, params, uFuturesOrdersDefaultRate, &resp); err != nil {
 		return resp, err
 	}
-	log.Printf("Binance futures modify order id: %+v", resp)
 	return resp, nil
 }
 
@@ -1210,4 +1212,24 @@ func (b *Binance) GetAssetsMode(ctx context.Context) (bool, error) {
 		MultiAssetsMargin bool `json:"multiAssetsMargin"`
 	}
 	return result.MultiAssetsMargin, b.SendAuthHTTPRequest(ctx, exchange.RestUSDTMargined, http.MethodGet, uFuturesMultiAssetsMargin, nil, uFuturesDefaultRate, &result)
+}
+
+func (b *Binance) UAccountTradeList(ctx context.Context, symbol currency.Pair, orderId string) ([]UAccountTradeHistory, error) {
+	var resp []UAccountTradeHistory
+	params := url.Values{}
+	if !symbol.IsEmpty() {
+		symbolValue, err := b.FormatSymbol(symbol, asset.USDTMarginedFutures)
+		if err != nil {
+			return resp, err
+		}
+		params.Set("symbol", symbolValue)
+	}
+	if orderId != "" {
+		params.Set("orderId", orderId)
+	}
+	if err := b.SendAuthHTTPRequest(ctx, exchange.RestUSDTMargined, http.MethodGet, ufuturesAccountTradeList, params, uFuturesDefaultRate, &resp); err != nil {
+		return resp, err
+	}
+
+	return resp, nil
 }

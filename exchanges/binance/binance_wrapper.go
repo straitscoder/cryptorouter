@@ -1113,7 +1113,7 @@ func (b *Binance) ModifyOrder(ctx context.Context, m *order.Modify) (*order.Modi
 				Price:                   m.Price,
 				CancelNewClientOrderID:  m.ClientOrderID,
 				CancelOrigClientOrderID: m.OrigClOrdID,
-				CancelOrderID:           m.OrderID,
+				CancelOrderID:           "",
 			},
 			&cancelReplaceResponse,
 		)
@@ -1145,7 +1145,7 @@ func (b *Binance) ModifyOrder(ctx context.Context, m *order.Modify) (*order.Modi
 			ctx,
 			&UFuturesModifyOrderRequest{
 				Symbol:      m.Pair,
-				OrderID:     m.OrderID,
+				OrderID:     "",
 				OrigClOrdID: m.OrigClOrdID,
 				Side:        reqSide,
 				Quantity:    m.Amount,
@@ -1285,6 +1285,7 @@ func (b *Binance) GetOrderInfo(ctx context.Context, orderID string, pair currenc
 	}
 
 	var respData order.Detail
+	var trades []order.TradeHistory
 	orderIDInt, err := strconv.ParseInt(orderID, 10, 64)
 	if err != nil {
 		return nil, err
@@ -1309,6 +1310,41 @@ func (b *Binance) GetOrderInfo(ctx context.Context, orderID string, pair currenc
 			orderType = order.Market
 		}
 
+		tradeHistoryResponse, err := b.GetAccountTradeList(ctx, pair, orderID)
+		if err != nil {
+			return nil, err
+		}
+
+		if len(tradeHistoryResponse) > 0 {
+			trades = make([]order.TradeHistory, len(tradeHistoryResponse))
+			var total float64
+			var side order.Side
+			switch strings.ToUpper(resp.Side) {
+			case "BUY":
+				side = order.Buy
+			case "SELL":
+				side = order.Sell
+			default:
+				side = order.AnySide
+			}
+			for i := range tradeHistoryResponse {
+				total += tradeHistoryResponse[i].Qty
+				trades[i] = order.TradeHistory{
+					Price:     tradeHistoryResponse[i].Price,
+					Amount:    tradeHistoryResponse[i].Qty,
+					Fee:       tradeHistoryResponse[i].Commission,
+					Exchange:  b.Name,
+					TID:       strconv.FormatInt(tradeHistoryResponse[i].ID, 10),
+					Type:      orderType,
+					Side:      side,
+					Timestamp: time.UnixMilli(tradeHistoryResponse[i].Time),
+					IsMaker:   tradeHistoryResponse[i].IsMaker,
+					FeeAsset:  tradeHistoryResponse[i].CommissionAsset,
+					Total:     total,
+				}
+			}
+		}
+
 		return &order.Detail{
 			Amount:         resp.OrigQty,
 			Exchange:       b.Name,
@@ -1324,6 +1360,7 @@ func (b *Binance) GetOrderInfo(ctx context.Context, orderID string, pair currenc
 			ExecutedAmount: resp.ExecutedQty,
 			Date:           resp.Time,
 			LastUpdated:    resp.UpdateTime,
+			Trades:         trades,
 		}, nil
 	case asset.CoinMarginedFutures:
 		orderData, err := b.FuturesOpenOrderData(ctx, pair, orderID, "")
@@ -1368,6 +1405,41 @@ func (b *Binance) GetOrderInfo(ctx context.Context, orderID string, pair currenc
 			return nil, err
 		}
 		orderVars := compatibleOrderVars(orderData.Side, orderData.Status, orderData.OrderType)
+
+		tradesHistoryResponse, err := b.UAccountTradeList(ctx, pair, orderID)
+		if err != nil {
+			return nil, err
+		}
+
+		if len(tradesHistoryResponse) > 0 {
+			var total float64
+			var side order.Side
+			trades = make([]order.TradeHistory, len(tradesHistoryResponse))
+			for i := range tradesHistoryResponse {
+				switch strings.ToUpper(tradesHistoryResponse[i].Side) {
+				case "BUY":
+					side = order.Buy
+				case "SELL":
+					side = order.Sell
+				default:
+					side = order.AnySide
+				}
+				total += tradesHistoryResponse[i].Qty
+				trades[i] = order.TradeHistory{
+					Price:     tradesHistoryResponse[i].Price,
+					Amount:    tradesHistoryResponse[i].Qty,
+					Fee:       tradesHistoryResponse[i].Commission,
+					Exchange:  b.Name,
+					TID:       strconv.FormatInt(tradesHistoryResponse[i].ID, 10),
+					Side:      side,
+					Type:      orderVars.OrderType,
+					Timestamp: time.UnixMilli(tradesHistoryResponse[i].Time),
+					IsMaker:   tradesHistoryResponse[i].Maker,
+					FeeAsset:  tradesHistoryResponse[i].CommissionAsset,
+					Total:     total,
+				}
+			}
+		}
 		respData.Amount, _ = strconv.ParseFloat(orderData.OriginalQuantity, 64)
 		respData.AssetType = assetType
 		respData.ClientOrderID = orderData.ClientOrderID
@@ -1383,6 +1455,7 @@ func (b *Binance) GetOrderInfo(ctx context.Context, orderID string, pair currenc
 		respData.Type = orderVars.OrderType
 		respData.Date = orderData.UpdateTime
 		respData.LastUpdated = orderData.UpdateTime
+		respData.Trades = trades
 	default:
 		return nil, fmt.Errorf("%w %v", asset.ErrNotSupported, assetType)
 	}
@@ -1767,6 +1840,76 @@ func (b *Binance) GetOrderHistory(ctx context.Context, req *order.MultiOrderRequ
 		return orders, fmt.Errorf("%w %v", asset.ErrNotSupported, req.AssetType)
 	}
 	return req.Filter(b.Name, orders), nil
+}
+
+func (b *Binance) GetTradeHistory(ctx context.Context, od order.Detail) (order.Detail, error) {
+	var trades []order.TradeHistory
+	switch od.AssetType {
+	case asset.Spot:
+		tradeHistoryResponse, err := b.GetAccountTradeList(ctx, od.Pair, od.OrderID)
+		if err != nil {
+			return od, err
+		}
+		trades = make([]order.TradeHistory, len(tradeHistoryResponse))
+		for i := range tradeHistoryResponse {
+			var total float64
+			total += tradeHistoryResponse[i].Qty
+			trades[i] = order.TradeHistory{
+				Price:     tradeHistoryResponse[i].Price,
+				Amount:    tradeHistoryResponse[i].Qty,
+				Fee:       tradeHistoryResponse[i].Commission,
+				Exchange:  b.Name,
+				TID:       strconv.FormatInt(tradeHistoryResponse[i].ID, 10),
+				Type:      od.Type,
+				Timestamp: time.UnixMilli(tradeHistoryResponse[i].Time),
+				IsMaker:   tradeHistoryResponse[i].IsMaker,
+				FeeAsset:  tradeHistoryResponse[i].CommissionAsset,
+				Total:     total,
+			}
+		}
+	case asset.USDTMarginedFutures:
+		tradeHistoryResponse, err := b.UAccountTradeList(ctx, od.Pair, od.OrderID)
+		if err != nil {
+			return od, err
+		}
+		trades = make([]order.TradeHistory, len(tradeHistoryResponse))
+		for i := range tradeHistoryResponse {
+			var total float64
+			total += tradeHistoryResponse[i].Qty
+			var side order.Side
+			switch tradeHistoryResponse[i].Side {
+			case "BUY":
+				side = order.Buy
+			case "SELL":
+				side = order.Sell
+			default:
+				side = order.UnknownSide
+			}
+			trades[i] = order.TradeHistory{
+				Price:     tradeHistoryResponse[i].Price,
+				Amount:    tradeHistoryResponse[i].Qty,
+				Fee:       tradeHistoryResponse[i].Commission,
+				Exchange:  b.Name,
+				TID:       strconv.FormatInt(tradeHistoryResponse[i].ID, 10),
+				Type:      od.Type,
+				Timestamp: time.UnixMilli(tradeHistoryResponse[i].Time),
+				IsMaker:   tradeHistoryResponse[i].Maker,
+				Side:      side,
+				FeeAsset:  tradeHistoryResponse[i].CommissionAsset,
+				Total:     total,
+			}
+		}
+	default:
+		return od, common.ErrFunctionNotSupported
+	}
+
+	if len(od.Trades) > 0 {
+		od.Trades = append(od.Trades, trades...)
+	} else {
+		od.Trades = trades
+	}
+
+	return od, nil
 }
 
 // ValidateAPICredentials validates current credentials used for wrapper
