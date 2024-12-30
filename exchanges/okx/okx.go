@@ -3053,6 +3053,10 @@ func (ok *Okx) GetInstrumentTypeFromAssetItem(a asset.Item) string {
 	}
 }
 
+func (ok *Okx) GetOrdTypeFromType(o order.Type) string {
+	return strings.ToLower(o.String())
+}
+
 // GetUnderlying returns the instrument ID for the corresponding asset pairs and asset type( Instrument Type )
 func (ok *Okx) GetUnderlying(pair currency.Pair, a asset.Item) (string, error) {
 	format, err := ok.GetPairFormat(a, false)
@@ -4220,9 +4224,9 @@ func (ok *Okx) SendHTTPRequest(ctx context.Context, ep exchange.URL, f request.E
 		path := endpoint + requestPath
 		headers := make(map[string]string)
 		headers["Content-Type"] = "application/json"
-		if _, okay := ctx.Value(testNetVal).(bool); okay {
-			headers["x-simulated-trading"] = "1"
-		}
+		// if _, okay := ctx.Value(testNetVal).(bool); okay {
+		headers["x-simulated-trading"] = "1"
+		// }
 		if authenticated {
 			var creds *account.Credentials
 			creds, err = ok.GetCredentials(ctx)

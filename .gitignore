@@ -23,11 +23,17 @@ gocryptotrader
 cmd/gctcli/gctcli
 backtester/backtester
 backtester/btcli/btcli
+fixengine/fixengine
+fixcli/fixcli
 *.exe
 *.exe~
 *.dll
 *.so
 *.dylib
+
+
+# test database
+*.db
 
 # Test binary, build with `go test -c`
 *.test

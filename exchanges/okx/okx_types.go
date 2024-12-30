@@ -665,7 +665,7 @@ type OrderDetail struct {
 	Tag                        string       `json:"tag"`
 	ProfitAndLoss              string       `json:"pnl"`
 	OrderType                  string       `json:"ordType"`
-	Side                       order.Side   `json:"side"`
+	Side                       string       `json:"side"`
 	PositionSide               string       `json:"posSide"`
 	TradeMode                  string       `json:"tdMode"`
 	TradeID                    string       `json:"tradeId"`
@@ -780,7 +780,7 @@ type TransactionDetail struct {
 	Tag            string           `json:"tag"`
 	FillPrice      types.Number     `json:"fillPx"`
 	FillSize       types.Number     `json:"fillSz"`
-	Side           order.Side       `json:"side"`
+	Side           string           `json:"side"`
 	PositionSide   string           `json:"posSide"`
 	ExecType       string           `json:"execType"`
 	FeeCurrency    string           `json:"feeCcy"`
