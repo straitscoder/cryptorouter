@@ -24,6 +24,7 @@ import (
 	"github.com/thrasher-corp/gocryptotrader/exchanges/kline"
 	"github.com/thrasher-corp/gocryptotrader/exchanges/order"
 	"github.com/thrasher-corp/gocryptotrader/exchanges/request"
+	"github.com/thrasher-corp/gocryptotrader/log"
 )
 
 // Okx is the overarching type across this package
@@ -51,9 +52,11 @@ const (
 
 	okxAPIPath      = "api" + okxAPIVersion
 	okxWebsocketURL = "wss://ws.okx.com:8443/ws" + okxAPIVersion
+	okxPublicURL    = "public"
+	okxPrivateURL   = "private"
 
-	okxAPIWebsocketPublicURL  = okxWebsocketURL + "public"
-	okxAPIWebsocketPrivateURL = okxWebsocketURL + "private"
+	okxAPIWebsocketPublicURL  = okxWebsocketURL + okxPublicURL
+	okxAPIWebsocketPrivateURL = okxWebsocketURL + okxPrivateURL
 
 	// tradeEndpoints
 	tradeOrder                = "trade/order"
@@ -396,7 +399,7 @@ func (ok *Okx) PlaceOrder(ctx context.Context, arg *PlaceOrderRequestParam, a as
 	if arg == nil {
 		return nil, errNilArgument
 	}
-	arg.AssetType = a
+	// arg.AssetType = a
 	err := ok.validatePlaceOrderParams(arg)
 	if err != nil {
 		return nil, err
@@ -4217,6 +4220,7 @@ func (ok *Okx) SendHTTPRequest(ctx context.Context, ep exchange.URL, f request.E
 
 		if data != nil {
 			payload, err = json.Marshal(data)
+			log.Debugf(log.ExchangeSys, "args: %+v", string(payload))
 			if err != nil {
 				return nil, err
 			}

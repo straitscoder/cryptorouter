@@ -198,7 +198,7 @@ func (b *Bitmex) Setup(exch *config.Exchange) error {
 	return b.Websocket.SetupNewConnection(&stream.ConnectionSetup{
 		ResponseCheckTimeout: exch.WebsocketResponseCheckTimeout,
 		ResponseMaxLimit:     exch.WebsocketResponseMaxLimit,
-		URL:                  bitmexWSURL,
+		// URL:                  bitmexWSURL,
 	})
 }
 
@@ -689,15 +689,28 @@ func (b *Bitmex) SubmitOrder(ctx context.Context, s *order.Submit) (*order.Submi
 			errors.New("order contract amount can not have decimals")
 	}
 
+	if s.AssetType == asset.Futures {
+		s.AssetType = asset.PerpetualContract
+	}
+
 	fPair, err := b.FormatExchangeCurrency(s.Pair, s.AssetType)
 	if err != nil {
 		return nil, err
 	}
 
+	orderQty := s.Amount
+	switch s.AssetType {
+	case asset.Spot:
+		orderQty = s.Amount * 1000000
+	case asset.PerpetualContract, asset.Futures:
+		orderQty = s.Amount * 100
+	}
+
 	var orderNewParams = OrderNewParams{
+		ClientOrderID: s.ClientOrderID,
 		OrderType:     s.Type.Title(),
 		Symbol:        fPair.String(),
-		OrderQuantity: s.Amount,
+		OrderQuantity: orderQty,
 		Side:          s.Side.Title(),
 	}
 
@@ -723,10 +736,19 @@ func (b *Bitmex) ModifyOrder(ctx context.Context, action *order.Modify) (*order.
 		return nil, errors.New("contract amount can not have decimals")
 	}
 
+	orderQty := action.Amount
+	switch action.AssetType {
+	case asset.Spot:
+		orderQty = action.Amount * 1000000
+	case asset.PerpetualContract, asset.Futures:
+		orderQty = action.Amount * 100
+	}
+
 	o, err := b.AmendOrder(ctx, &OrderAmendParams{
-		OrderID:  action.OrderID,
-		OrderQty: int32(action.Amount),
-		Price:    action.Price})
+		OrigClOrdID: action.OrigClOrdID,
+		OrderID:     action.OrderID,
+		OrderQty:    orderQty,
+		Price:       action.Price})
 	if err != nil {
 		return nil, err
 	}
@@ -833,7 +855,11 @@ func (b *Bitmex) GetOrderInfo(ctx context.Context, orderID string, pair currency
 			return nil, err
 		}
 		var oType order.Type
-		oType, err = b.getOrderType(resp[i].OrdType)
+		oType, err = order.StringToOrderType(resp[i].OrdType)
+		if err != nil {
+			return nil, err
+		}
+		side, err := order.StringToOrderSide(resp[i].Side)
 		if err != nil {
 			return nil, err
 		}
@@ -845,7 +871,7 @@ func (b *Bitmex) GetOrderInfo(ctx context.Context, orderID string, pair currency
 			RemainingAmount: resp[i].LeavesQty,
 			Exchange:        b.Name,
 			OrderID:         resp[i].OrderID,
-			Side:            orderSideMap[resp[i].Side],
+			Side:            side,
 			Status:          orderStatus,
 			Type:            oType,
 			Pair:            pair,
@@ -946,9 +972,13 @@ func (b *Bitmex) GetActiveOrders(ctx context.Context, req *order.MultiOrderReque
 			log.Errorf(log.ExchangeSys, "%s %v", b.Name, err)
 		}
 		var oType order.Type
-		oType, err = b.getOrderType(resp[i].OrdType)
+		oType, err = order.StringToOrderType(resp[i].OrdType)
 		if err != nil {
 			log.Errorf(log.ExchangeSys, "%s %v", b.Name, err)
+		}
+		side, err := order.StringToOrderSide(resp[i].Side)
+		if err != nil {
+			return nil, err
 		}
 		orderDetail := order.Detail{
 			Date:            resp[i].Timestamp,
@@ -958,7 +988,7 @@ func (b *Bitmex) GetActiveOrders(ctx context.Context, req *order.MultiOrderReque
 			RemainingAmount: resp[i].LeavesQty,
 			Exchange:        b.Name,
 			OrderID:         resp[i].OrderID,
-			Side:            orderSideMap[resp[i].Side],
+			Side:            side,
 			Status:          orderStatus,
 			Type:            oType,
 			Pair: currency.NewPairWithDelimiter(resp[i].Symbol,
@@ -980,7 +1010,12 @@ func (b *Bitmex) GetOrderHistory(ctx context.Context, req *order.MultiOrderReque
 		return nil, err
 	}
 
-	params := OrdersRequest{}
+	startTime := req.StartTime.Format(time.RFC3339)
+	endTime := req.EndTime.Format(time.RFC3339)
+	params := OrdersRequest{
+		StartTime: startTime,
+		EndTime:   endTime,
+	}
 	resp, err := b.GetOrders(ctx, &params)
 	if err != nil {
 		return nil, err
@@ -993,7 +1028,10 @@ func (b *Bitmex) GetOrderHistory(ctx context.Context, req *order.MultiOrderReque
 
 	orders := make([]order.Detail, len(resp))
 	for i := range resp {
-		orderSide := orderSideMap[resp[i].Side]
+		side, err := order.StringToOrderSide(resp[i].Side)
+		if err != nil {
+			return nil, err
+		}
 		var orderStatus order.Status
 		orderStatus, err = order.StringToOrderStatus(resp[i].OrdStatus)
 		if err != nil {
@@ -1003,7 +1041,7 @@ func (b *Bitmex) GetOrderHistory(ctx context.Context, req *order.MultiOrderReque
 		pair := currency.NewPairWithDelimiter(resp[i].Symbol, resp[i].SettlCurrency, format.Delimiter)
 
 		var oType order.Type
-		oType, err = b.getOrderType(resp[i].OrdType)
+		oType, err = order.StringToOrderType(resp[i].OrdType)
 		if err != nil {
 			log.Errorf(log.ExchangeSys, "%s %v", b.Name, err)
 		}
@@ -1018,7 +1056,7 @@ func (b *Bitmex) GetOrderHistory(ctx context.Context, req *order.MultiOrderReque
 			CloseTime:            resp[i].Timestamp,
 			Exchange:             b.Name,
 			OrderID:              resp[i].OrderID,
-			Side:                 orderSide,
+			Side:                 side,
 			Status:               orderStatus,
 			Type:                 oType,
 			Pair:                 pair,
@@ -1039,6 +1077,9 @@ func (b *Bitmex) AuthenticateWebsocket(ctx context.Context) error {
 // functionality
 func (b *Bitmex) ValidateAPICredentials(ctx context.Context, assetType asset.Item) error {
 	_, err := b.UpdateAccountInfo(ctx, assetType)
+	if err != nil {
+		log.Debugf(log.ExchangeSys, "error when validate bitmex: %+v", err)
+	}
 	return b.CheckTransientError(err)
 }
 

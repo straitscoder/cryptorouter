@@ -764,16 +764,21 @@ func (m *OrderManager) processOrders() {
 			}
 
 			for z := range exchangeOrders {
+				// skip old cancelled order
+				if exchangeOrders[z].Status == order.Cancelled && exchangeOrders[z].Date.Before(time.Now().Add(-2*time.Hour)) {
+					continue
+				}
 				updatedOrder, err := exchanges[x].GetOrderInfo(context.TODO(), exchangeOrders[z].OrderID, exchangeOrders[z].Pair, enabledAssets[y])
 				if err != nil {
 					log.Debugf(log.OrderMgr, "Invalid asset type: %s", enabledAssets[y])
 					log.Errorf(log.OrderMgr, "Unable to get order info: %s", err)
+					log.Errorf(log.OrderMgr, "this order not exist: %+v", exchangeOrders[z])
 					continue
 				}
 
 				var trades []model.Trade
 				existingOrder := model.GetOrderByOrderID(updatedOrder.OrderID)
-				if existingOrder.ClientOrderID == "" {
+				if existingOrder.AssetType == "" {
 					createOrder := model.Order{
 						ClientOrderID: updatedOrder.ClientOrderID,
 						OrderID:       updatedOrder.OrderID,

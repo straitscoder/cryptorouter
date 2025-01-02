@@ -208,7 +208,7 @@ func (ok *Okx) Setup(exch *config.Exchange) error {
 	if err := ok.Websocket.Setup(&stream.WebsocketSetup{
 		ExchangeConfig:                         exch,
 		DefaultURL:                             okxAPIWebsocketPublicURL,
-		RunningURL:                             wsRunningEndpoint,
+		RunningURL:                             wsRunningEndpoint + okxPublicURL,
 		Connector:                              ok.WsConnect,
 		Subscriber:                             ok.Subscribe,
 		Unsubscriber:                           ok.Unsubscribe,
@@ -235,7 +235,7 @@ func (ok *Okx) Setup(exch *config.Exchange) error {
 	}
 
 	return ok.Websocket.SetupNewConnection(&stream.ConnectionSetup{
-		URL:                  okxAPIWebsocketPrivateURL,
+		URL:                  wsRunningEndpoint + okxPrivateURL,
 		ResponseCheckTimeout: exch.WebsocketResponseCheckTimeout,
 		ResponseMaxLimit:     okxWebsocketResponseMaxLimit,
 		Authenticated:        true,
@@ -737,6 +737,9 @@ func (ok *Okx) SubmitOrder(ctx context.Context, s *order.Submit) (*order.SubmitR
 	}
 	instrumentID := pairFormat.Format(s.Pair)
 	tradeMode := ok.marginTypeToString(s.MarginType)
+	if s.AssetType == asset.Futures && tradeMode == "cash" {
+		tradeMode = TradeModeCross
+	}
 	if s.Leverage != 0 && s.Leverage != 1 {
 		return nil, fmt.Errorf("%w received '%v'", order.ErrSubmitLeverageNotSupported, s.Leverage)
 	}
@@ -758,6 +761,7 @@ func (ok *Okx) SubmitOrder(ctx context.Context, s *order.Submit) (*order.SubmitR
 	}
 
 	var orderRequest = &PlaceOrderRequestParam{
+		AssetType:     s.AssetType,
 		InstrumentID:  instrumentID,
 		TradeMode:     tradeMode,
 		Side:          sideType,
@@ -777,12 +781,16 @@ func (ok *Okx) SubmitOrder(ctx context.Context, s *order.Submit) (*order.SubmitR
 			orderRequest.OrderType = OkxOrderOptimalLimitIOC
 		}
 		// TODO: handle positionSideLong while side is Short and positionSideShort while side is Long
-		if s.Side.IsLong() {
-			orderRequest.PositionSide = positionSideLong
-		} else {
-			orderRequest.PositionSide = positionSideShort
+		switch s.Side {
+		case order.Buy, order.Bid:
+			orderRequest.PositionSide = "long"
+		case order.Sell, order.Ask:
+			orderRequest.PositionSide = "short"
+		default:
+			return nil, fmt.Errorf("invalid side from request: %s", errInvalidOrderSide.Error())
 		}
 	}
+	log.Debugf(log.ExchangeSys, "submit order req: %+v", orderRequest)
 	if ok.Websocket.CanUseAuthenticatedWebsocketForWrapper() {
 		placeOrderResponse, err = ok.WsPlaceOrder(orderRequest)
 		if err != nil {

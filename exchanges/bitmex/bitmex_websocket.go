@@ -2,6 +2,7 @@ package bitmex
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -100,8 +101,9 @@ func (b *Bitmex) WsConnect() error {
 	}
 
 	if b.Websocket.CanUseAuthenticatedEndpoints() {
-		if err := b.websocketSendAuth(ctx); err != nil {
-			b.Websocket.SetCanUseAuthenticatedEndpoints(false)
+		if err := b.websocketSendAuth(context.TODO()); err != nil {
+			log.Debugf(log.ExchangeSys, "catch error: %+v", err)
+			// b.Websocket.SetCanUseAuthenticatedEndpoints(false)
 			log.Errorf(log.ExchangeSys, "%v - authentication failed: %v\n", b.Name, err)
 		}
 	}
@@ -251,17 +253,25 @@ func (b *Bitmex) wsHandleData(respRaw []byte) error {
 					Err:      err,
 				}
 			}
+			amount := response.Data[i].OrderQuantity
+			switch a {
+			case asset.Spot:
+				amount = amount / 1000000
+			case asset.PerpetualContract, asset.Futures:
+				amount = amount / 100
+			}
 			b.Websocket.DataHandler <- &order.Detail{
-				Exchange:  b.Name,
-				OrderID:   response.Data[i].OrderID,
-				AccountID: strconv.FormatInt(response.Data[i].Account, 10),
-				AssetType: a,
-				Pair:      p,
-				Status:    oStatus,
+				ClientOrderID: response.Data[i].ClOrdID,
+				Exchange:      b.Name,
+				OrderID:       response.Data[i].OrderID,
+				AccountID:     strconv.FormatInt(response.Data[i].Account, 10),
+				AssetType:     a,
+				Pair:          p,
+				Status:        oStatus,
 				Trades: []order.TradeHistory{
 					{
 						Price:     response.Data[i].Price,
-						Amount:    response.Data[i].OrderQuantity,
+						Amount:    amount,
 						Exchange:  b.Name,
 						TID:       response.Data[i].ExecID,
 						Side:      oSide,
@@ -307,18 +317,26 @@ func (b *Bitmex) wsHandleData(respRaw []byte) error {
 						Err:      err,
 					}
 				}
+				amount := response.Data[x].OrderQuantity
+				switch a {
+				case asset.Spot:
+					amount = amount / 1000000
+				case asset.PerpetualContract, asset.Futures:
+					amount = amount / 100
+				}
 				b.Websocket.DataHandler <- &order.Detail{
-					Price:     response.Data[x].Price,
-					Amount:    response.Data[x].OrderQuantity,
-					Exchange:  b.Name,
-					OrderID:   response.Data[x].OrderID,
-					AccountID: strconv.FormatInt(response.Data[x].Account, 10),
-					Type:      oType,
-					Side:      oSide,
-					Status:    oStatus,
-					AssetType: a,
-					Date:      response.Data[x].TransactTime,
-					Pair:      p,
+					ClientOrderID: response.Data[x].ClientOrderID,
+					Price:         response.Data[x].Price,
+					Amount:        amount,
+					Exchange:      b.Name,
+					OrderID:       response.Data[x].OrderID,
+					AccountID:     strconv.FormatInt(response.Data[x].Account, 10),
+					Type:          oType,
+					Side:          oSide,
+					Status:        oStatus,
+					AssetType:     a,
+					Date:          response.Data[x].TransactTime,
+					Pair:          p,
 				}
 			}
 		case "delete":
@@ -354,18 +372,26 @@ func (b *Bitmex) wsHandleData(respRaw []byte) error {
 						Err:      err,
 					}
 				}
+				amount := response.Data[x].OrderQuantity
+				switch a {
+				case asset.Spot:
+					amount = amount / 1000000
+				case asset.PerpetualContract, asset.Futures:
+					amount = amount / 100
+				}
 				b.Websocket.DataHandler <- &order.Detail{
-					Price:     response.Data[x].Price,
-					Amount:    response.Data[x].OrderQuantity,
-					Exchange:  b.Name,
-					OrderID:   response.Data[x].OrderID,
-					AccountID: strconv.FormatInt(response.Data[x].Account, 10),
-					Type:      oType,
-					Side:      oSide,
-					Status:    oStatus,
-					AssetType: a,
-					Date:      response.Data[x].TransactTime,
-					Pair:      p,
+					ClientOrderID: response.Data[x].ClientOrderID,
+					Price:         response.Data[x].Price,
+					Amount:        amount,
+					Exchange:      b.Name,
+					OrderID:       response.Data[x].OrderID,
+					AccountID:     strconv.FormatInt(response.Data[x].Account, 10),
+					Type:          oType,
+					Side:          oSide,
+					Status:        oStatus,
+					AssetType:     a,
+					Date:          response.Data[x].TransactTime,
+					Pair:          p,
 				}
 			}
 		default:
@@ -587,6 +613,7 @@ func (b *Bitmex) manageSubs(op string, subs subscription.List, stream string) er
 // WebsocketSendAuth sends an authenticated subscription
 func (b *Bitmex) websocketSendAuth(ctx context.Context) error {
 	creds, err := b.GetCredentials(ctx)
+	log.Debugf(log.ExchangeSys, "bitmex credentials: %+v", creds)
 	if err != nil {
 		return err
 	}
@@ -599,6 +626,7 @@ func (b *Bitmex) websocketSendAuth(ctx context.Context) error {
 	signature := crypto.HexEncodeToString(hmac)
 
 	err = b.wsOpenStream(ctx, b.Websocket.Conn, wsPrivateStream)
+	log.Debugf(log.ExchangeSys, "catch error: %+v", err)
 	if err != nil {
 		return err
 	}
@@ -647,6 +675,19 @@ func channelName(s *subscription.Subscription, a asset.Item) string {
 		return bitmexWSTrade
 	}
 	return s.Channel
+}
+
+func generateRandomString(n int) string {
+	const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+	b := make([]byte, n)
+	_, err := rand.Read(b)
+	if err != nil {
+		panic(err) // Handle error appropriately in production
+	}
+	for i := range b {
+		b[i] = charset[int(b[i])%len(charset)]
+	}
+	return string(b)
 }
 
 const subTplText = `

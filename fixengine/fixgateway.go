@@ -10,6 +10,7 @@ import (
 	"path"
 	"runtime"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gofrs/uuid"
@@ -193,7 +194,7 @@ func FromOrdType(orderType enum.OrdType) order.Type {
 func FromSecurityType(secType enum.SecurityType) asset.Item {
 	switch secType {
 	case enum.SecurityType_FUTURE:
-		return asset.USDTMarginedFutures
+		return asset.Futures
 	case enum.SecurityType_FX_SPOT:
 		return asset.Spot
 	case enum.SecurityType_NON_DELIVERABLE_FORWARD:
@@ -249,6 +250,16 @@ func (a *Application) onNewOrderSingle(msg newordersingle.NewOrderSingle, sessio
 		return err
 	}
 
+	assetType := FromSecurityType(securityType)
+	if assetType == asset.Futures && strings.ToUpper(exchange) == "BINANCE" {
+		switch pair.Quote.String() {
+		case "USD":
+			assetType = asset.CoinMarginedFutures
+		default:
+			assetType = asset.USDTMarginedFutures
+		}
+	}
+
 	submission := &order.Submit{
 		Pair:          pair,
 		Side:          FromSide(side),
@@ -257,7 +268,7 @@ func (a *Application) onNewOrderSingle(msg newordersingle.NewOrderSingle, sessio
 		Price:         price.InexactFloat64(),
 		ClientOrderID: clOrdID,
 		Exchange:      exchange,
-		AssetType:     asset.Item(FromSecurityType(securityType)),
+		AssetType:     assetType,
 	}
 
 	exch, e := a.exchangeManager.GetExchangeByName(submission.Exchange)
@@ -683,6 +694,8 @@ func ToSecurityType(assetType asset.Item) enum.SecurityType {
 	case asset.Spot:
 		return enum.SecurityType_FX_SPOT
 	case asset.USDTMarginedFutures:
+		return enum.SecurityType_FUTURE
+	case asset.PerpetualSwap, asset.PerpetualContract:
 		return enum.SecurityType_FUTURE
 	default:
 		return enum.SecurityType_FX_FORWARD

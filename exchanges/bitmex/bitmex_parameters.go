@@ -362,7 +362,7 @@ type OrderAmendParams struct {
 
 	// OrderQuantity - [Optional] order quantity in units of the instrument
 	// (i.e. contracts).
-	OrderQty int32 `json:"orderQty,omitempty"`
+	OrderQty float64 `json:"orderQty,omitempty"`
 
 	// OrigClOrdID - Client Order ID. See POST /order.
 	OrigClOrdID string `json:"origClOrdID,omitempty"`
@@ -395,10 +395,7 @@ type OrderAmendParams struct {
 }
 
 // VerifyData verifies outgoing data sets
-func (p *OrderAmendParams) VerifyData() error {
-	if p.OrderID == "" {
-		return errors.New("verifydata() OrderNewParams error - ID not set")
-	}
+func (p OrderAmendParams) VerifyData() error {
 	return nil
 }
 
@@ -968,8 +965,12 @@ func (p UserCurrencyParams) VerifyData() error {
 
 // ToURLVals converts struct values to url.values and encodes it on the supplied
 // path
-func (p UserCurrencyParams) ToURLVals(_ string) (string, error) {
-	return "", nil
+func (p UserCurrencyParams) ToURLVals(path string) (string, error) {
+	values, err := StructValsToURLVals(&p)
+	if err != nil {
+		return "", err
+	}
+	return common.EncodeURLValues(path, values), nil
 }
 
 // IsNil checks to see if any values has been set for the parameter
@@ -1058,8 +1059,12 @@ func (p *OrdersRequest) VerifyData() error {
 
 // ToURLVals converts struct values to url.values and encodes it on the supplied
 // path
-func (p *OrdersRequest) ToURLVals(_ string) (string, error) {
-	return "", nil
+func (p OrdersRequest) ToURLVals(path string) (string, error) {
+	values, err := StructValsToURLVals(&p)
+	if err != nil {
+		return "", err
+	}
+	return common.EncodeURLValues(path, values), nil
 }
 
 // IsNil checks to see if any values has been set for the parameter

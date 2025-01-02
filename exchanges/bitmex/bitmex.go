@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/thrasher-corp/gocryptotrader/common"
 	"github.com/thrasher-corp/gocryptotrader/common/crypto"
 	"github.com/thrasher-corp/gocryptotrader/currency"
 	exchange "github.com/thrasher-corp/gocryptotrader/exchanges"
@@ -884,42 +885,52 @@ func (b *Bitmex) SendAuthenticatedHTTPRequest(ctx context.Context, ep exchange.U
 	var respCheck interface{}
 	newRequest := func() (*request.Item, error) {
 		expires := time.Now().Add(time.Second * 10)
-		timestamp := expires.UnixNano()
+		timestamp := expires.Unix()
 		timestampStr := strconv.FormatInt(timestamp, 10)
-		timestampNew := timestampStr[:13]
+		// timestampNew := timestampStr[:13]
 
 		headers := make(map[string]string)
 		headers["Content-Type"] = "application/json"
-		headers["api-expires"] = timestampNew
+		headers["api-expires"] = timestampStr
 		headers["api-key"] = creds.Key
 
 		var payload string
+		pathWithParams := path
 		if params != nil {
 			err = params.VerifyData()
 			if err != nil {
 				return nil, err
 			}
-			var data []byte
-			data, err = json.Marshal(params)
-			if err != nil {
-				return nil, err
+			switch verb {
+			case http.MethodPost, http.MethodPut, http.MethodDelete:
+				var data []byte
+				data, err = json.Marshal(params)
+				if err != nil {
+					return nil, err
+				}
+				payload = string(data)
+			case http.MethodGet:
+				pathWithParams, err = params.ToURLVals(path)
+				if err != nil {
+					return nil, err
+				}
+			default:
+				return nil, common.ErrNotYetImplemented
 			}
-			payload = string(data)
 		}
 
 		var hmac []byte
 		hmac, err = crypto.GetHMAC(crypto.HashSHA256,
-			[]byte(verb+"/api/v1"+path+timestampNew+payload),
+			[]byte(verb+"/api/v1"+pathWithParams+timestampStr+payload),
 			[]byte(creds.Secret))
 		if err != nil {
 			return nil, err
 		}
 
 		headers["api-signature"] = crypto.HexEncodeToString(hmac)
-
 		return &request.Item{
 			Method:        verb,
-			Path:          endpoint + path,
+			Path:          endpoint + pathWithParams,
 			Headers:       headers,
 			Body:          strings.NewReader(payload),
 			Result:        &respCheck,

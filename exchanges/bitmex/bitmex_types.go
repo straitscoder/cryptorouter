@@ -299,14 +299,14 @@ type Order struct {
 	MultiLegReportingType string    `json:"multiLegReportingType"`
 	OrdRejReason          string    `json:"ordRejReason"`
 	OrdStatus             string    `json:"ordStatus"`
-	OrdType               int64     `json:"ordType,string"`
+	OrdType               string    `json:"ordType"`
 	OrderID               string    `json:"orderID"`
 	OrderQty              float64   `json:"orderQty"`
 	PegOffsetValue        float64   `json:"pegOffsetValue"`
 	PegPriceType          string    `json:"pegPriceType"`
 	Price                 float64   `json:"price"`
 	SettlCurrency         string    `json:"settlCurrency"`
-	Side                  int64     `json:"side,string"`
+	Side                  string    `json:"side"`
 	SimpleCumQty          float64   `json:"simpleCumQty"`
 	SimpleLeavesQty       float64   `json:"simpleLeavesQty"`
 	SimpleOrderQty        float64   `json:"simpleOrderQty"`
@@ -624,7 +624,7 @@ type UserMargin struct {
 	PrevState          string    `json:"prevState"`
 	PrevUnrealisedPnl  int64     `json:"prevUnrealisedPnl"`
 	RealisedPnl        int64     `json:"realisedPnl"`
-	RiskLimit          int64     `json:"riskLimit"`
+	RiskLimit          float64   `json:"riskLimit"`
 	RiskValue          int64     `json:"riskValue"`
 	SessionMargin      int64     `json:"sessionMargin"`
 	State              string    `json:"state"`
