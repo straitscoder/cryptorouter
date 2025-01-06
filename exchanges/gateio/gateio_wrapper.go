@@ -226,8 +226,9 @@ func (g *Gateio) Setup(exch *config.Exchange) error {
 		return err
 	}
 	// Futures connection - USDT margined
+	futureWs, err := g.API.Endpoints.GetURL(exchange.WebsocketSpot)
 	err = g.Websocket.SetupNewConnection(&stream.ConnectionSetup{
-		URL:                  futuresWebsocketUsdtURL,
+		URL:                  futureWs + usdtUrl,
 		ResponseCheckTimeout: exch.WebsocketResponseCheckTimeout,
 		ResponseMaxLimit:     exch.WebsocketResponseMaxLimit,
 		Handler: func(ctx context.Context, incoming []byte) error {
@@ -246,7 +247,7 @@ func (g *Gateio) Setup(exch *config.Exchange) error {
 
 	// Futures connection - BTC margined
 	err = g.Websocket.SetupNewConnection(&stream.ConnectionSetup{
-		URL:                  futuresWebsocketBtcURL,
+		URL:                  futureWs + btcUrl,
 		ResponseCheckTimeout: exch.WebsocketResponseCheckTimeout,
 		ResponseMaxLimit:     exch.WebsocketResponseMaxLimit,
 		Handler: func(ctx context.Context, incoming []byte) error {
@@ -266,7 +267,7 @@ func (g *Gateio) Setup(exch *config.Exchange) error {
 	// TODO: Add BTC margined delivery futures.
 	// Futures connection - Delivery - USDT margined
 	err = g.Websocket.SetupNewConnection(&stream.ConnectionSetup{
-		URL:                  deliveryRealUSDTTradingURL,
+		URL:                  deliveryTestNetBTCTradingURL,
 		ResponseCheckTimeout: exch.WebsocketResponseCheckTimeout,
 		ResponseMaxLimit:     exch.WebsocketResponseMaxLimit,
 		Handler: func(ctx context.Context, incoming []byte) error {
@@ -578,10 +579,12 @@ func (g *Gateio) FetchTradablePairs(ctx context.Context, a asset.Item) (currency
 // UpdateTradablePairs updates the exchanges available pairs and stores
 // them in the exchanges config
 func (g *Gateio) UpdateTradablePairs(ctx context.Context, forceUpdate bool) error {
-	assets := g.GetAssetTypes(false)
+	assets := g.GetAssetTypes(true)
+	log.Debugf(log.ExchangeSys, "Update Gate io tradeable pairs from : %+v", assets)
 	for x := range assets {
 		pairs, err := g.FetchTradablePairs(ctx, assets[x])
 		if err != nil {
+			log.Debugf(log.ExchangeSys, "Error when fetch pairs from this asset %s: %+v", assets[x].String(), err)
 			return err
 		}
 		if len(pairs) == 0 {

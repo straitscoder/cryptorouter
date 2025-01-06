@@ -157,19 +157,20 @@ func (m *websocketRoutineManager) websocketRoutine() {
 				if ws.IsEnabled() {
 					err = ws.Connect()
 					if err != nil {
-						log.Errorf(log.WebsocketMgr, "%v", err)
+						log.Errorf(log.WebsocketMgr, "Error connecting to %s: %+v", exchanges[i].GetName(), err)
 					}
 
 					err = m.websocketDataReceiver(ws)
 					if err != nil {
-						log.Errorf(log.WebsocketMgr, "%v", err)
+						log.Errorf(log.WebsocketMgr, "Error attach receiver to %s: %+v", exchanges[i].GetName(), err)
 					}
 
 					err = ws.FlushChannels()
 					if err != nil {
-						log.Errorf(log.WebsocketMgr, "Failed to subscribe: %v", err)
+						log.Errorf(log.WebsocketMgr, "Failed to subscribe %s: %+v", exchanges[i].GetName(), err)
 					}
 				}
+				log.Infof(log.WebsocketMgr, "connect to %s websocket", exchanges[i].GetName())
 			} else if m.verbose {
 				log.Debugf(log.WebsocketMgr,
 					"Exchange %s websocket support: No",

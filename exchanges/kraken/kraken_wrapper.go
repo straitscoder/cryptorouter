@@ -374,7 +374,7 @@ func (k *Kraken) FetchTradablePairs(ctx context.Context, a asset.Item) (currency
 
 // UpdateTradablePairs updates the exchanges available pairs and stores them in the exchanges config
 func (k *Kraken) UpdateTradablePairs(ctx context.Context, forceUpdate bool) error {
-	assets := k.GetAssetTypes(false)
+	assets := k.GetAssetTypes(true)
 	for x := range assets {
 		pairs, err := k.FetchTradablePairs(ctx, assets[x])
 		if err != nil {

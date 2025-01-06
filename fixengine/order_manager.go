@@ -880,7 +880,21 @@ func (m *OrderManager) processOrders() {
 							log.Errorf(log.OrderMgr, "Unable to update order: %s", err)
 							continue
 						}
-						log.Debugf(log.OrderMgr, "repeated update: %s = %s", updatedOrder.Status.String(), existingOrder.Status)
+
+						m.fixGateway.UpdateOrder(updatedOrder, ToOrdStatus(updatedOrder.Status), "Update order from order manager")
+					} else if existingOrder.Amount != updatedOrder.Amount || existingOrder.Price != updatedOrder.Price {
+						if existingOrder.Price != updatedOrder.Price {
+							existingOrder.Price = updatedOrder.Price
+						}
+						if existingOrder.Amount != updatedOrder.Amount {
+							existingOrder.Amount = updatedOrder.Amount
+						}
+						err := model.UpdateOrder(existingOrder.ClientOrderID, existingOrder)
+						if err != nil {
+							log.Errorf(log.OrderMgr, "Unable to update order: %s", err)
+							continue
+						}
+
 						m.fixGateway.UpdateOrder(updatedOrder, ToOrdStatus(updatedOrder.Status), "Update order from order manager")
 					}
 

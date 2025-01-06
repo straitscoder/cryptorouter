@@ -15,7 +15,6 @@ import (
 	"github.com/thrasher-corp/gocryptotrader/common"
 	"github.com/thrasher-corp/gocryptotrader/config"
 	"github.com/thrasher-corp/gocryptotrader/currency"
-	exchDb "github.com/thrasher-corp/gocryptotrader/database/repository/exchange"
 	"github.com/thrasher-corp/gocryptotrader/dispatch"
 	"github.com/thrasher-corp/gocryptotrader/engine"
 	exchange "github.com/thrasher-corp/gocryptotrader/exchanges"
@@ -568,6 +567,7 @@ func (fixengine *FixEngine) LoadExchange(name string, wg *sync.WaitGroup) error 
 	exchCfg.Enabled = true
 	err = exch.Setup(exchCfg)
 	if err != nil {
+		gctlog.Errorf(gctlog.ExchangeSys, "Exchange setup error: %+v", err)
 		exchCfg.Enabled = false
 		return err
 	}
@@ -601,23 +601,6 @@ func (fixengine *FixEngine) LoadExchange(name string, wg *sync.WaitGroup) error 
 			exchCfg.API.AuthenticatedSupport = false
 			exchCfg.API.AuthenticatedWebsocketSupport = false
 		}
-	}
-	dbExch, err := exchDb.One(exch.GetName())
-	if err != nil {
-		// if errors.Is(err, sql.ErrNoRows) {
-		// 	err = exchDb.Insert(exchDb.Details{
-		// 		Name: exch.GetName(),
-		// 	})
-		// }
-		log.Printf("Error getting exchange %s from db: %s\n", exch.GetName(), err)
-	}
-	if dbExch.Name == "" {
-		err = exchDb.Insert(exchDb.Details{
-			Name: exch.GetName(),
-		})
-	}
-	if err != nil {
-		return err
 	}
 
 	return exchange.Bootstrap(context.TODO(), exch)

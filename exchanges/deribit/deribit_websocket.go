@@ -29,6 +29,7 @@ import (
 var deribitWebsocketAddress = "wss://www.deribit.com/ws" + deribitAPIVersion
 
 const (
+	deribitWs     = "wss://test.deribit.com/ws"
 	rpcVersion    = "2.0"
 	rateLimit     = 20
 	errAuthFailed = 1002
@@ -248,8 +249,8 @@ func (d *Deribit) wsHandleData(respRaw []byte) error {
 		return d.processData(respRaw, rfq)
 	case "ticker":
 		return d.processInstrumentTicker(respRaw, channels)
-	case "trades":
-		return d.processTrades(respRaw, channels)
+	// case "trades":
+	// 	return d.processTrades(respRaw, channels)
 	case "user":
 		switch channels[1] {
 		case "access_log":
@@ -270,8 +271,8 @@ func (d *Deribit) wsHandleData(respRaw []byte) error {
 		case "portfolio":
 			portfolio := &wsUserPortfolio{}
 			return d.processData(respRaw, portfolio)
-		case "trades":
-			return d.processTrades(respRaw, channels)
+		// case "trades":
+		// 	return d.processTrades(respRaw, channels)
 		default:
 			d.Websocket.DataHandler <- stream.UnhandledMessageWarning{
 				Message: d.Name + stream.UnhandledMessage + string(respRaw),
@@ -380,10 +381,10 @@ func (d *Deribit) processUserOrderChanges(respRaw []byte, channels []string) err
 			AssetType:    a,
 		}
 	}
-	err = trade.AddTradesToBuffer(d.Name, td...)
-	if err != nil {
-		return err
-	}
+	// err = trade.AddTradesToBuffer(d.Name, td...)
+	// if err != nil {
+	// 	return err
+	// }
 	orders := make([]order.Detail, len(changeData.Orders))
 	for x := range orders {
 		oType, err := order.StringToOrderType(changeData.Orders[x].OrderType)
@@ -830,7 +831,7 @@ func (d *Deribit) GenerateDefaultSubscriptions() (subscription.List, error) {
 							Channel:  orderbookChannel,
 							Pairs:    currency.Pairs{assetPairs[a][z]},
 							Asset:    a,
-							Interval: kline.Interval(0),
+							Interval: kline.HundredMilliseconds,
 							Params: map[string]interface{}{
 								"group": "none",
 								"depth": "10",

@@ -1520,7 +1520,7 @@ func (d *Deribit) SubmitBuy(ctx context.Context, arg *OrderBuyAndSellParams) (*P
 		params.Set("type", arg.OrderType)
 	}
 	if arg.Price != 0 {
-		params.Set("price", strconv.FormatFloat(arg.Amount, 'f', -1, 64))
+		params.Set("price", strconv.FormatFloat(arg.Price, 'f', -1, 64))
 	}
 	if arg.Label != "" {
 		params.Set("label", arg.Label)
@@ -1680,6 +1680,9 @@ func (d *Deribit) EditOrderByLabel(ctx context.Context, arg *OrderBuyAndSellPara
 	}
 	if arg.Advanced != "" {
 		params.Set("advanced", arg.Advanced)
+	}
+	if arg.Price > 0 {
+		params.Set("price", strconv.FormatFloat(arg.Price, 'f', -1, 64))
 	}
 	var resp *PrivateTradeData
 	return resp, d.SendHTTPAuthRequest(ctx, exchange.RestFutures, nonMatchingEPL, http.MethodGet,
@@ -2138,7 +2141,7 @@ func (d *Deribit) GetUserTradesByInstrumentAndTime(ctx context.Context, instrume
 }
 
 // GetUserTradesByOrder sends a request to get user trades fetched by orderID
-func (d *Deribit) GetUserTradesByOrder(ctx context.Context, orderID, sorting string) (*UserTradesData, error) {
+func (d *Deribit) GetUserTradesByOrder(ctx context.Context, orderID, sorting string) ([]UserTradeData, error) {
 	if orderID == "" {
 		return nil, fmt.Errorf("%w, no order ID specified", errInvalidID)
 	}
@@ -2147,7 +2150,7 @@ func (d *Deribit) GetUserTradesByOrder(ctx context.Context, orderID, sorting str
 	if sorting != "" {
 		params.Set("sorting", sorting)
 	}
-	var resp *UserTradesData
+	var resp []UserTradeData
 	return resp, d.SendHTTPAuthRequest(ctx, exchange.RestFutures, nonMatchingEPL, http.MethodGet,
 		getUserTradesByOrder, params, &resp)
 }

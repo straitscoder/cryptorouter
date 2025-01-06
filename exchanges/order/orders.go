@@ -1167,7 +1167,7 @@ func StringToOrderStatus(status string) (Status, error) {
 	switch status {
 	case AnyStatus.String():
 		return AnyStatus, nil
-	case New.String(), "PLACED", "ACCEPTED":
+	case New.String(), "PLACED", "ACCEPTED", "OPEN":
 		return New, nil
 	case Active.String(), "STATUS_ACTIVE", "LIVE":
 		return Active, nil

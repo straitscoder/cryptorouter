@@ -258,6 +258,13 @@ func (a *Application) onNewOrderSingle(msg newordersingle.NewOrderSingle, sessio
 		default:
 			assetType = asset.USDTMarginedFutures
 		}
+	} else if assetType == asset.Futures && strings.ToUpper(exchange) != "BINANCE" {
+		switch strings.ToUpper(exchange) {
+		case "OKX":
+			assetType = asset.PerpetualSwap
+		case "BITMEX":
+			assetType = asset.PerpetualContract
+		}
 	}
 
 	submission := &order.Submit{
@@ -361,8 +368,16 @@ func (a *Application) onOrderCancelRequest(msg ordercancelrequest.OrderCancelReq
 		return err
 	}
 
-	if securityType == enum.SecurityType_FUTURE {
-		orderID = ""
+	assetType := FromSecurityType(securityType)
+	if assetType.IsFutures() {
+		switch strings.ToUpper(exchange) {
+		case "BINANCE":
+			assetType = asset.USDTMarginedFutures
+		case "OKX":
+			assetType = asset.PerpetualSwap
+		case "BITMEX":
+			assetType = asset.PerpetualContract
+		}
 	}
 
 	request := &order.Cancel{
@@ -370,7 +385,7 @@ func (a *Application) onOrderCancelRequest(msg ordercancelrequest.OrderCancelReq
 		OrderID:       orderDB.OrderID,
 		Side:          FromSide(side),
 		Pair:          pair,
-		AssetType:     FromSecurityType(securityType),
+		AssetType:     assetType,
 		ClientOrderID: orClOrdId,
 		ClientID:      clOrdID,
 	}
@@ -396,10 +411,6 @@ func (a *Application) onOrderCancelReplaceRequest(msg ordercancelreplacerequest.
 	orderID, err := msg.GetOrderID()
 	if err != nil {
 		return err
-	}
-	_, parseErr := strconv.ParseInt(orderID, 10, 64)
-	if parseErr != nil {
-		orderID = ""
 	}
 
 	side, err := msg.GetSide()
@@ -457,8 +468,16 @@ func (a *Application) onOrderCancelReplaceRequest(msg ordercancelreplacerequest.
 		return err
 	}
 
-	if securityType == enum.SecurityType_FUTURE {
-		orderID = ""
+	assetType := FromSecurityType(securityType)
+	if assetType.IsFutures() {
+		switch strings.ToUpper(exchange) {
+		case "BINANCE":
+			assetType = asset.USDTMarginedFutures
+		case "OKX":
+			assetType = asset.PerpetualSwap
+		case "BITMEX":
+			assetType = asset.PerpetualContract
+		}
 	}
 
 	request := &order.Modify{
@@ -466,12 +485,15 @@ func (a *Application) onOrderCancelReplaceRequest(msg ordercancelreplacerequest.
 		OrderID:       orderID,
 		Side:          FromSide(side),
 		Pair:          pair,
-		AssetType:     FromSecurityType(securityType),
+		AssetType:     assetType,
 		ClientOrderID: clOrdID,
 		OrigClOrdID:   orgClOrdID,
 		Type:          FromOrdType(orderType),
 		Price:         price.InexactFloat64(),
 		Amount:        orderQty.InexactFloat64(),
+	}
+	if orderID == "" {
+		request.OrderID = orderDB.OrderID
 	}
 
 	exch, e := a.exchangeManager.GetExchangeByName(request.Exchange)
@@ -485,23 +507,6 @@ func (a *Application) onOrderCancelReplaceRequest(msg ordercancelreplacerequest.
 		a.RejectOrderRequest(request, e.Error())
 	}
 
-	// savedOrder := model.Order{
-	// 	OrderID:   modifiedOrder.OrderID,
-	// 	SessionID: sessionID.String(),
-	// 	Exchange:  modifiedOrder.Exchange,
-	// 	Base:      modifiedOrder.Pair.Base.String(),
-	// 	Quote:     modifiedOrder.Pair.Quote.String(),
-	// 	Side:      modifiedOrder.Side.String(),
-	// 	AssetType: modifiedOrder.AssetType.String(),
-	// 	OrderType: modifiedOrder.Type.String(),
-	// 	Price:     modifiedOrder.Price,
-	// 	Amount:    modifiedOrder.Amount,
-	// 	Timestamp: modifiedOrder.Date,
-	// }
-
-	// if e := model.UpdateOrCreateOrder(savedOrder); e != nil {
-	// 	log.Printf("Error updating modified order: %+v", e)
-	// }
 	return nil
 }
 
@@ -543,9 +548,7 @@ func (a *Application) WebsocketDataHandler(exchName string, data interface{}) er
 		if len(a.sessions) == 0 {
 			return nil
 		}
-		log.Printf("websocket order detail: %+v", d)
 		existingOrder := model.GetOrderByOrderID(d.OrderID)
-		log.Printf("Existing order: %+v", existingOrder)
 		if existingOrder.ClientOrderID == "" {
 			if len(d.Trades) > 0 {
 				for i := range d.Trades {
@@ -635,7 +638,7 @@ func (a *Application) WebsocketDataHandler(exchName string, data interface{}) er
 			if d.Amount != existingOrder.Amount {
 				existingOrder.Amount = d.Amount
 			}
-			if d.Status.String() != existingOrder.Status {
+			if d.Status.String() != existingOrder.Status && d.Status.String() != "UNKNOWN" {
 				existingOrder.Status = d.Status.String()
 				if err := model.UpdateOrder(existingOrder.ClientOrderID, existingOrder); err != nil {
 					log.Printf("Error updating order: %+v", err)
@@ -655,7 +658,7 @@ func (a *Application) WebsocketDataHandler(exchName string, data interface{}) er
 			}
 			return nil
 		} else {
-			if d.Status.String() != existingOrder.Status {
+			if d.Status.String() != existingOrder.Status && d.Status.String() != "UNKNOWN" {
 				existingOrder.Status = d.Status.String()
 				if err := model.UpdateOrder(existingOrder.ClientOrderID, existingOrder); err != nil {
 					log.Printf("Error updating order: %+v", err)
@@ -693,7 +696,7 @@ func ToSecurityType(assetType asset.Item) enum.SecurityType {
 		return enum.SecurityType_NON_DELIVERABLE_FORWARD
 	case asset.Spot:
 		return enum.SecurityType_FX_SPOT
-	case asset.USDTMarginedFutures:
+	case asset.USDTMarginedFutures, asset.USDCMarginedFutures:
 		return enum.SecurityType_FUTURE
 	case asset.PerpetualSwap, asset.PerpetualContract:
 		return enum.SecurityType_FUTURE

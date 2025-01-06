@@ -102,7 +102,6 @@ func (b *Bitmex) WsConnect() error {
 
 	if b.Websocket.CanUseAuthenticatedEndpoints() {
 		if err := b.websocketSendAuth(context.TODO()); err != nil {
-			log.Debugf(log.ExchangeSys, "catch error: %+v", err)
 			// b.Websocket.SetCanUseAuthenticatedEndpoints(false)
 			log.Errorf(log.ExchangeSys, "%v - authentication failed: %v\n", b.Name, err)
 		}
@@ -238,7 +237,7 @@ func (b *Bitmex) wsHandleData(respRaw []byte) error {
 				return err
 			}
 			oStatus, err := order.StringToOrderStatus(response.Data[i].OrdStatus)
-			if err != nil {
+			if err != nil && oStatus != order.UnknownStatus {
 				b.Websocket.DataHandler <- order.ClassificationError{
 					Exchange: b.Name,
 					OrderID:  response.Data[i].OrderID,
@@ -246,7 +245,7 @@ func (b *Bitmex) wsHandleData(respRaw []byte) error {
 				}
 			}
 			oSide, err := order.StringToOrderSide(response.Data[i].Side)
-			if err != nil {
+			if err != nil && oSide != order.UnknownSide {
 				b.Websocket.DataHandler <- order.ClassificationError{
 					Exchange: b.Name,
 					OrderID:  response.Data[i].OrderID,
@@ -294,7 +293,7 @@ func (b *Bitmex) wsHandleData(respRaw []byte) error {
 					return err
 				}
 				oSide, err := order.StringToOrderSide(response.Data[x].Side)
-				if err != nil {
+				if err != nil && oSide != order.UnknownSide {
 					b.Websocket.DataHandler <- order.ClassificationError{
 						Exchange: b.Name,
 						OrderID:  response.Data[x].OrderID,
@@ -302,7 +301,7 @@ func (b *Bitmex) wsHandleData(respRaw []byte) error {
 					}
 				}
 				oType, err := order.StringToOrderType(response.Data[x].OrderType)
-				if err != nil {
+				if err != nil && oType != order.UnknownType {
 					b.Websocket.DataHandler <- order.ClassificationError{
 						Exchange: b.Name,
 						OrderID:  response.Data[x].OrderID,
@@ -310,7 +309,7 @@ func (b *Bitmex) wsHandleData(respRaw []byte) error {
 					}
 				}
 				oStatus, err := order.StringToOrderStatus(response.Data[x].OrderStatus)
-				if err != nil {
+				if err != nil && oStatus != order.UnknownStatus {
 					b.Websocket.DataHandler <- order.ClassificationError{
 						Exchange: b.Name,
 						OrderID:  response.Data[x].OrderID,
@@ -347,7 +346,7 @@ func (b *Bitmex) wsHandleData(respRaw []byte) error {
 				}
 				var oSide order.Side
 				oSide, err = order.StringToOrderSide(response.Data[x].Side)
-				if err != nil {
+				if err != nil && order.UnknownSide != oSide {
 					b.Websocket.DataHandler <- order.ClassificationError{
 						Exchange: b.Name,
 						OrderID:  response.Data[x].OrderID,
@@ -356,7 +355,7 @@ func (b *Bitmex) wsHandleData(respRaw []byte) error {
 				}
 				var oType order.Type
 				oType, err = order.StringToOrderType(response.Data[x].OrderType)
-				if err != nil {
+				if err != nil && oType != order.UnknownType {
 					b.Websocket.DataHandler <- order.ClassificationError{
 						Exchange: b.Name,
 						OrderID:  response.Data[x].OrderID,
@@ -365,7 +364,7 @@ func (b *Bitmex) wsHandleData(respRaw []byte) error {
 				}
 				var oStatus order.Status
 				oStatus, err = order.StringToOrderStatus(response.Data[x].OrderStatus)
-				if err != nil {
+				if err != nil && oStatus != order.UnknownStatus {
 					b.Websocket.DataHandler <- order.ClassificationError{
 						Exchange: b.Name,
 						OrderID:  response.Data[x].OrderID,
@@ -626,7 +625,6 @@ func (b *Bitmex) websocketSendAuth(ctx context.Context) error {
 	signature := crypto.HexEncodeToString(hmac)
 
 	err = b.wsOpenStream(ctx, b.Websocket.Conn, wsPrivateStream)
-	log.Debugf(log.ExchangeSys, "catch error: %+v", err)
 	if err != nil {
 		return err
 	}

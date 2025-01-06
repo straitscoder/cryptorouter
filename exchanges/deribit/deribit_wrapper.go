@@ -193,7 +193,7 @@ func (d *Deribit) Setup(exch *config.Exchange) error {
 	err = d.Websocket.Setup(&stream.WebsocketSetup{
 		ExchangeConfig:        exch,
 		DefaultURL:            deribitWebsocketAddress,
-		RunningURL:            deribitWebsocketAddress,
+		RunningURL:            deribitWs + deribitAPIVersion,
 		Connector:             d.WsConnect,
 		Subscriber:            d.Subscribe,
 		Unsubscriber:          d.Unsubscribe,
@@ -205,17 +205,23 @@ func (d *Deribit) Setup(exch *config.Exchange) error {
 		},
 	})
 	if err != nil {
+		log.Errorf(log.ExchangeSys, "Error when setup deribit websocket: %+v", err)
 		return err
 	}
 
 	// setup option decimal regex at startup to make constant checks more efficient
 	optionRegex = regexp.MustCompile(optionDecimalRegex)
 
-	return d.Websocket.SetupNewConnection(&stream.ConnectionSetup{
+	err = d.Websocket.SetupNewConnection(&stream.ConnectionSetup{
 		URL:                  d.Websocket.GetWebsocketURL(),
 		ResponseCheckTimeout: exch.WebsocketResponseCheckTimeout,
 		ResponseMaxLimit:     exch.WebsocketResponseMaxLimit,
 	})
+	if err != nil {
+		log.Errorf(log.ExchangeSys, "Error when connect to deribit websocket: %+v", err)
+		return err
+	}
+	return nil
 }
 
 // FetchTradablePairs returns a list of the exchanges tradable pairs
@@ -650,9 +656,16 @@ func (d *Deribit) SubmitOrder(ctx context.Context, s *order.Submit) (*order.Subm
 	if s.ImmediateOrCancel {
 		timeInForce = "immediate_or_cancel"
 	}
+	var instrument string
+	switch strings.Contains(fmtPair.String(), "USD") {
+	case true:
+		instrument = fmtPair.Base.String() + "_" + fmtPair.Quote.String()
+	default:
+		instrument = fmtPair.String()
+	}
 	var data *PrivateTradeData
 	reqParams := &OrderBuyAndSellParams{
-		Instrument:   fmtPair.String(),
+		Instrument:   instrument,
 		OrderType:    strings.ToLower(s.Type.String()),
 		Label:        s.ClientOrderID,
 		TimeInForce:  timeInForce,
@@ -709,17 +722,31 @@ func (d *Deribit) ModifyOrder(ctx context.Context, action *order.Modify) (*order
 	}
 	var modify *PrivateTradeData
 	var err error
+	formattedPair, err := d.FormatExchangeCurrency(action.Pair, action.AssetType)
+	if err != nil {
+		return nil, err
+	}
+	var instrument string
+	switch strings.Contains(formattedPair.String(), "USD") {
+	case true:
+		instrument = formattedPair.Base.String() + "_" + formattedPair.Quote.String()
+	default:
+		instrument = formattedPair.String()
+	}
 	reqParam := &OrderBuyAndSellParams{
+		Instrument:   instrument,
 		TriggerPrice: action.TriggerPrice,
 		PostOnly:     action.PostOnly,
 		Amount:       action.Amount,
 		OrderID:      action.OrderID,
 		Price:        action.Price,
+		Label:        action.OrigClOrdID,
 	}
+	log.Debugf(log.ExchangeSys, "modify request: %+v", reqParam)
 	if d.Websocket.IsConnected() && d.Websocket.CanUseAuthenticatedWebsocketForWrapper() {
-		modify, err = d.WSSubmitEdit(reqParam)
+		modify, err = d.WSEditOrderByLabel(reqParam)
 	} else {
-		modify, err = d.SubmitEdit(ctx, reqParam)
+		modify, err = d.EditOrderByLabel(ctx, reqParam)
 	}
 	if err != nil {
 		return nil, err
@@ -828,28 +855,65 @@ func (d *Deribit) GetOrderInfo(ctx context.Context, orderID string, _ currency.P
 	}
 	var orderStatus order.Status
 	if orderInfo.OrderState == "untriggered" {
-		orderStatus = order.UnknownStatus
+		orderStatus = order.New
 	} else {
 		orderStatus, err = order.StringToOrderStatus(orderInfo.OrderState)
 		if err != nil {
 			return nil, fmt.Errorf("%v: orderStatus %s not supported", d.Name, orderInfo.OrderState)
 		}
 	}
+	var trades []order.TradeHistory
+	tradesHistory, err := d.GetUserTradesByOrder(ctx, orderInfo.OrderID, "")
+	if err != nil {
+		return nil, err
+	}
+	if len(tradesHistory) != 0 {
+		var total float64
+		for i := range tradesHistory {
+			tradeSide, err := order.StringToOrderSide(tradesHistory[i].Direction)
+			if err != nil {
+				return nil, err
+			}
+			isMaker := false
+			if tradesHistory[i].Liquidity == "M" {
+				isMaker = true
+			}
+			total += tradesHistory[i].Amount
+			trade := order.TradeHistory{
+				Price:     tradesHistory[i].Price,
+				Amount:    tradesHistory[i].Amount,
+				Fee:       tradesHistory[i].Fee,
+				Exchange:  d.Name,
+				TID:       tradesHistory[i].TradeInstrument,
+				Side:      tradeSide,
+				Total:     total,
+				IsMaker:   isMaker,
+				Type:      orderType,
+				FeeAsset:  tradesHistory[i].FeeCurrency,
+				Timestamp: tradesHistory[i].Timestamp.Time(),
+			}
+			trades = append(trades, trade)
+		}
+	}
 	return &order.Detail{
-		AssetType:       assetType,
-		Exchange:        d.Name,
-		PostOnly:        orderInfo.PostOnly,
-		Price:           orderInfo.Price,
-		Amount:          orderInfo.Amount,
-		ExecutedAmount:  orderInfo.FilledAmount,
-		Fee:             orderInfo.Commission,
-		RemainingAmount: orderInfo.Amount - orderInfo.FilledAmount,
-		OrderID:         orderInfo.OrderID,
-		Pair:            pair,
-		LastUpdated:     orderInfo.LastUpdateTimestamp.Time(),
-		Side:            orderSide,
-		Type:            orderType,
-		Status:          orderStatus,
+		AssetType:            assetType,
+		Exchange:             d.Name,
+		PostOnly:             orderInfo.PostOnly,
+		Price:                orderInfo.Price,
+		AverageExecutedPrice: orderInfo.AveragePrice,
+		Amount:               orderInfo.Amount,
+		ExecutedAmount:       orderInfo.FilledAmount,
+		Fee:                  orderInfo.Commission,
+		RemainingAmount:      orderInfo.Amount - orderInfo.FilledAmount,
+		OrderID:              orderInfo.OrderID,
+		Pair:                 pair,
+		LastUpdated:          orderInfo.LastUpdateTimestamp.Time(),
+		Date:                 orderInfo.CreationTimestamp.Time(),
+		Side:                 orderSide,
+		Type:                 orderType,
+		Status:               orderStatus,
+		ClientOrderID:        orderInfo.Label,
+		Trades:               trades,
 	}, nil
 }
 
@@ -920,6 +984,13 @@ func (d *Deribit) GetActiveOrders(ctx context.Context, getOrdersRequest *order.M
 		if err != nil {
 			return nil, err
 		}
+		var instrument string
+		switch strings.Contains(fmtPair.String(), "USD") {
+		case true:
+			instrument = fmtPair.Base.String() + "_" + fmtPair.Quote.String()
+		default:
+			instrument = fmtPair.String()
+		}
 		var oTypeString string
 		switch getOrdersRequest.Type {
 		case order.AnyType, order.UnknownType:
@@ -929,9 +1000,9 @@ func (d *Deribit) GetActiveOrders(ctx context.Context, getOrdersRequest *order.M
 		}
 		var ordersData []OrderData
 		if d.Websocket.IsConnected() && d.Websocket.CanUseAuthenticatedWebsocketForWrapper() {
-			ordersData, err = d.WSRetrieveOpenOrdersByInstrument(fmtPair.String(), oTypeString)
+			ordersData, err = d.WSRetrieveOpenOrdersByInstrument(instrument, oTypeString)
 		} else {
-			ordersData, err = d.GetOpenOrdersByInstrument(ctx, fmtPair.String(), oTypeString)
+			ordersData, err = d.GetOpenOrdersByInstrument(ctx, instrument, oTypeString)
 		}
 		if err != nil {
 			return nil, err
@@ -956,6 +1027,10 @@ func (d *Deribit) GetActiveOrders(ctx context.Context, getOrdersRequest *order.M
 			if ordersData[y].OrderState != "open" {
 				continue
 			}
+			orderStatus, err = order.StringToOrderStatus(ordersData[y].OrderState)
+			if err != nil {
+				return nil, err
+			}
 			resp = append(resp, order.Detail{
 				AssetType:       getOrdersRequest.AssetType,
 				Exchange:        d.Name,
@@ -968,9 +1043,11 @@ func (d *Deribit) GetActiveOrders(ctx context.Context, getOrdersRequest *order.M
 				OrderID:         ordersData[y].OrderID,
 				Pair:            getOrdersRequest.Pairs[x],
 				LastUpdated:     ordersData[y].LastUpdateTimestamp.Time(),
+				Date:            ordersData[y].CreationTimestamp.Time(),
 				Side:            orderSide,
 				Type:            orderType,
 				Status:          orderStatus,
+				ClientOrderID:   ordersData[y].Label,
 			})
 		}
 	}
@@ -992,14 +1069,32 @@ func (d *Deribit) GetOrderHistory(ctx context.Context, getOrdersRequest *order.M
 		if err != nil {
 			return nil, err
 		}
+		var instrument string
+		switch strings.Contains(fmtPair.String(), "USD") {
+		case true:
+			instrument = fmtPair.Base.String() + "_" + fmtPair.Quote.String()
+		default:
+			instrument = fmtPair.String()
+		}
 		var ordersData []OrderData
 		if d.Websocket.IsConnected() && d.Websocket.CanUseAuthenticatedWebsocketForWrapper() {
-			ordersData, err = d.WSRetrieveOrderHistoryByInstrument(fmtPair.String(), 100, 0, true, true)
+			ordersData, err = d.WSRetrieveOrderHistoryByInstrument(instrument, 100, 0, true, true)
 		} else {
-			ordersData, err = d.GetOrderHistoryByInstrument(ctx, fmtPair.String(), 100, 0, true, true)
+			ordersData, err = d.GetOrderHistoryByInstrument(ctx, instrument, 100, 0, true, true)
 		}
 		if err != nil {
+			log.Errorf(log.ExchangeSys, "Error getting history from this pair: %s", instrument)
 			return nil, err
+		}
+		activeOrders, err := d.GetActiveOrders(ctx, getOrdersRequest)
+		if err != nil {
+			return nil, err
+		}
+		if len(activeOrders) > 0 {
+			resp = append(resp, activeOrders...)
+		}
+		if len(ordersData) == 0 {
+			continue
 		}
 		for y := range ordersData {
 			orderSide := order.Sell
@@ -1018,7 +1113,7 @@ func (d *Deribit) GetOrderHistory(ctx context.Context, getOrdersRequest *order.M
 			}
 			var orderStatus order.Status
 			if ordersData[y].OrderState == "untriggered" {
-				orderStatus = order.UnknownStatus
+				orderStatus = order.New
 			} else {
 				orderStatus, err = order.StringToOrderStatus(ordersData[y].OrderState)
 				if err != nil {
@@ -1037,9 +1132,11 @@ func (d *Deribit) GetOrderHistory(ctx context.Context, getOrdersRequest *order.M
 				OrderID:         ordersData[y].OrderID,
 				Pair:            getOrdersRequest.Pairs[x],
 				LastUpdated:     ordersData[y].LastUpdateTimestamp.Time(),
+				Date:            ordersData[y].CreationTimestamp.Time(),
 				Side:            orderSide,
 				Type:            orderType,
 				Status:          orderStatus,
+				ClientOrderID:   ordersData[y].Label,
 			})
 		}
 	}
