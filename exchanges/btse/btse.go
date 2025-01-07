@@ -17,6 +17,7 @@ import (
 	"github.com/thrasher-corp/gocryptotrader/currency"
 	exchange "github.com/thrasher-corp/gocryptotrader/exchanges"
 	"github.com/thrasher-corp/gocryptotrader/exchanges/asset"
+	"github.com/thrasher-corp/gocryptotrader/exchanges/order"
 	"github.com/thrasher-corp/gocryptotrader/exchanges/request"
 )
 
@@ -324,6 +325,67 @@ func (b *BTSE) GetOrders(ctx context.Context, symbol, orderID, clOrderID string)
 	return o, b.SendAuthenticatedHTTPRequest(ctx, exchange.RestSpot, http.MethodGet, btsePendingOrders, true, req, nil, &o, orderFunc)
 }
 
+func (b *BTSE) GetOrder(ctx context.Context, orderID, clOrderID string) (Order, error) {
+	req := url.Values{}
+	var result Order
+	if orderID == "" && clOrderID == "" {
+		return result, order.ErrClientOrderIDMustBeSet
+	}
+
+	if orderID != "" {
+		req.Set("orderID", orderID)
+	}
+
+	if clOrderID != "" {
+		req.Set("clOrderID", clOrderID)
+	}
+
+	return result, b.SendAuthenticatedHTTPRequest(ctx, exchange.RestSpot, http.MethodGet, btseOrder, true, req, nil, &result, orderFunc)
+}
+
+func (b *BTSE) AmendOrder(ctx context.Context, req *AmendOrderRequest) ([]Order, error) {
+	if err := req.Validate(); err != nil {
+		return nil, err
+	}
+	params := make(map[string]interface{})
+	isSpot := true
+	if req.AssetType != asset.Spot {
+		isSpot = false
+	}
+
+	params["symbol"] = req.Symbol
+	if req.OrderID != "" {
+		params["orderID"] = req.OrderID
+	}
+	if req.ClientOrderID != "" {
+		params["clOrderID"] = req.ClientOrderID
+	}
+	if req.OrderSize == 0 && req.TriggerPrice == 0 {
+		params["type"] = "PRICE"
+		params["value"] = req.OrderPrice
+	} else if req.OrderPrice == 0 && req.TriggerPrice == 0 {
+		params["type"] = "SIZE"
+		params["value"] = req.OrderSize
+	} else if req.OrderPrice == 0 && req.OrderSize == 0 {
+		params["type"] = "TRIGGERPRICE"
+		params["value"] = req.TriggerPrice
+	} else {
+		params["type"] = "ALL"
+		if req.OrderPrice > 0 {
+			params["orderPrice"] = req.OrderPrice
+		}
+		if req.OrderSize > 0 {
+			params["orderSize"] = req.OrderSize
+		}
+		if req.TriggerPrice > 0 {
+			params["triggerPrice"] = req.TriggerPrice
+		}
+	}
+
+	var result []Order
+	return result, b.SendAuthenticatedHTTPRequest(ctx, exchange.RestSpot, http.MethodPut, btseOrder, isSpot, url.Values{}, params, &result, orderFunc)
+}
+
 // CancelExistingOrder cancels an order
 func (b *BTSE) CancelExistingOrder(ctx context.Context, orderID, symbol, clOrderID string) (CancelOrder, error) {
 	var c CancelOrder
@@ -623,4 +685,54 @@ func parseOrderTime(timeStr string) (time.Time, error) {
 // HasLiquidity returns if a market pair has a bid or ask != 0
 func (m *MarketPair) HasLiquidity() bool {
 	return m.LowestAsk != 0 || m.HighestBid != 0
+}
+
+func (b *BTSE) ToOrderType(orderType int) (order.Type, error) {
+	var oT order.Type
+	switch orderType {
+	case 76:
+		oT = order.Limit
+	case 77:
+		oT = order.Market
+	case 80:
+		oT = order.Trigger
+	default:
+		oT = order.UnknownType
+	}
+	if oT == order.UnknownType {
+		return oT, order.ErrUnsupportedOrderType
+	}
+	return oT, nil
+}
+
+func (b *BTSE) ToOrderStatus(status int) (order.Status, error) {
+	var orderStatus order.Status
+	switch status {
+	case 2, 9:
+		orderStatus = order.New
+	case 3, 11, 123:
+		orderStatus = order.Active
+	case 4:
+		orderStatus = order.Filled
+	case 5:
+		orderStatus = order.PartiallyFilled
+	case 6:
+		orderStatus = order.Cancelled
+	case 7:
+		orderStatus = order.Liquidated
+	case 15:
+		orderStatus = order.Rejected
+	case 16:
+		orderStatus = order.Hidden
+	case 17:
+		orderStatus = order.Closed
+	default:
+		orderStatus = order.UnknownStatus
+	}
+	if orderStatus == order.UnknownStatus {
+		return orderStatus, order.ErrTypeIsInvalid
+	}
+
+	return orderStatus, nil
+
 }

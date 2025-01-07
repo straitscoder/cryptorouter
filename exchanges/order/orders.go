@@ -1084,9 +1084,9 @@ func SortOrdersBySide(orders *[]Detail, reverse bool) {
 func StringToOrderSide(side string) (Side, error) {
 	side = strings.ToUpper(side)
 	switch side {
-	case Buy.String():
+	case Buy.String(), "MODE_BUY":
 		return Buy, nil
-	case Sell.String():
+	case Sell.String(), "MODE_SELL":
 		return Sell, nil
 	case Bid.String():
 		return Bid, nil
@@ -1183,7 +1183,7 @@ func StringToOrderStatus(status string) (Status, error) {
 		return Open, nil
 	case Closed.String(), "POSITION_CLOSED":
 		return Closed, nil
-	case Cancelled.String(), "CANCELED", "ORDER_CANCELLED":
+	case Cancelled.String(), "CANCELED", "ORDER_CANCELLED", "STATUS_INACTIVE":
 		return Cancelled, nil
 	case Pending.String():
 		return Pending, nil

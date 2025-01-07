@@ -755,7 +755,7 @@ func (m *OrderManager) processOrders() {
 				EndTime:   time.Now(),
 			})
 			if err != nil {
-				log.Errorf(log.OrderMgr, "Unable to get order history: %s", err)
+				log.Errorf(log.OrderMgr, "Unable to get order history from %s: %+v", exchanges[x].GetName(), err)
 				continue
 			}
 

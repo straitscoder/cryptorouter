@@ -2,6 +2,9 @@ package btse
 
 import (
 	"time"
+
+	"github.com/thrasher-corp/gocryptotrader/exchanges/asset"
+	"github.com/thrasher-corp/gocryptotrader/exchanges/order"
 )
 
 const (
@@ -251,9 +254,11 @@ type OpenOrder struct {
 	PegPriceDeviation            float64 `json:"pegPriceDeviation"`
 	PegPriceMax                  float64 `json:"pegPriceMax"`
 	PegPriceMin                  float64 `json:"pegPriceMin"`
+	RemainingSize                float64 `json:"remainingSize"`
 	Price                        float64 `json:"price"`
 	Side                         string  `json:"side"`
 	Size                         float64 `json:"size"`
+	Status                       int     `json:"status"`
 	Symbol                       string  `json:"symbol"`
 	Timestamp                    int64   `json:"timestamp"`
 	TrailValue                   float64 `json:"trailValue"`
@@ -274,11 +279,12 @@ type Order struct {
 	AverageFillPrice float64 `json:"averageFillPrice"`
 	ClOrderID        string  `json:"clOrderID"`
 	Deviation        float64 `json:"deviation"`
-	FillSize         float64 `json:"fillSize"`
+	FilledSize       float64 `json:"filledSize"`
 	Message          string  `json:"message"`
 	OrderID          string  `json:"orderID"`
 	OrderType        int     `json:"orderType"`
 	Price            float64 `json:"price"`
+	RemainingSize    float64 `json:"remainingSize"`
 	Side             string  `json:"side"`
 	Size             float64 `json:"size"`
 	Status           int     `json:"status"`
@@ -327,23 +333,28 @@ type wsTradeHistory struct {
 }
 
 type wsNotification struct {
-	Topic string          `json:"topic"`
-	Data  []wsOrderUpdate `json:"data"`
+	Topic string        `json:"topic"`
+	Data  wsOrderUpdate `json:"data"`
 }
 
 type wsOrderUpdate struct {
 	OrderID           string  `json:"orderID"`
-	OrderMode         string  `json:"orderMode"`
-	OrderType         string  `json:"orderType"`
-	PegPriceDeviation string  `json:"pegPriceDeviation"`
-	Price             float64 `json:"price,string"`
-	Size              float64 `json:"size,string"`
-	Status            string  `json:"status"`
-	Stealth           string  `json:"stealth"`
+	ClientOrderID     string  `json:"clOrderID"`
+	Side              string  `json:"side"`
+	PegPriceDeviation float64 `json:"pegPriceDeviation"`
+	Price             float64 `json:"price"`
+	Size              float64 `json:"size"`
+	Status            int     `json:"status"`
+	Stealth           int     `json:"stealth"`
 	Symbol            string  `json:"symbol"`
-	Timestamp         int64   `json:"timestamp,string"`
-	TriggerPrice      float64 `json:"triggerPrice,string"`
-	Type              string  `json:"type"`
+	Timestamp         int64   `json:"timestamp"`
+	TriggerPrice      float64 `json:"triggerPrice"`
+	Type              int     `json:"type"`
+	AverageFillPrice  float64 `json:"avgFillPrice"`
+	FillSize          float64 `json:"fillSize"`
+	RemainingSize     float64 `json:"remainingSize"`
+	TxType            int     `json:"txType"`
+	TimeInForce       string  `json:"time_in_force"`
 }
 
 // ErrorResponse contains errors received from API
@@ -363,4 +374,33 @@ type WsSubscriptionAcknowledgement struct {
 type WsLoginAcknowledgement struct {
 	Event   string `json:"event"`
 	Success bool   `json:"success"`
+}
+
+type AmendOrder struct {
+	OrderID       string  `json:"orderID"`
+	ClientOrderID string  `json:"clOrderID"`
+	AmendType     string  `json:"type"`
+	OrderPrice    float64 `json:"orderPrice"`
+	OrderSize     float64 `json:"orderSize"`
+	TriggerPrice  float64 `json:"triggerPrice"`
+}
+
+type AmendOrderRequest struct {
+	Symbol        string
+	OrderID       string
+	ClientOrderID string
+	AssetType     asset.Item
+	OrderPrice    float64
+	OrderSize     float64
+	TriggerPrice  float64
+}
+
+func (a *AmendOrderRequest) Validate() error {
+	if a.OrderID == "" && a.ClientOrderID == "" {
+		return order.ErrClientOrderIDMustBeSet
+	}
+	if a.OrderPrice == 0 && a.OrderSize == 0 && a.TriggerPrice == 0 {
+		return order.ErrModifyOrderIsNil
+	}
+	return nil
 }

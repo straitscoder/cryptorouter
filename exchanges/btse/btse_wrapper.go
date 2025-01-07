@@ -140,7 +140,7 @@ func (b *BTSE) SetDefaults() {
 				GlobalResultLimit: 300,
 			},
 		},
-		Subscriptions: defaultSubscriptions.Clone(),
+		Subscriptions: spotDefaultSubscriptions.Clone(),
 	}
 
 	b.Requester, err = request.New(b.Name,
@@ -187,7 +187,7 @@ func (b *BTSE) Setup(exch *config.Exchange) error {
 	err = b.Websocket.Setup(&stream.WebsocketSetup{
 		ExchangeConfig:        exch,
 		DefaultURL:            btseWebsocket,
-		RunningURL:            wsRunningURL,
+		RunningURL:            wsRunningURL + spotWs,
 		Connector:             b.WsConnect,
 		Subscriber:            b.Subscribe,
 		Unsubscriber:          b.Unsubscribe,
@@ -507,7 +507,7 @@ func (b *BTSE) SubmitOrder(ctx context.Context, s *order.Submit) (*order.SubmitR
 	}
 
 	r, err := b.CreateOrder(ctx,
-		s.ClientID, 0.0,
+		s.ClientOrderID, 0.0,
 		false,
 		s.Price,
 		s.Side.String(),
@@ -531,8 +531,49 @@ func (b *BTSE) SubmitOrder(ctx context.Context, s *order.Submit) (*order.SubmitR
 
 // ModifyOrder will allow of changing orderbook placement and limit to
 // market conversion
-func (b *BTSE) ModifyOrder(_ context.Context, _ *order.Modify) (*order.ModifyResponse, error) {
-	return nil, common.ErrFunctionNotSupported
+func (b *BTSE) ModifyOrder(ctx context.Context, req *order.Modify) (*order.ModifyResponse, error) {
+	if err := req.Validate(); err != nil {
+		return nil, err
+	}
+
+	if req.AssetType != asset.Spot {
+		return nil, common.ErrFunctionNotSupported
+	}
+
+	formattedPair, err := b.FormatExchangeCurrency(req.Pair, req.AssetType)
+	if err != nil {
+		return nil, err
+	}
+	amendRequest := &AmendOrderRequest{
+		Symbol:        formattedPair.String(),
+		OrderID:       req.OrderID,
+		ClientOrderID: req.OrigClOrdID,
+		AssetType:     req.AssetType,
+		OrderSize:     0,
+		OrderPrice:    0,
+		TriggerPrice:  0,
+	}
+
+	if req.Amount > 0 {
+		amendRequest.OrderSize = req.Amount
+	}
+	if req.Price > 0 {
+		amendRequest.OrderPrice = req.Price
+	}
+	if req.TriggerPrice > 0 {
+		amendRequest.TriggerPrice = req.TriggerPrice
+	}
+	_, err = b.AmendOrder(ctx, amendRequest)
+	if err != nil {
+		return nil, err
+	}
+
+	result, err := req.DeriveModifyResponse()
+	if err != nil {
+		return nil, err
+	}
+
+	return result, nil
 }
 
 // CancelOrder cancels an order by its corresponding ID number
@@ -599,63 +640,66 @@ func orderIntToType(i int) order.Type {
 }
 
 // GetOrderInfo returns order information based on order ID
-func (b *BTSE) GetOrderInfo(ctx context.Context, orderID string, _ currency.Pair, _ asset.Item) (*order.Detail, error) {
-	o, err := b.GetOrders(ctx, "", orderID, "")
+func (b *BTSE) GetOrderInfo(ctx context.Context, orderID string, _ currency.Pair, a asset.Item) (*order.Detail, error) {
+	o, err := b.GetOrder(ctx, orderID, "")
 	if err != nil {
 		return nil, err
 	}
 
 	var od order.Detail
-	if len(o) == 0 {
-		return nil, errors.New("no orders found")
+	if a == asset.Futures {
+		return nil, common.ErrFunctionNotSupported
 	}
 
-	format, err := b.GetPairFormat(asset.Spot, false)
+	format, err := b.GetPairFormat(a, false)
 	if err != nil {
 		return nil, err
 	}
 
-	for i := range o {
-		if o[i].OrderID != orderID {
-			continue
-		}
+	od.Side, err = order.StringToOrderSide(o.Side)
+	if err != nil {
+		return nil, err
+	}
 
-		var side = order.Buy
-		if strings.EqualFold(o[i].Side, order.Ask.String()) {
-			side = order.Sell
-		}
+	od.Pair, err = currency.NewPairDelimiter(o.Symbol,
+		format.Delimiter)
+	if err != nil {
+		log.Errorf(log.ExchangeSys,
+			"%s GetOrderInfo unable to parse currency pair: %s\n",
+			b.Name,
+			err)
+	}
+	od.Exchange = b.Name
+	od.Amount = o.Size
+	od.OrderID = o.OrderID
+	od.Date = time.Unix(o.Timestamp, 0)
+	od.AssetType = a
+	od.AverageExecutedPrice = o.AverageFillPrice
+	od.ClientOrderID = o.ClOrderID
+	od.ExecutedAmount = o.FilledSize
+	od.RemainingAmount = o.RemainingSize
+	od.Type, err = b.ToOrderType(o.OrderType)
+	if err != nil {
+		return nil, err
+	}
+	od.Status, err = b.ToOrderStatus(o.Status)
+	if err != nil {
+		return nil, err
+	}
+	od.Price = o.Price
 
-		od.Pair, err = currency.NewPairDelimiter(o[i].Symbol,
-			format.Delimiter)
-		if err != nil {
-			log.Errorf(log.ExchangeSys,
-				"%s GetOrderInfo unable to parse currency pair: %s\n",
-				b.Name,
-				err)
-		}
-		od.Exchange = b.Name
-		od.Amount = o[i].Size
-		od.OrderID = o[i].OrderID
-		od.Date = time.Unix(o[i].Timestamp, 0)
-		od.Side = side
+	th, err := b.TradeHistory(ctx,
+		"",
+		time.Time{}, time.Time{},
+		0, 0, 0,
+		false,
+		"", orderID)
+	if err != nil {
+		return nil, fmt.Errorf("unable to get order fills for orderID %s", orderID)
+	}
 
-		od.Type = orderIntToType(o[i].OrderType)
-
-		od.Price = o[i].Price
-		if od.Status, err = order.StringToOrderStatus(o[i].OrderState); err != nil {
-			log.Errorf(log.ExchangeSys, "%s %v", b.Name, err)
-		}
-
-		th, err := b.TradeHistory(ctx,
-			"",
-			time.Time{}, time.Time{},
-			0, 0, 0,
-			false,
-			"", orderID)
-		if err != nil {
-			return nil, fmt.Errorf("unable to get order fills for orderID %s", orderID)
-		}
-
+	var trades []order.TradeHistory
+	if len(th) > 0 {
 		for i := range th {
 			createdAt, err := parseOrderTime(th[i].TradeID)
 			if err != nil {
@@ -667,7 +711,7 @@ func (b *BTSE) GetOrderInfo(ctx context.Context, orderID string, _ currency.Pair
 			if err != nil {
 				return nil, err
 			}
-			od.Trades = append(od.Trades, order.TradeHistory{
+			trades = append(trades, order.TradeHistory{
 				Timestamp: createdAt,
 				TID:       th[i].TradeID,
 				Price:     th[i].Price,
@@ -675,9 +719,12 @@ func (b *BTSE) GetOrderInfo(ctx context.Context, orderID string, _ currency.Pair
 				Exchange:  b.Name,
 				Side:      orderSide,
 				Fee:       th[i].FeeAmount,
+				Total:     th[i].Total,
+				FeeAsset:  th[i].FeeCurrency,
 			})
 		}
 	}
+	od.Trades = trades
 	return &od, nil
 }
 
@@ -875,16 +922,20 @@ func (b *BTSE) GetOrderHistory(ctx context.Context, getOrdersRequest *order.Mult
 	}
 
 	var resp []order.Detail
+	if getOrdersRequest.AssetType == asset.Futures {
+		return resp, nil
+	}
+
 	if len(getOrdersRequest.Pairs) == 0 {
 		var err error
-		getOrdersRequest.Pairs, err = b.GetEnabledPairs(asset.Spot)
+		getOrdersRequest.Pairs, err = b.GetEnabledPairs(getOrdersRequest.AssetType)
 		if err != nil {
 			return nil, err
 		}
 	}
 	orderDeref := *getOrdersRequest
 	for x := range orderDeref.Pairs {
-		fPair, err := b.FormatExchangeCurrency(orderDeref.Pairs[x], asset.Spot)
+		fPair, err := b.FormatExchangeCurrency(orderDeref.Pairs[x], orderDeref.AssetType)
 		if err != nil {
 			return nil, err
 		}
@@ -892,13 +943,15 @@ func (b *BTSE) GetOrderHistory(ctx context.Context, getOrdersRequest *order.Mult
 		if err != nil {
 			return nil, err
 		}
+
+		if len(currentOrder) == 0 {
+			continue
+		}
+
 		for y := range currentOrder {
-			if !matchType(currentOrder[y].OrderType, orderDeref.Type) {
-				continue
-			}
 			orderStatus, err := order.StringToOrderStatus(currentOrder[y].OrderState)
 			if err != nil {
-				log.Errorf(log.ExchangeSys, "%s %v", b.Name, err)
+				return resp, err
 			}
 			var orderSide order.Side
 			orderSide, err = order.StringToOrderSide(currentOrder[y].Side)
@@ -906,9 +959,14 @@ func (b *BTSE) GetOrderHistory(ctx context.Context, getOrdersRequest *order.Mult
 				return nil, err
 			}
 			orderTime := time.UnixMilli(currentOrder[y].Timestamp)
+			oType, err := b.ToOrderType(currentOrder[y].OrderType)
+			if err != nil {
+				log.Errorf(log.ExchangeSys, "Invalid order: %+v", currentOrder[y])
+				return nil, err
+			}
 			tempOrder := order.Detail{
 				OrderID:              currentOrder[y].OrderID,
-				ClientID:             currentOrder[y].ClOrderID,
+				ClientOrderID:        currentOrder[y].ClOrderID,
 				Exchange:             b.Name,
 				Price:                currentOrder[y].Price,
 				AverageExecutedPrice: currentOrder[y].AverageFillPrice,
@@ -919,6 +977,7 @@ func (b *BTSE) GetOrderHistory(ctx context.Context, getOrdersRequest *order.Mult
 				Side:                 orderSide,
 				Status:               orderStatus,
 				Pair:                 orderDeref.Pairs[x],
+				Type:                 oType,
 			}
 			tempOrder.InferCostsAndTimes()
 			resp = append(resp, tempOrder)
@@ -1071,7 +1130,7 @@ func (m *MarketPair) StripExponent() (string, error) {
 		return "", nil
 	case 2:
 		switch parts[0] {
-		case "B", "M", "K":
+		case "B", "M", "K", "TRAI":
 			return parts[1], nil
 		}
 	}

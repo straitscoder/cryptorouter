@@ -612,7 +612,6 @@ func (b *Bitmex) manageSubs(op string, subs subscription.List, stream string) er
 // WebsocketSendAuth sends an authenticated subscription
 func (b *Bitmex) websocketSendAuth(ctx context.Context) error {
 	creds, err := b.GetCredentials(ctx)
-	log.Debugf(log.ExchangeSys, "bitmex credentials: %+v", creds)
 	if err != nil {
 		return err
 	}

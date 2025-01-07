@@ -24,18 +24,27 @@ import (
 )
 
 const (
+	spotWs             = "/spot"
+	futureWs           = "/futures"
 	btseWebsocket      = "wss://ws.btse.com/ws/spot"
 	btseWebsocketTimer = time.Second * 57
 )
 
 var subscriptionNames = map[string]string{
-	subscription.MyTradesChannel:  "notificationApi",
+	subscription.MyTradesChannel:  "notificationApiV2",
 	subscription.AllTradesChannel: "tradeHistory",
+	subscription.MyOrdersChannel:  "allPosition",
 }
 
-var defaultSubscriptions = subscription.List{
+var spotDefaultSubscriptions = subscription.List{
 	{Enabled: true, Asset: asset.Spot, Channel: subscription.AllTradesChannel},
 	{Enabled: true, Channel: subscription.MyTradesChannel, Authenticated: true},
+}
+
+var futuresDefaultSubscriptions = subscription.List{
+	{Enabled: true, Asset: asset.Futures, Channel: subscription.AllTradesChannel},
+	{Enabled: true, Channel: subscription.MyTradesChannel, Authenticated: true},
+	{Enabled: true, Channel: subscription.MyOrdersChannel, Authenticated: true},
 }
 
 // WsConnect connects the websocket client
@@ -179,66 +188,69 @@ func (b *BTSE) wsHandleData(respRaw []byte) error {
 		return errors.New(b.Name + stream.UnhandledMessage + string(respRaw))
 	}
 	switch {
-	case topic == "notificationApi":
+	case topic == "notificationApiV2":
 		var notification wsNotification
 		err = json.Unmarshal(respRaw, &notification)
 		if err != nil {
+			log.Debugf(log.WebsocketMgr, "invalid payload: %+v", string(respRaw))
 			return err
 		}
-		for i := range notification.Data {
-			var oType order.Type
-			var oSide order.Side
-			var oStatus order.Status
-			oType, err = order.StringToOrderType(notification.Data[i].Type)
-			if err != nil {
-				b.Websocket.DataHandler <- order.ClassificationError{
-					Exchange: b.Name,
-					OrderID:  notification.Data[i].OrderID,
-					Err:      err,
-				}
+		var oType order.Type
+		var oSide order.Side
+		var oStatus order.Status
+		oType, err = b.ToOrderType(notification.Data.Type)
+		if err != nil {
+			b.Websocket.DataHandler <- order.ClassificationError{
+				Exchange: b.Name,
+				OrderID:  notification.Data.OrderID,
+				Err:      err,
 			}
-			oSide, err = order.StringToOrderSide(notification.Data[i].OrderMode)
-			if err != nil {
-				b.Websocket.DataHandler <- order.ClassificationError{
-					Exchange: b.Name,
-					OrderID:  notification.Data[i].OrderID,
-					Err:      err,
-				}
+		}
+		oSide, err = order.StringToOrderSide(notification.Data.Side)
+		if err != nil {
+			b.Websocket.DataHandler <- order.ClassificationError{
+				Exchange: b.Name,
+				OrderID:  notification.Data.OrderID,
+				Err:      err,
 			}
-			oStatus, err = stringToOrderStatus(notification.Data[i].Status)
-			if err != nil {
-				b.Websocket.DataHandler <- order.ClassificationError{
-					Exchange: b.Name,
-					OrderID:  notification.Data[i].OrderID,
-					Err:      err,
-				}
+		}
+		oStatus, err = b.ToOrderStatus(notification.Data.Status)
+		if err != nil {
+			b.Websocket.DataHandler <- order.ClassificationError{
+				Exchange: b.Name,
+				OrderID:  notification.Data.OrderID,
+				Err:      err,
 			}
+		}
 
-			var p currency.Pair
-			p, err = currency.NewPairFromString(notification.Data[i].Symbol)
-			if err != nil {
-				return err
-			}
+		var p currency.Pair
+		p, err = currency.NewPairFromString(notification.Data.Symbol)
+		if err != nil {
+			return err
+		}
 
-			var a asset.Item
-			a, err = b.GetPairAssetType(p)
-			if err != nil {
-				return err
-			}
+		var a asset.Item
+		a, err = b.GetPairAssetType(p)
+		if err != nil {
+			return err
+		}
 
-			b.Websocket.DataHandler <- &order.Detail{
-				Price:        notification.Data[i].Price,
-				Amount:       notification.Data[i].Size,
-				TriggerPrice: notification.Data[i].TriggerPrice,
-				Exchange:     b.Name,
-				OrderID:      notification.Data[i].OrderID,
-				Type:         oType,
-				Side:         oSide,
-				Status:       oStatus,
-				AssetType:    a,
-				Date:         time.UnixMilli(notification.Data[i].Timestamp),
-				Pair:         p,
-			}
+		b.Websocket.DataHandler <- &order.Detail{
+			Price:                notification.Data.Price,
+			Amount:               notification.Data.Size,
+			TriggerPrice:         notification.Data.TriggerPrice,
+			Exchange:             b.Name,
+			OrderID:              notification.Data.OrderID,
+			ClientOrderID:        notification.Data.ClientOrderID,
+			Type:                 oType,
+			Side:                 oSide,
+			Status:               oStatus,
+			AssetType:            a,
+			Date:                 time.UnixMilli(notification.Data.Timestamp),
+			Pair:                 p,
+			RemainingAmount:      notification.Data.RemainingSize,
+			AverageExecutedPrice: notification.Data.AverageFillPrice,
+			ExecutedAmount:       notification.Data.FillSize,
 		}
 	case strings.Contains(topic, "tradeHistory"):
 		if !b.IsSaveTradeDataEnabled() {

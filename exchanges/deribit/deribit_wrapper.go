@@ -213,7 +213,7 @@ func (d *Deribit) Setup(exch *config.Exchange) error {
 	optionRegex = regexp.MustCompile(optionDecimalRegex)
 
 	err = d.Websocket.SetupNewConnection(&stream.ConnectionSetup{
-		URL:                  d.Websocket.GetWebsocketURL(),
+		// URL:                  d.Websocket.GetWebsocketURL(),
 		ResponseCheckTimeout: exch.WebsocketResponseCheckTimeout,
 		ResponseMaxLimit:     exch.WebsocketResponseMaxLimit,
 	})
