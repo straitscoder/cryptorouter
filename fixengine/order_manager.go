@@ -727,6 +727,9 @@ func (m *OrderManager) processOrders() {
 				"Processing orders for exchange %v",
 				exchanges[x].GetName())
 		}
+		log.Debugf(log.OrderMgr,
+			"Processing orders for exchange %v",
+			exchanges[x].GetName())
 		enabledAssets := exchanges[x].GetAssetTypes(true)
 		for y := range enabledAssets {
 			// filter := &order.Filter{Exchange: exchanges[x].GetName(), Status: order.AnyStatus}
@@ -758,7 +761,9 @@ func (m *OrderManager) processOrders() {
 				log.Errorf(log.OrderMgr, "Unable to get order history from %s: %+v", exchanges[x].GetName(), err)
 				continue
 			}
-
+			if exchanges[x].GetName() == "BTSE" {
+				log.Debugf(log.OrderMgr, "orders: %+v", exchangeOrders)
+			}
 			if len(exchangeOrders) == 0 {
 				continue
 			}
@@ -776,106 +781,38 @@ func (m *OrderManager) processOrders() {
 					continue
 				}
 
-				var trades []model.Trade
-				existingOrder := model.GetOrderByOrderID(updatedOrder.OrderID)
-				if existingOrder.AssetType == "" {
-					createOrder := model.Order{
-						ClientOrderID: updatedOrder.ClientOrderID,
-						OrderID:       updatedOrder.OrderID,
-						Exchange:      updatedOrder.Exchange,
-						Base:          updatedOrder.Pair.Base.String(),
-						Quote:         updatedOrder.Pair.Quote.String(),
-						Delimiter:     updatedOrder.Pair.Delimiter,
-						Side:          updatedOrder.Side.String(),
-						AssetType:     updatedOrder.AssetType.String(),
-						OrderType:     updatedOrder.Type.String(),
-						Price:         updatedOrder.Price,
-						Amount:        updatedOrder.Amount,
-						Status:        updatedOrder.Status.String(),
-						Timestamp:     updatedOrder.Date,
-					}
-
-					if len(updatedOrder.Trades) > 0 {
-						trades = make([]model.Trade, len(updatedOrder.Trades))
-						for i := range updatedOrder.Trades {
-							trades[i] = model.Trade{
-								TradeID:        updatedOrder.Trades[i].TID,
-								OrderID:        updatedOrder.OrderID,
-								Side:           updatedOrder.Trades[i].Side.String(),
-								Price:          updatedOrder.Trades[i].Price,
-								Quantity:       updatedOrder.Trades[i].Amount,
-								Commision:      updatedOrder.Trades[i].Fee,
-								CommisionAsset: updatedOrder.Trades[i].FeeAsset,
-								Timestamp:      updatedOrder.Trades[i].Timestamp,
-							}
-							if err := model.UpdateOrCreateTrade(trades[i].TradeID, trades[i]); err != nil {
-								log.Errorf(log.OrderMgr, "Unable to update or create trade: %s", err)
-								continue
-							}
-						}
-					}
-					err := model.CreateOrder(createOrder)
+				existingOrder, err := model.GetOrderRedis(context.Background(), updatedOrder.OrderID)
+				if err != nil {
+					log.Debugf(log.OrderMgr, "Error when get this order: %+v", updatedOrder)
+					log.Errorf(log.OrderMgr, "Error when get order from redis: %+v", err)
+					continue
+				}
+				if existingOrder.ClientOrderID == "" {
+					err = model.AddOrderRedis(context.Background(), *updatedOrder)
 					if err != nil {
-						log.Errorf(log.OrderMgr, "Unable to create order: %s", err)
+						log.Errorf(log.OrderMgr, "Unable save order to redis: %+v", err)
 						continue
 					}
 
 					m.fixGateway.UpdateOrder(updatedOrder, ToOrdStatus(updatedOrder.Status), "Create order from order manager")
 					continue
-
 				} else if len(existingOrder.Trades) != len(updatedOrder.Trades) {
-					trades = make([]model.Trade, len(updatedOrder.Trades))
-					for i := range updatedOrder.Trades {
-						trades[i] = model.Trade{
-							TradeID:        updatedOrder.Trades[i].TID,
-							OrderID:        updatedOrder.OrderID,
-							Side:           updatedOrder.Trades[i].Side.String(),
-							Price:          updatedOrder.Trades[i].Price,
-							Quantity:       updatedOrder.Trades[i].Amount,
-							Commision:      updatedOrder.Trades[i].Fee,
-							CommisionAsset: updatedOrder.Trades[i].FeeAsset,
-							Timestamp:      updatedOrder.Trades[i].Timestamp,
+					if updatedOrder.Exchange == "BTSE" && updatedOrder.Status == order.UnknownStatus {
+						if err := model.UpdateOrCreateTradesRedis(context.Background(), *updatedOrder); err != nil {
+							log.Errorln(log.OrderMgr, err)
 						}
-						if err := model.UpdateOrCreateTrade(trades[i].TradeID, trades[i]); err != nil {
-							log.Errorf(log.OrderMgr, "Unable to update or create trade: %s", err)
-							continue
-						}
-					}
-
-					if existingOrder.Price != updatedOrder.Price {
-						existingOrder.Price = updatedOrder.Price
-					}
-					if existingOrder.Amount != updatedOrder.Amount {
-						existingOrder.Amount = updatedOrder.Amount
-					}
-					if updatedOrder.Status.String() != existingOrder.Status {
-						existingOrder.Status = updatedOrder.Status.String()
-						err := model.UpdateOrder(existingOrder.ClientOrderID, existingOrder)
-						if err != nil {
-							log.Errorf(log.OrderMgr, "Unable to update order: %s", err)
-							continue
-						}
-						m.fixGateway.UpdateOrder(updatedOrder, ToOrdStatus(updatedOrder.Status), "Update order from order manager")
 						continue
 					}
-
-					err := model.UpdateOrder(existingOrder.ClientOrderID, existingOrder)
+					err := model.UpdateOrCreateOrderRedis(context.Background(), *updatedOrder)
 					if err != nil {
 						log.Errorf(log.OrderMgr, "Unable to update order: %s", err)
 						continue
 					}
-
+					m.fixGateway.UpdateOrder(updatedOrder, ToOrdStatus(updatedOrder.Status), "Update order from order manager")
 					continue
 				} else {
-					if updatedOrder.Status.String() != existingOrder.Status {
-						existingOrder.Status = updatedOrder.Status.String()
-						if existingOrder.Price != updatedOrder.Price {
-							existingOrder.Price = updatedOrder.Price
-						}
-						if existingOrder.Amount != updatedOrder.Amount {
-							existingOrder.Amount = updatedOrder.Amount
-						}
-						err := model.UpdateOrder(existingOrder.ClientOrderID, existingOrder)
+					if updatedOrder.Status != existingOrder.Status {
+						err := model.UpdateOrCreateOrderRedis(context.Background(), *updatedOrder)
 						if err != nil {
 							log.Errorf(log.OrderMgr, "Unable to update order: %s", err)
 							continue
@@ -883,13 +820,7 @@ func (m *OrderManager) processOrders() {
 
 						m.fixGateway.UpdateOrder(updatedOrder, ToOrdStatus(updatedOrder.Status), "Update order from order manager")
 					} else if existingOrder.Amount != updatedOrder.Amount || existingOrder.Price != updatedOrder.Price {
-						if existingOrder.Price != updatedOrder.Price {
-							existingOrder.Price = updatedOrder.Price
-						}
-						if existingOrder.Amount != updatedOrder.Amount {
-							existingOrder.Amount = updatedOrder.Amount
-						}
-						err := model.UpdateOrder(existingOrder.ClientOrderID, existingOrder)
+						err := model.UpdateOrCreateOrderRedis(context.Background(), *updatedOrder)
 						if err != nil {
 							log.Errorf(log.OrderMgr, "Unable to update order: %s", err)
 							continue
@@ -914,7 +845,55 @@ func (m *OrderManager) processOrders() {
 					// }
 					continue
 				}
+			}
+			savedOrders, err := model.GetOrdersRedis(
+				context.Background(),
+				&order.Filter{Exchange: exchanges[x].GetName(), AssetType: enabledAssets[y]},
+				&order.Filter{Status: order.Cancelled},
+			)
+			if err != nil {
+				log.Errorf(log.OrderMgr, "Error when get saved order: %+v", err)
+				continue
+			}
 
+			if len(savedOrders) == 0 {
+				continue
+			}
+
+			for z := range savedOrders {
+				if savedOrders[z].Status.IsInactive() {
+					continue
+				}
+				log.Debugf(log.OrderMgr, "saved order: %+v", savedOrders[z])
+				updatedOrder, err := exchanges[x].GetOrderInfo(context.TODO(), savedOrders[z].OrderID, savedOrders[z].Pair, enabledAssets[y])
+				if err != nil {
+					log.Errorf(log.OrderMgr, "Error when update saved order: %+v", err)
+					continue
+				}
+
+				if len(updatedOrder.Trades) != len(savedOrders[z].Trades) {
+					if updatedOrder.Exchange == "BTSE" && updatedOrder.Status == order.UnknownStatus {
+						if err := model.UpdateOrCreateTradesRedis(context.Background(), *updatedOrder); err != nil {
+							log.Errorln(log.OrderMgr, err)
+						}
+						continue
+					}
+					if err := model.UpdateOrCreateOrderRedis(context.Background(), *updatedOrder); err != nil {
+						log.Errorf(log.OrderMgr, "Error when save updated order: %+v", err)
+						continue
+					}
+					m.fixGateway.UpdateOrder(updatedOrder, ToOrdStatus(updatedOrder.Status), "order manager saved order trade")
+					continue
+				}
+
+				if updatedOrder.Status != savedOrders[z].Status {
+					if err := model.UpdateOrCreateOrderRedis(context.Background(), *updatedOrder); err != nil {
+						log.Errorf(log.OrderMgr, "Error when save updated order: %+v", err)
+						continue
+					}
+					m.fixGateway.UpdateOrder(updatedOrder, ToOrdStatus(updatedOrder.Status), "order manager saved order status")
+				}
+				continue
 			}
 
 			// if exchanges[x].GetBase().GetSupportedFeatures().RESTCapabilities.GetOrder {

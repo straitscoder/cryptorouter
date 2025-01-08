@@ -5,7 +5,6 @@ import "time"
 type Order struct {
 	ClientOrderID string    `json:"clientOrderId" gorm:"primary_key"`
 	OrderID       string    `json:"orderId" gorm:"unique"`
-	SessionID     string    `json:"sessionId"`
 	Exchange      string    `json:"exchange"`
 	Base          string    `json:"base"`
 	Quote         string    `json:"quote"`

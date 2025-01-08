@@ -548,128 +548,35 @@ func (a *Application) WebsocketDataHandler(exchName string, data interface{}) er
 		if len(a.sessions) == 0 {
 			return nil
 		}
-		existingOrder := model.GetOrderByOrderID(d.OrderID)
+		existingOrder, err := model.GetOrderRedis(context.Background(), d.OrderID)
+		if err != nil {
+			log.Printf("error when try to get order: %+v", err)
+			return err
+		}
 		if existingOrder.ClientOrderID == "" {
-			if len(d.Trades) > 0 {
-				for i := range d.Trades {
-					var side string
-					switch d.Trades[i].Side {
-					case order.UnknownSide:
-						switch d.Side {
-						case order.Buy:
-							side = order.Sell.String()
-						case order.Sell:
-							side = order.Buy.String()
-						}
-					default:
-						side = d.Trades[i].Side.String()
-					}
-					trade := model.Trade{
-						TradeID:        d.Trades[i].TID,
-						OrderID:        d.OrderID,
-						Side:           side,
-						Price:          d.Trades[i].Price,
-						Quantity:       d.Trades[i].Amount,
-						Commision:      d.Trades[i].Fee,
-						CommisionAsset: d.Trades[i].FeeAsset,
-						Timestamp:      d.Trades[i].Timestamp,
-					}
-					if err := model.UpdateOrCreateTrade(trade.TradeID, trade); err != nil {
-						log.Printf("Error updating trade: %+v", err)
-						continue
-					}
-				}
-			}
-
-			savedOrder := model.Order{
-				ClientOrderID: d.ClientOrderID,
-				OrderID:       d.OrderID,
-				Exchange:      d.Exchange,
-				Base:          d.Pair.Base.String(),
-				Quote:         d.Pair.Quote.String(),
-				Delimiter:     d.Pair.Delimiter,
-				Side:          d.Side.String(),
-				AssetType:     d.AssetType.String(),
-				OrderType:     d.Type.String(),
-				Price:         d.Price,
-				Amount:        d.Amount,
-				Status:        d.Status.String(),
-				Timestamp:     d.Date,
-			}
-			if err := model.CreateOrder(savedOrder); err != nil {
-				log.Printf("Error updating order: %+v", err)
+			if err := model.AddOrderRedis(context.Background(), *d); err != nil {
+				log.Printf("Error creating order: %+v", err)
 				return err
 			}
 			a.UpdateOrder(d, ToOrdStatus(d.Status), "Create order websocket")
 			return nil
 		} else if len(d.Trades) > 0 {
-			for i := range d.Trades {
-				var side string
-				switch d.Trades[i].Side {
-				case order.UnknownSide:
-					switch d.Side {
-					case order.Buy:
-						side = order.Sell.String()
-					case order.Sell:
-						side = order.Buy.String()
-					}
-				default:
-					side = d.Trades[i].Side.String()
-				}
-				trade := model.Trade{
-					TradeID:        d.Trades[i].TID,
-					OrderID:        d.OrderID,
-					Side:           side,
-					Price:          d.Trades[i].Price,
-					Quantity:       d.Trades[i].Amount,
-					Commision:      d.Trades[i].Fee,
-					CommisionAsset: d.Trades[i].FeeAsset,
-					Timestamp:      d.Trades[i].Timestamp,
-				}
-				if err := model.UpdateOrCreateTrade(trade.TradeID, trade); err != nil {
-					log.Printf("Error updating trade: %+v", err)
-					continue
-				}
-			}
-
-			if d.Price != existingOrder.Price {
-				existingOrder.Price = d.Price
-			}
-			if d.Amount != existingOrder.Amount {
-				existingOrder.Amount = d.Amount
-			}
-			if d.Status.String() != existingOrder.Status && d.Status.String() != "UNKNOWN" {
-				existingOrder.Status = d.Status.String()
-				if err := model.UpdateOrder(existingOrder.ClientOrderID, existingOrder); err != nil {
-					log.Printf("Error updating order: %+v", err)
-					return err
-				}
-				a.UpdateOrder(d, ToOrdStatus(d.Status), "Update order websocket")
-				return nil
-			}
-			if err := model.UpdateOrder(existingOrder.ClientOrderID, existingOrder); err != nil {
-				log.Printf("Error updating order: %+v", err)
+			if err := model.UpdateOrCreateOrderRedis(context.Background(), *d); err != nil {
+				log.Printf("Error when updating order: %+v", err)
 				return err
 			}
-			updatedOrder := model.GetOrderByClOrdID(existingOrder.ClientOrderID)
-			if len(updatedOrder.Trades) != len(existingOrder.Trades) {
-				a.UpdateOrder(d, ToOrdStatus(d.Status), "Update order websocket")
-				return nil
-			}
+			a.UpdateOrder(d, ToOrdStatus(d.Status), "create trade websocket")
 			return nil
 		} else {
-			if d.Status.String() != existingOrder.Status && d.Status.String() != "UNKNOWN" {
-				existingOrder.Status = d.Status.String()
-				if err := model.UpdateOrder(existingOrder.ClientOrderID, existingOrder); err != nil {
+			if d.Status != existingOrder.Status && d.Status.String() != "UNKNOWN" {
+				if err := model.UpdateOrCreateOrderRedis(context.Background(), *d); err != nil {
 					log.Printf("Error updating order: %+v", err)
 					return err
 				}
 				a.UpdateOrder(d, ToOrdStatus(d.Status), "Update order websocket")
 				return nil
 			} else if d.Price != existingOrder.Price || d.Amount != existingOrder.Amount {
-				existingOrder.Price = d.Price
-				existingOrder.Amount = d.Amount
-				if err := model.UpdateOrder(existingOrder.ClientOrderID, existingOrder); err != nil {
+				if err := model.UpdateOrCreateOrderRedis(context.Background(), *d); err != nil {
 					log.Printf("Error updating order: %+v", err)
 					return err
 				}
@@ -988,11 +895,11 @@ func (a *Application) UpdateOrder(msg *order.Detail, status enum.OrdStatus, sour
 	case enum.OrdStatus_PARTIALLY_FILLED:
 		execReport.SetExecType(enum.ExecType_PARTIAL_FILL)
 		execReport.SetLastPx(decimal.NewFromFloat(msg.AverageExecutedPrice), 8)
-		execReport.SetLastShares(decimal.NewFromFloat(msg.Trades[len(msg.Trades)-1].Amount), 8)
+		execReport.SetLastShares(decimal.NewFromFloat(msg.ExecutedAmount), 8)
 	case enum.OrdStatus_FILLED:
 		execReport.SetExecType(enum.ExecType_FILL)
 		execReport.SetLastPx(decimal.NewFromFloat(msg.AverageExecutedPrice), 8)
-		execReport.SetLastShares(decimal.NewFromFloat(msg.Trades[len(msg.Trades)-1].Amount), 8)
+		execReport.SetLastShares(decimal.NewFromFloat(msg.ExecutedAmount), 8)
 	case enum.OrdStatus_CANCELED:
 		execReport.SetExecType(enum.ExecType_CANCELED)
 		execReport.SetLastPx(decimal.NewFromFloat(msg.Price), 8)

@@ -3,14 +3,14 @@ package model
 import "time"
 
 type Trade struct {
-	TradeID        string    `json:"tradeId" gorm:"primary_key"`
-	OrderID        string    `json:"orderId" gorm:"primary_key"`
-	Side           string    `json:"side"`
-	Price          float64   `json:"price" gorm:"type:numeric(12,8)"`
-	Quantity       float64   `json:"qty" gorm:"type:numeric(12,8)"`
-	Commision      float64   `json:"commision" gorm:"type:numeric(12,8)"`
-	CommisionAsset string    `json:"commisionAsset"`
-	Timestamp      time.Time `json:"timestamp"`
+	TradeID         string    `json:"tradeId" gorm:"primary_key"`
+	OrderID         string    `json:"orderId" gorm:"primary_key"`
+	Side            string    `json:"side"`
+	Price           float64   `json:"price" gorm:"type:numeric(12,8)"`
+	Quantity        float64   `json:"qty" gorm:"type:numeric(12,8)"`
+	Commission      float64   `json:"commission" gorm:"type:numeric(12,8)"`
+	CommissionAsset string    `json:"commissionAsset"`
+	Timestamp       time.Time `json:"timestamp"`
 }
 
 func AddTrade(trade Trade) error {

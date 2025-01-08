@@ -643,6 +643,51 @@ func orderIntToType(i int) order.Type {
 func (b *BTSE) GetOrderInfo(ctx context.Context, orderID string, _ currency.Pair, a asset.Item) (*order.Detail, error) {
 	o, err := b.GetOrder(ctx, orderID, "")
 	if err != nil {
+		if strings.Contains(err.Error(), "404") {
+			var od order.Detail
+			th, err := b.TradeHistory(ctx,
+				"",
+				time.Time{}, time.Time{},
+				0, 0, 0,
+				true,
+				"", orderID)
+			if err != nil {
+				return nil, fmt.Errorf("unable to get order fills for orderID %s", orderID)
+			}
+
+			var trades []order.TradeHistory
+			if len(th) > 0 {
+				for i := range th {
+					createdAt, err := parseOrderTime(th[i].TradeID)
+					if err != nil {
+						log.Errorf(log.ExchangeSys,
+							"%s GetOrderInfo unable to parse time: %s\n", b.Name, err)
+					}
+					var orderSide order.Side
+					orderSide, err = order.StringToOrderSide(th[i].Side)
+					if err != nil {
+						return nil, err
+					}
+					trades = append(trades, order.TradeHistory{
+						Timestamp: createdAt,
+						TID:       th[i].TradeID,
+						Price:     th[i].Price,
+						Amount:    th[i].Size,
+						Exchange:  b.Name,
+						Side:      orderSide,
+						Fee:       th[i].FeeAmount,
+						Total:     th[i].Total,
+						FeeAsset:  th[i].FeeCurrency,
+					})
+				}
+				od.ClientOrderID = th[0].ClOrderID
+				od.OrderID = th[0].OrderID
+				od.Exchange = b.Name
+				od.Status = order.UnknownStatus
+			}
+			od.Trades = trades
+			return &od, nil
+		}
 		return nil, err
 	}
 
