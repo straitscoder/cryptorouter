@@ -48,16 +48,6 @@ func Fili() error {
 						break
 					}
 					continue Loop
-				case "4":
-					if err := fixEngine.MarketDataRequest(); err != nil {
-						log.Println(err)
-						break
-					}
-					scanner := bufio.NewScanner(os.Stdin)
-					scanner.Scan()
-					if scanner.Text() == "<esc>" {
-						continue Loop
-					}
 				case "0":
 					break Loop
 				default:
@@ -78,7 +68,6 @@ func Menu() (string, error) {
 	fmt.Println("1. Order Single")
 	fmt.Println("2. Cancel Order")
 	fmt.Println("3. Modify Order")
-	fmt.Println("4. Market Data Request")
 	fmt.Println("0. Exit")
 	scanner := bufio.NewScanner(os.Stdin)
 	scanner.Scan()
@@ -115,10 +104,10 @@ func Symbol() string {
 	return stringField("Symbol")
 }
 
-func Side() enum.Side {
+func Side() (string, enum.Side) {
 	fmt.Println("You can choose either Buy or Sell")
 	sideStr := stringField("Side")
-	return convertSide(strings.ToUpper(sideStr))
+	return strings.ToUpper(sideStr), convertSide(strings.ToUpper(sideStr))
 }
 
 func Price() decimal.Decimal {
@@ -129,16 +118,16 @@ func Amount() decimal.Decimal {
 	return decimalField("Amount")
 }
 
-func OrderType() enum.OrdType {
+func OrderType() (string, enum.OrdType) {
 	fmt.Println("You can choose either Limit or Market")
 	ordTypeStr := stringField("Order Type")
-	return convertOrdType(ordTypeStr)
+	return strings.ToUpper(ordTypeStr), convertOrdType(ordTypeStr)
 }
 
-func AssetType() enum.SecurityType {
+func AssetType() (string, enum.SecurityType) {
 	fmt.Println("You can choose either Future or Spot")
 	assetTypeStr := stringField("Asset Type")
-	return convertAsset(assetTypeStr)
+	return strings.ToUpper(assetTypeStr), convertAsset(assetTypeStr)
 }
 
 func Exchange() string {

@@ -42,6 +42,7 @@ var (
 	errNilOrder                 = errors.New("nil order received")
 	errFuturesTrackingDisabled  = errors.New("tracking futures positions disabled. enable it via config under orderManager activelyTrackFuturesPositions")
 	orderManagerInterval        = time.Second * 5
+	orderRequestInterval        = time.Second * 2
 	defaultOrderSeekTime        = -time.Hour * 24 * 365
 )
 
@@ -191,6 +192,7 @@ func (m *OrderManager) gracefulShutdown() {
 // run will periodically process orders
 func (m *OrderManager) run() {
 	log.Debugln(log.OrderMgr, "Order manager started.")
+	go m.processRequest()
 	m.processOrders()
 	for {
 		select {
@@ -202,6 +204,8 @@ func (m *OrderManager) run() {
 		case <-time.After(orderManagerInterval):
 			// Process orders go routine allows shutdown procedures to continue
 			go m.processOrders()
+		case <-time.After(orderRequestInterval):
+			go m.processRequest()
 		}
 	}
 }
@@ -727,9 +731,6 @@ func (m *OrderManager) processOrders() {
 				"Processing orders for exchange %v",
 				exchanges[x].GetName())
 		}
-		log.Debugf(log.OrderMgr,
-			"Processing orders for exchange %v",
-			exchanges[x].GetName())
 		enabledAssets := exchanges[x].GetAssetTypes(true)
 		for y := range enabledAssets {
 			// filter := &order.Filter{Exchange: exchanges[x].GetName(), Status: order.AnyStatus}
@@ -761,9 +762,6 @@ func (m *OrderManager) processOrders() {
 				log.Errorf(log.OrderMgr, "Unable to get order history from %s: %+v", exchanges[x].GetName(), err)
 				continue
 			}
-			if exchanges[x].GetName() == "BTSE" {
-				log.Debugf(log.OrderMgr, "orders: %+v", exchangeOrders)
-			}
 			if len(exchangeOrders) == 0 {
 				continue
 			}
@@ -793,7 +791,6 @@ func (m *OrderManager) processOrders() {
 						log.Errorf(log.OrderMgr, "Unable save order to redis: %+v", err)
 						continue
 					}
-
 					m.fixGateway.UpdateOrder(updatedOrder, ToOrdStatus(updatedOrder.Status), "Create order from order manager")
 					continue
 				} else if len(existingOrder.Trades) != len(updatedOrder.Trades) {
@@ -941,6 +938,232 @@ func (m *OrderManager) processOrders() {
 	if m.verbose {
 		log.Debugf(log.OrderMgr, "Finished processing orders")
 	}
+}
+
+func (m *OrderManager) processRequest() {
+	go m.processSubmitQueue()
+	go m.processModifyOrder()
+	go m.processCancelOrder()
+}
+
+func (m *OrderManager) processSubmitQueue() {
+	rpcRequest, err := model.GetSubmitQueue(context.Background())
+	if err != nil {
+		log.Debugf(log.OrderMgr, "error when get submit queue: %+v", err)
+		return
+	}
+
+	if rpcRequest == nil {
+		return
+	}
+
+	pair, err := currency.NewPairFromString(rpcRequest.Pair.Base + rpcRequest.Pair.Delimiter + rpcRequest.Pair.Quote)
+	if err != nil {
+		log.Errorf(log.OrderMgr, "unidentified pair: %+v", err)
+		if err := model.AddSubmitQueue(context.Background(), rpcRequest); err != nil {
+			log.Errorf(log.OrderMgr, "error when readded error submit request: %+v", err)
+			return
+		}
+		return
+	}
+
+	asset, err := asset.New(rpcRequest.AssetType)
+	if err != nil {
+		log.Errorf(log.OrderMgr, "unidentified asset: %+v", err)
+		if err := model.AddSubmitQueue(context.Background(), rpcRequest); err != nil {
+			log.Errorf(log.OrderMgr, "error when readded error submit request: %+v", err)
+			return
+		}
+		return
+	}
+
+	side, err := order.StringToOrderSide(rpcRequest.Side)
+	if err != nil {
+		log.Errorf(log.OrderMgr, "unidentified side: %+v", err)
+		if err := model.AddSubmitQueue(context.Background(), rpcRequest); err != nil {
+			log.Errorf(log.OrderMgr, "error when readded error submit request: %+v", err)
+			return
+		}
+		return
+	}
+
+	orderType, err := order.StringToOrderType(rpcRequest.OrderType)
+	if err != nil {
+		log.Errorf(log.OrderMgr, "unidentified order type: %+v", err)
+		if err := model.AddSubmitQueue(context.Background(), rpcRequest); err != nil {
+			log.Errorf(log.OrderMgr, "error when readded error submit request: %+v", err)
+			return
+		}
+		return
+	}
+
+	submitOrder := &order.Submit{
+		ClientOrderID: rpcRequest.ClientOrderId,
+		Exchange:      rpcRequest.Exchange,
+		Pair:          pair,
+		AssetType:     asset,
+		Side:          side,
+		Type:          orderType,
+		Price:         rpcRequest.Price,
+		Amount:        rpcRequest.Amount,
+	}
+
+	_, err = m.Submit(context.TODO(), submitOrder)
+	if err != nil {
+		log.Debugf(log.OrderMgr, "error submitting this order: %+v", *submitOrder)
+		log.Errorf(log.OrderMgr, "error when submitting order: %+v", err)
+		if err := model.AddSubmitQueue(context.Background(), rpcRequest); err != nil {
+			log.Errorf(log.OrderMgr, "error when readded error submit request: %+v", err)
+			return
+		}
+		return
+	}
+	return
+}
+
+func (m *OrderManager) processModifyOrder() {
+	rpcRequest, err := model.GetModifyQueue(context.Background())
+	if err != nil {
+		log.Errorf(log.OrderMgr, "error getting modify queue: %+v", err)
+		return
+	}
+
+	if rpcRequest == nil {
+		return
+	}
+
+	pair, err := currency.NewPairFromString(rpcRequest.Pair.Base + rpcRequest.Pair.Delimiter + rpcRequest.Pair.Quote)
+	if err != nil {
+		log.Errorf(log.OrderMgr, "unidentified pair: %+v", err)
+		if err := model.AddModifyQueue(context.Background(), rpcRequest); err != nil {
+			log.Errorf(log.OrderMgr, "error when readded error modify request: %+v", err)
+			return
+		}
+		return
+	}
+
+	asset, err := asset.New(rpcRequest.Asset)
+	if err != nil {
+		log.Errorf(log.OrderMgr, "unidentified asset: %+v", err)
+		if err := model.AddModifyQueue(context.Background(), rpcRequest); err != nil {
+			log.Errorf(log.OrderMgr, "error when readded error modify request: %+v", err)
+			return
+		}
+		return
+	}
+
+	side, err := order.StringToOrderSide(rpcRequest.Side)
+	if err != nil {
+		log.Errorf(log.OrderMgr, "unidentified side: %+v", err)
+		if err := model.AddModifyQueue(context.Background(), rpcRequest); err != nil {
+			log.Errorf(log.OrderMgr, "error when readded error modify request: %+v", err)
+			return
+		}
+		return
+	}
+
+	orderType, err := order.StringToOrderType(rpcRequest.OrderType)
+	if err != nil {
+		log.Errorf(log.OrderMgr, "unidentified order type: %+v", err)
+		if err := model.AddModifyQueue(context.Background(), rpcRequest); err != nil {
+			log.Errorf(log.OrderMgr, "error when readded error modify request: %+v", err)
+			return
+		}
+		return
+	}
+	modifyOrder := &order.Modify{
+		OrigClOrdID: rpcRequest.ClientOrderId,
+		OrderID:     rpcRequest.OrderId,
+		AssetType:   asset,
+		Side:        side,
+		Pair:        pair,
+		Type:        orderType,
+		Exchange:    rpcRequest.Exchange,
+		Price:       rpcRequest.Price,
+		Amount:      rpcRequest.Amount,
+	}
+
+	if _, err := m.Modify(context.TODO(), modifyOrder); err != nil {
+		log.Errorf(log.OrderMgr, "error when modifying order: %+v", err)
+		if err := model.AddModifyQueue(context.Background(), rpcRequest); err != nil {
+			log.Errorf(log.OrderMgr, "error when readded error modify request: %+v", err)
+			return
+		}
+		return
+	}
+	return
+}
+
+func (m *OrderManager) processCancelOrder() {
+	rpcRequest, err := model.GetCancelQueue(context.Background())
+	if err != nil {
+		log.Errorf(log.OrderMgr, "Error when get cancel order request: %+v", err)
+		return
+	}
+
+	if rpcRequest == nil {
+		return
+	}
+
+	pair, err := currency.NewPairFromString(rpcRequest.Pair.Base + rpcRequest.Pair.Delimiter + rpcRequest.Pair.Quote)
+	if err != nil {
+		log.Errorf(log.OrderMgr, "unidentified pair: %+v", err)
+		if err := model.AddCancelQueue(context.Background(), rpcRequest); err != nil {
+			log.Errorf(log.OrderMgr, "error when readded error cancel request: %+v", err)
+			return
+		}
+		return
+	}
+
+	asset, err := asset.New(rpcRequest.AssetType)
+	if err != nil {
+		log.Errorf(log.OrderMgr, "unidentified asset: %+v", err)
+		if err := model.AddCancelQueue(context.Background(), rpcRequest); err != nil {
+			log.Errorf(log.OrderMgr, "error when readded error cancel request: %+v", err)
+			return
+		}
+		return
+	}
+
+	side, err := order.StringToOrderSide(rpcRequest.Side)
+	if err != nil {
+		log.Errorf(log.OrderMgr, "unidentified side: %+v", err)
+		if err := model.AddCancelQueue(context.Background(), rpcRequest); err != nil {
+			log.Errorf(log.OrderMgr, "error when readded error cancel request: %+v", err)
+			return
+		}
+		return
+	}
+
+	orderType, err := order.StringToOrderType(rpcRequest.OrderType)
+	if err != nil {
+		log.Errorf(log.OrderMgr, "unidentified order type: %+v", err)
+		if err := model.AddCancelQueue(context.Background(), rpcRequest); err != nil {
+			log.Errorf(log.OrderMgr, "error when readded error cancel request: %+v", err)
+			return
+		}
+		return
+	}
+
+	cancelOrder := &order.Cancel{
+		ClientOrderID: rpcRequest.ClientOrderId,
+		OrderID:       rpcRequest.OrderId,
+		Exchange:      rpcRequest.Exchange,
+		Pair:          pair,
+		Side:          side,
+		AssetType:     asset,
+		Type:          orderType,
+	}
+
+	if err := m.Cancel(context.TODO(), cancelOrder); err != nil {
+		log.Errorf(log.OrderMgr, "Error cancelling order: %+v", err)
+		if err := model.AddCancelQueue(context.Background(), rpcRequest); err != nil {
+			log.Errorf(log.OrderMgr, "error when readded error cancel request: %+v", err)
+			return
+		}
+		return
+	}
+	return
 }
 
 // processFuturesPositions ensures any open position found is kept up to date in the order manager

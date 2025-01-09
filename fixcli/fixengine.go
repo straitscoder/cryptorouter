@@ -2,23 +2,20 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"os"
 	"path"
 	"runtime"
-	"time"
 
-	"github.com/quickfixgo/enum"
-	"github.com/quickfixgo/field"
-	"github.com/quickfixgo/fix42/marketdatarequest"
-	"github.com/quickfixgo/fix42/newordersingle"
-	"github.com/quickfixgo/fix42/ordercancelreplacerequest"
-	"github.com/quickfixgo/fix42/ordercancelrequest"
 	"github.com/quickfixgo/quickfix"
 	"github.com/quickfixgo/tag"
 	"github.com/thrasher-corp/gocryptotrader/common"
 	"github.com/thrasher-corp/gocryptotrader/common/file"
+	"github.com/thrasher-corp/gocryptotrader/currency"
+	"github.com/thrasher-corp/gocryptotrader/fixcli/model"
+	"github.com/thrasher-corp/gocryptotrader/gctrpc"
 	"gopkg.in/ini.v1"
 )
 
@@ -155,121 +152,168 @@ func (fe *FixEngine) Start() error {
 
 func (fe *FixEngine) NewOrder() error {
 	clOrdId := generateClOrdID()
-	order := newordersingle.New(
-		field.NewClOrdID(clOrdId),
-		field.NewHandlInst(HandleIns()),
-		field.NewSymbol(Symbol()),
-		field.NewSide(Side()),
-		field.NewTransactTime(time.Now().UTC()),
-		field.NewOrdType(OrderType()),
-	)
-	securityType := AssetType()
-	order.SetSecurityExchange(Exchange())
-	order.SetSecurityType(securityType)
-	order.Set(field.NewPrice(Price(), 8))
-	order.Set(field.NewOrderQty(Amount(), 8))
-	orderMsg := order.ToMessage()
-	orderMsg.Header.Set(field.NewSenderCompID(fe.senderCompId))
-	orderMsg.Header.Set(field.NewTargetCompID(fe.targetCompId))
-	parsed := parseFIXMessage(orderMsg)
-	jsonOutput(parsed)
+	symbol := Symbol()
+	pair, err := currency.NewPairDelimiter(symbol, "-")
+	if err != nil {
+		return err
+	}
+	sideStr, _ := Side()
+	ordTypeStr, _ := OrderType()
+	// order := newordersingle.New(
+	// 	field.NewClOrdID(clOrdId),
+	// 	field.NewHandlInst(HandleIns()),
+	// 	field.NewSymbol(symbol),
+	// 	field.NewSide(sideFix),
+	// 	field.NewTransactTime(time.Now().UTC()),
+	// 	field.NewOrdType(ordTypeFix),
+	// )
+	assetStr, _ := AssetType()
+	price := Price()
+	amount := Amount()
+	exchange := Exchange()
+	// order.SetSecurityExchange(exchange)
+	// order.SetSecurityType(securityType)
+	// order.Set(field.NewPrice(price, 8))
+	// order.Set(field.NewOrderQty(amount, 8))
+	// orderMsg := order.ToMessage()
+	// orderMsg.Header.Set(field.NewSenderCompID(fe.senderCompId))
+	// orderMsg.Header.Set(field.NewTargetCompID(fe.targetCompId))
+	// parsed := parseFIXMessage(orderMsg)
+	// jsonOutput(parsed)
 	if !Confirmation() {
 		fmt.Println("Order canceled")
 		return nil
 	}
-	return quickfix.Send(orderMsg)
+	rpcOrder := gctrpc.SubmitOrderRequest{
+		ClientOrderId: clOrdId,
+		Pair:          &gctrpc.CurrencyPair{Base: pair.Base.String(), Delimiter: pair.Delimiter, Quote: pair.Quote.String()},
+		Exchange:      exchange,
+		Side:          sideStr,
+		OrderType:     ordTypeStr,
+		Amount:        amount.InexactFloat64(),
+		Price:         price.InexactFloat64(),
+		AssetType:     assetStr,
+	}
+	if err := model.AddSubmitQueue(context.Background(), &rpcOrder); err != nil {
+		return err
+	}
+	return nil
 }
 
 func (fe *FixEngine) CancelOrder() error {
 	clOrdId := ClOrdID()
 	orderId := getOrderId(clOrdId)
-	cancelReq := ordercancelrequest.New(
-		field.NewOrigClOrdID(clOrdId),
-		field.NewClOrdID(generateClOrdID()),
-		field.NewSymbol(Symbol()),
-		field.NewSide(Side()),
-		field.NewTransactTime(time.Now().UTC()),
-	)
-	assetType := AssetType()
-	if orderId != nil {
-		cancelReq.SetOrderID(*orderId)
-	} else if orderId == nil && assetType == enum.SecurityType_FUTURE {
-		cancelReq.SetOrderID(string(enum.SecurityType_FUTURE))
-	} else {
+	sideStr, _ := Side()
+	symbol := Symbol()
+	pair, err := currency.NewPairDelimiter(symbol, "-")
+	if err != nil {
+		return err
+	}
+	// cancelReq := ordercancelrequest.New(
+	// 	field.NewOrigClOrdID(clOrdId),
+	// 	field.NewClOrdID(generateClOrdID()),
+	// 	field.NewSymbol(symbol),
+	// 	field.NewSide(sideFix),
+	// 	field.NewTransactTime(time.Now().UTC()),
+	// )
+	assetStr, _ := AssetType()
+	// if orderId != nil {
+	// 	cancelReq.SetOrderID(*orderId)
+	// } else if orderId == nil && assetType == enum.SecurityType_FUTURE {
+	// 	cancelReq.SetOrderID(string(enum.SecurityType_FUTURE))
+	// } else {
+	if orderId == nil {
 		fmt.Println("Order not found")
 		return nil
 	}
-	cancelReq.SetSecurityExchange(Exchange())
-	cancelReq.SetSecurityType(assetType)
-	cancelReqMsg := cancelReq.ToMessage()
-	cancelReqMsg.Header.Set(field.NewSenderCompID(fe.senderCompId))
-	cancelReqMsg.Header.Set(field.NewTargetCompID(fe.targetCompId))
-	parsed := parseFIXMessage(cancelReqMsg)
-	jsonOutput(parsed)
+	exchange := Exchange()
+	orderTypeStr, _ := OrderType()
+	// cancelReq.SetSecurityExchange(exchange)
+	// cancelReq.SetSecurityType(assetType)
+	// cancelReqMsg := cancelReq.ToMessage()
+	// cancelReqMsg.Header.Set(field.NewSenderCompID(fe.senderCompId))
+	// cancelReqMsg.Header.Set(field.NewTargetCompID(fe.targetCompId))
+	// parsed := parseFIXMessage(cancelReqMsg)
+	// jsonOutput(parsed)
 	if !Confirmation() {
 		fmt.Println("Abort cancel order")
 		return nil
 	}
+	cancelRpc := gctrpc.CancelOrderRequest{
+		Exchange:      exchange,
+		OrderId:       *orderId,
+		ClientOrderId: clOrdId,
+		Pair:          &gctrpc.CurrencyPair{Base: pair.Base.String(), Delimiter: pair.Delimiter, Quote: pair.Quote.String()},
+		AssetType:     assetStr,
+		Side:          sideStr,
+		OrderType:     orderTypeStr,
+	}
+	if err := model.AddCancelQueue(context.Background(), &cancelRpc); err != nil {
+		return err
+	}
 	deleteOrderId(clOrdId)
-	return quickfix.Send(cancelReqMsg)
+	return nil
 }
 
 func (fe *FixEngine) ModifyOrder() error {
 	cliOrdId := ClOrdID()
 	orderId := getOrderId(cliOrdId)
-	modOrder := ordercancelreplacerequest.New(
-		field.NewOrigClOrdID(cliOrdId),
-		field.NewClOrdID(generateClOrdID()),
-		field.NewHandlInst(HandleIns()),
-		field.NewSymbol(Symbol()),
-		field.NewSide(Side()),
-		field.NewTransactTime(time.Now().UTC()),
-		field.NewOrdType(OrderType()),
-	)
+	exchange := Exchange()
+	symbol := Symbol()
+	pair, err := currency.NewPairDelimiter(symbol, "-")
+	if err != nil {
+		return err
+	}
+	sideStr, _ := Side()
+	ordTypeStr, _ := OrderType()
+	// modOrder := ordercancelreplacerequest.New(
+	// 	field.NewOrigClOrdID(cliOrdId),
+	// 	field.NewClOrdID(generateClOrdID()),
+	// 	field.NewHandlInst(HandleIns()),
+	// 	field.NewSymbol(symbol),
+	// 	field.NewSide(sideFix),
+	// 	field.NewTransactTime(time.Now().UTC()),
+	// 	field.NewOrdType(orderType),
+	// )
 
-	assetType := AssetType()
-	if orderId != nil {
-		modOrder.SetOrderID(*orderId)
-	} else if orderId == nil && assetType == enum.SecurityType_FUTURE {
-		modOrder.SetOrderID(string(enum.SecurityType_FUTURE))
-	} else {
+	assetDtr, _ := AssetType()
+	price := Price()
+	amount := Amount()
+	// if orderId != nil {
+	// 	modOrder.SetOrderID(*orderId)
+	// } else if orderId == nil && assetType == enum.SecurityType_FUTURE {
+	// 	modOrder.SetOrderID(string(enum.SecurityType_FUTURE))
+	// } else {
+	if orderId == nil {
 		fmt.Println("Order not found")
 		return nil
 	}
-	modOrder.SetSecurityExchange(Exchange())
-	modOrder.SetSecurityType(assetType)
-	modOrder.Set(field.NewPrice(Price(), 8))
-	modOrder.Set(field.NewOrderQty(Amount(), 8))
-	modOrderMsg := modOrder.ToMessage()
-	modOrderMsg.Header.Set(field.NewSenderCompID(fe.senderCompId))
-	modOrderMsg.Header.Set(field.NewTargetCompID(fe.targetCompId))
-	parsed := parseFIXMessage(modOrderMsg)
-	jsonOutput(parsed)
+	// modOrder.SetSecurityExchange(Exchange())
+	// modOrder.SetSecurityType(assetType)
+	// modOrder.Set(field.NewPrice(price, 8))
+	// modOrder.Set(field.NewOrderQty(amount, 8))
+	// modOrderMsg := modOrder.ToMessage()
+	// modOrderMsg.Header.Set(field.NewSenderCompID(fe.senderCompId))
+	// modOrderMsg.Header.Set(field.NewTargetCompID(fe.targetCompId))
+	// parsed := parseFIXMessage(modOrderMsg)
+	// jsonOutput(parsed)
 	if !Confirmation() {
 		fmt.Println("Abort modify order")
 		return nil
 	}
-	return quickfix.Send(modOrderMsg)
-}
-
-func (fe *FixEngine) MarketDataRequest() error {
-	marketRequest := marketdatarequest.New(
-		field.NewMDReqID(generateClOrdID()),
-		field.NewSubscriptionRequestType(SubsReqType()),
-		field.NewMarketDepth(MarketDepth()),
-	)
-
-	marketRequest.Set(field.NewMDUpdateType(MDUpdateType()))
-	marketRequest.Set(field.NewNoMDEntryTypes(1))
-	marketRequest.Set(field.NewMDEntryType(MDEntryType()))
-	marketRequest.Set(field.NewNoRelatedSym(1))
-	marketRequest.Set(field.NewSymbol(Symbol()))
-	marketRequest.Set(field.NewSecurityExchange(Exchange()))
-	marketRequest.Set(field.NewSecurityType(AssetType()))
-	marketRequestMsg := marketRequest.ToMessage()
-	marketRequestMsg.Header.Set(field.NewSenderCompID(fe.senderCompId))
-	marketRequestMsg.Header.Set(field.NewTargetCompID(fe.targetCompId))
-	parsed := parseFIXMessage(marketRequestMsg)
-	jsonOutput(parsed)
-	return quickfix.Send(marketRequestMsg)
+	modRpc := gctrpc.ModifyOrderRequest{
+		Exchange:      exchange,
+		OrderId:       *orderId,
+		Pair:          &gctrpc.CurrencyPair{Base: pair.Base.String(), Delimiter: pair.Delimiter, Quote: pair.Quote.String()},
+		Asset:         assetDtr,
+		Amount:        amount.InexactFloat64(),
+		Price:         price.InexactFloat64(),
+		ClientOrderId: cliOrdId,
+		Side:          sideStr,
+		OrderType:     ordTypeStr,
+	}
+	if err := model.AddModifyQueue(context.Background(), &modRpc); err != nil {
+		return err
+	}
+	return nil
 }

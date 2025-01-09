@@ -3916,6 +3916,24 @@
             "required": false,
             "type": "number",
             "format": "double"
+          },
+          {
+            "name": "clientOrderId",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "side",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "orderType",
+            "in": "query",
+            "required": false,
+            "type": "string"
           }
         ],
         "tags": [
@@ -4986,6 +5004,12 @@
           "type": "string"
         },
         "side": {
+          "type": "string"
+        },
+        "clientOrderId": {
+          "type": "string"
+        },
+        "orderType": {
           "type": "string"
         }
       }
@@ -7366,6 +7390,9 @@
           "type": "string"
         },
         "marginType": {
+          "type": "string"
+        },
+        "clientOrderId": {
           "type": "string"
         }
       }
