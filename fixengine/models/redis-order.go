@@ -12,22 +12,22 @@ import (
 )
 
 type OrderRedis struct {
-	ClientOrderID   string  `json:"clientOrderId"`
-	OrderID         string  `json:"orderId"`
-	Exchange        string  `json:"exchange"`
-	Base            string  `json:"base"`
-	Quote           string  `json:"quote"`
-	Delimiter       string  `json:"delimiter"`
-	Side            string  `json:"side"`
-	AssetType       string  `json:"assetType"`
-	OrderType       string  `json:"orderType"`
-	Price           float64 `json:"price"`
-	AveragePrice    float64 `json:"averagePrice"`
-	Amount          float64 `json:"amount"`
-	FilledAmount    float64 `json:"filledAmount"`
-	RemainingAmount float64 `json:"remainingAmount"`
-	Status          string  `json:"status"`
-	Timestamp       int64   `json:"timestamp"`
+	ClientOrderID   string  `redis:"clientOrderId"`
+	OrderID         string  `redis:"orderId"`
+	Exchange        string  `redis:"exchange"`
+	Base            string  `redis:"base"`
+	Quote           string  `redis:"quote"`
+	Delimiter       string  `redis:"delimiter"`
+	Side            string  `redis:"side"`
+	AssetType       string  `redis:"assetType"`
+	OrderType       string  `redis:"orderType"`
+	Price           float64 `redis:"price"`
+	AveragePrice    float64 `redis:"averagePrice"`
+	Amount          float64 `redis:"amount"`
+	FilledAmount    float64 `redis:"filledAmount"`
+	RemainingAmount float64 `redis:"remainingAmount"`
+	Status          string  `redis:"status"`
+	Timestamp       int64   `redis:"timestamp"`
 }
 
 const (
@@ -97,16 +97,16 @@ func ToOrderDetail(orderR OrderRedis, trades []order.TradeHistory) (order.Detail
 func AddOrderRedis(ctx context.Context, o order.Detail) error {
 	orderData := ToOrderRedis(o)
 
-	jsonOrder, err := json.Marshal(orderData)
-	if err != nil {
-		return err
-	}
+	// jsonOrder, err := json.Marshal(orderData)
+	// if err != nil {
+	// 	return err
+	// }
 	//Create Order ID List
 	if err := rdClient.RPush(ctx, orderIDListKey, orderData.OrderID).Err(); err != nil {
 		return err
 	}
 	// saved order as byte
-	if err := rdClient.Set(ctx, orderKey+":"+orderData.OrderID, jsonOrder, 0).Err(); err != nil {
+	if err := rdClient.HSet(ctx, orderKey+":"+orderData.OrderID, orderData).Err(); err != nil {
 		return err
 	}
 
@@ -155,7 +155,8 @@ func GetOrdersRedis(ctx context.Context, cond, notCond *order.Filter) (orders []
 }
 
 func GetOrderRedis(ctx context.Context, orderID string) (order order.Detail, err error) {
-	jsonOrder, err := rdClient.Get(ctx, orderKey+":"+orderID).Result()
+	var orderRedis OrderRedis
+	err = rdClient.HGetAll(ctx, orderKey+":"+orderID).Scan(&orderRedis)
 	if err != nil {
 		if err == redis.Nil {
 			return order, nil
@@ -164,17 +165,20 @@ func GetOrderRedis(ctx context.Context, orderID string) (order order.Detail, err
 		return order, err
 	}
 
-	var orderData OrderRedis
-	err = json.Unmarshal([]byte(jsonOrder), &orderData)
-	if err != nil {
-		return order, err
+	if orderRedis.ClientOrderID == "" {
+		return order, nil
 	}
+	// var orderData OrderRedis
+	// err = json.Unmarshal([]byte(jsonOrder), &orderData)
+	// if err != nil {
+	// 	return order, err
+	// }
 
 	trades, err := GetTradesByOrderID(ctx, orderID)
 	if err != nil {
 		return order, err
 	}
-	return ToOrderDetail(orderData, trades)
+	return ToOrderDetail(orderRedis, trades)
 }
 
 func UpdateOrCreateOrderRedis(ctx context.Context, orderD order.Detail) error {

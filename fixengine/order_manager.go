@@ -23,6 +23,7 @@ import (
 	"github.com/thrasher-corp/gocryptotrader/exchanges/futures"
 	"github.com/thrasher-corp/gocryptotrader/exchanges/order"
 	model "github.com/thrasher-corp/gocryptotrader/fixengine/models"
+	"github.com/thrasher-corp/gocryptotrader/gctrpc"
 	"github.com/thrasher-corp/gocryptotrader/log"
 )
 
@@ -705,6 +706,44 @@ func (m *OrderManager) processSubmittedOrder(newOrderResp *order.SubmitResponse)
 	return &OrderSubmitResponse{Detail: detail, InternalOrderID: detail.InternalOrderID.String()}, nil
 }
 
+func ToRpcOrderDetail(ordDetail order.Detail) *gctrpc.OrderDetails {
+	var trades []*gctrpc.TradeHistory
+	if len(ordDetail.Trades) > 0 {
+		trades = make([]*gctrpc.TradeHistory, len(ordDetail.Trades))
+		for i := range ordDetail.Trades {
+			trades[i] = &gctrpc.TradeHistory{
+				Id:           ordDetail.Trades[i].TID,
+				Exchange:     ordDetail.Exchange,
+				AssetType:    ordDetail.AssetType.String(),
+				OrderSide:    ordDetail.Trades[i].Side.String(),
+				Price:        ordDetail.Trades[i].Price,
+				Amount:       ordDetail.Trades[i].Amount,
+				Fee:          ordDetail.Trades[i].Fee,
+				Total:        ordDetail.Trades[i].Total,
+				CreationTime: ordDetail.Trades[i].Timestamp.Unix(),
+			}
+		}
+	}
+	return &gctrpc.OrderDetails{
+		Exchange:      ordDetail.Exchange,
+		Id:            ordDetail.OrderID,
+		ClientOrderId: ordDetail.ClientOrderID,
+		BaseCurrency:  ordDetail.Pair.Base.String(),
+		QuoteCurrency: ordDetail.Pair.Quote.String(),
+		AssetType:     ordDetail.AssetType.String(),
+		OrderSide:     ordDetail.Side.String(),
+		OrderType:     ordDetail.Type.String(),
+		Status:        ordDetail.Status.String(),
+		Price:         ordDetail.Price,
+		Amount:        ordDetail.Amount,
+		Fee:           ordDetail.Fee,
+		Cost:          ordDetail.Price * ordDetail.Amount,
+		CreationTime:  ordDetail.Date.String(),
+		Trades:        trades,
+		UpdateTime:    ordDetail.LastUpdated.String(),
+	}
+}
+
 // processOrders iterates over all exchange orders via API
 // and adds them to the internal order store
 func (m *OrderManager) processOrders() {
@@ -791,7 +830,11 @@ func (m *OrderManager) processOrders() {
 						log.Errorf(log.OrderMgr, "Unable save order to redis: %+v", err)
 						continue
 					}
-					m.fixGateway.UpdateOrder(updatedOrder, ToOrdStatus(updatedOrder.Status), "Create order from order manager")
+					if err := model.AddExecutionReport(context.Background(), ToRpcOrderDetail(*updatedOrder)); err != nil {
+						log.Errorf(log.OrderMgr, "Unable to save execution report from new order: %+v", err)
+						continue
+					}
+					// m.fixGateway.UpdateOrder(updatedOrder, ToOrdStatus(updatedOrder.Status), "Create order from order manager")
 					continue
 				} else if len(existingOrder.Trades) != len(updatedOrder.Trades) {
 					if updatedOrder.Exchange == "BTSE" && updatedOrder.Status == order.UnknownStatus {
@@ -805,7 +848,11 @@ func (m *OrderManager) processOrders() {
 						log.Errorf(log.OrderMgr, "Unable to update order: %s", err)
 						continue
 					}
-					m.fixGateway.UpdateOrder(updatedOrder, ToOrdStatus(updatedOrder.Status), "Update order from order manager")
+					if err := model.AddExecutionReport(context.Background(), ToRpcOrderDetail(*updatedOrder)); err != nil {
+						log.Errorf(log.OrderMgr, "error when saved execution report on updated order: %+v", err)
+						continue
+					}
+					// m.fixGateway.UpdateOrder(updatedOrder, ToOrdStatus(updatedOrder.Status), "Update order from order manager")
 					continue
 				} else {
 					if updatedOrder.Status != existingOrder.Status {
@@ -815,7 +862,12 @@ func (m *OrderManager) processOrders() {
 							continue
 						}
 
-						m.fixGateway.UpdateOrder(updatedOrder, ToOrdStatus(updatedOrder.Status), "Update order from order manager")
+						if err := model.AddExecutionReport(context.Background(), ToRpcOrderDetail(*updatedOrder)); err != nil {
+							log.Errorf(log.OrderMgr, "error when saved execution report on updated order: %+v", err)
+							continue
+						}
+						// m.fixGateway.UpdateOrder(updatedOrder, ToOrdStatus(updatedOrder.Status), "Update order from order manager")
+						continue
 					} else if existingOrder.Amount != updatedOrder.Amount || existingOrder.Price != updatedOrder.Price {
 						err := model.UpdateOrCreateOrderRedis(context.Background(), *updatedOrder)
 						if err != nil {
@@ -823,7 +875,12 @@ func (m *OrderManager) processOrders() {
 							continue
 						}
 
-						m.fixGateway.UpdateOrder(updatedOrder, ToOrdStatus(updatedOrder.Status), "Update order from order manager")
+						if err := model.AddExecutionReport(context.Background(), ToRpcOrderDetail(*updatedOrder)); err != nil {
+							log.Errorf(log.OrderMgr, "error when saved execution report on updated order: %+v", err)
+							continue
+						}
+						// m.fixGateway.UpdateOrder(updatedOrder, ToOrdStatus(updatedOrder.Status), "Update order from order manager")
+						continue
 					}
 
 					// _, err := m.UpsertOrder(updatedOrder)

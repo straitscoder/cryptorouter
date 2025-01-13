@@ -6927,7 +6927,19 @@
           "type": "number",
           "format": "double"
         },
+        "averagePrice": {
+          "type": "number",
+          "format": "double"
+        },
         "amount": {
+          "type": "number",
+          "format": "double"
+        },
+        "filledAmount": {
+          "type": "number",
+          "format": "double"
+        },
+        "remainingAmount": {
           "type": "number",
           "format": "double"
         },

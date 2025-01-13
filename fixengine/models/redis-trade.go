@@ -12,16 +12,16 @@ import (
 )
 
 type TradeRedis struct {
-	TradeID         string  `json:"tradeId" gorm:"primary_key"`
-	OrderID         string  `json:"orderId" gorm:"primary_key"`
-	Exchange        string  `json:"exchange"`
-	Side            string  `json:"side"`
-	Price           float64 `json:"price" gorm:"type:numeric(12,8)"`
-	Quantity        float64 `json:"qty" gorm:"type:numeric(12,8)"`
-	Commission      float64 `json:"commission" gorm:"type:numeric(12,8)"`
-	CommissionAsset string  `json:"commissionAsset"`
-	Timestamp       int64   `json:"timestamp"`
-	Total           float64 `json:"total"`
+	TradeID         string  `redis:"tradeId" gorm:"primary_key"`
+	OrderID         string  `redis:"orderId" gorm:"primary_key"`
+	Exchange        string  `redis:"exchange"`
+	Side            string  `redis:"side"`
+	Price           float64 `redis:"price" gorm:"type:numeric(12,8)"`
+	Quantity        float64 `redis:"qty" gorm:"type:numeric(12,8)"`
+	Commission      float64 `redis:"commission" gorm:"type:numeric(12,8)"`
+	CommissionAsset string  `redis:"commissionAsset"`
+	Timestamp       int64   `redis:"timestamp"`
+	Total           float64 `redis:"total"`
 }
 
 const (
@@ -99,11 +99,7 @@ func AddTradeRedis(ctx context.Context, trade TradeRedis) error {
 		return err
 	}
 
-	jsonTrade, err := json.Marshal(trade)
-	if err != nil {
-		return err
-	}
-	if err := rdClient.Set(ctx, GenerateTradeKey(trade.TradeID, trade.OrderID), jsonTrade, 0).Err(); err != nil {
+	if err := rdClient.HSet(ctx, GenerateTradeKey(trade.TradeID, trade.OrderID), trade).Err(); err != nil {
 		return err
 	}
 
@@ -111,7 +107,8 @@ func AddTradeRedis(ctx context.Context, trade TradeRedis) error {
 }
 
 func GetTradeRedis(ctx context.Context, tradeId, orderId string) (order.TradeHistory, error) {
-	jsonTrade, err := rdClient.Get(ctx, GenerateTradeKey(tradeId, orderId)).Result()
+	var tradeRedis TradeRedis
+	err := rdClient.HGetAll(ctx, GenerateTradeKey(tradeId, orderId)).Scan(&tradeRedis)
 	if err != nil {
 		if err == redis.Nil {
 			return order.TradeHistory{}, nil
@@ -119,13 +116,11 @@ func GetTradeRedis(ctx context.Context, tradeId, orderId string) (order.TradeHis
 		return order.TradeHistory{}, err
 	}
 
-	var tradeData TradeRedis
-	err = json.Unmarshal([]byte(jsonTrade), &tradeData)
-	if err != nil {
-		return order.TradeHistory{}, err
+	if tradeRedis.Exchange == "" {
+		return order.TradeHistory{}, nil
 	}
 
-	return ToTradeHistory(tradeData)
+	return ToTradeHistory(tradeRedis)
 }
 
 func UpdateOrCreateTradeRedis(ctx context.Context, trade TradeRedis) error {

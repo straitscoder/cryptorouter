@@ -13,6 +13,7 @@ import (
 
 	"github.com/quickfixgo/enum"
 	"github.com/quickfixgo/quickfix"
+	"google.golang.org/protobuf/proto"
 )
 
 func closeConn(conn *quickfix.Initiator, cancel context.CancelFunc) {
@@ -64,6 +65,15 @@ func addFieldsToMap(m map[string]interface{}, group *quickfix.FieldMap) {
 }
 
 func jsonOutput(in interface{}) {
+	if pm, ok := in.(proto.Message); ok {
+		p, err := proto.Marshal(pm)
+		if err != nil {
+			jsonOutput(err)
+			return
+		}
+		fmt.Printf("%s\n", string(p))
+		return
+	}
 	j, err := json.MarshalIndent(in, "", " ")
 	if err != nil {
 		return

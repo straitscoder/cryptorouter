@@ -3,6 +3,7 @@ package model
 import (
 	"context"
 
+	"github.com/redis/go-redis/v9"
 	"github.com/thrasher-corp/gocryptotrader/gctrpc"
 	"google.golang.org/protobuf/proto"
 )
@@ -49,4 +50,17 @@ func AddCancelQueue(ctx context.Context, req *gctrpc.CancelOrderRequest) error {
 		return err
 	}
 	return nil
+}
+
+func GetExecutionReportQueue(ctx context.Context) (*gctrpc.OrderDetails, error) {
+	binary, err := rdClient.LPop(ctx, executionReportQueue).Bytes()
+	if err != nil {
+		if err == redis.Nil {
+			return nil, nil
+		}
+		return nil, err
+	}
+
+	var orderDetail gctrpc.OrderDetails
+	return &orderDetail, proto.Unmarshal(binary, &orderDetail)
 }

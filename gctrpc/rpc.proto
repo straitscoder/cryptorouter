@@ -299,12 +299,15 @@ message OrderDetails {
   string update_time = 10;
   string status = 11;
   double price = 12;
-  double amount = 13;
-  double open_volume = 14;
-  double fee = 15;
-  double cost = 16;
-  repeated TradeHistory trades = 17;
-  double contract_amount = 18;
+  double average_price = 13;
+  double amount = 14;
+  double filled_amount = 15;
+  double remaining_amount = 16;
+  double open_volume = 17;
+  double fee = 18;
+  double cost = 19;
+  repeated TradeHistory trades = 20;
+  double contract_amount = 21;
 }
 
 message TradeHistory {

@@ -8,6 +8,7 @@ import (
 	"os"
 	"path"
 	"runtime"
+	"time"
 
 	"github.com/quickfixgo/quickfix"
 	"github.com/quickfixgo/tag"
@@ -144,10 +145,34 @@ func (fe *FixEngine) Start() error {
 		return fmt.Errorf("error when initiate initiator : %+v", err)
 	}
 	fe.initiator = initiator
+	go fe.ExecutionReportRoutine()
 	if err := fe.initiator.Start(); err != nil {
 		return fmt.Errorf("error when start initiator : %+v", err)
 	}
 	return nil
+}
+
+func (fe *FixEngine) ExecutionReportRoutine() {
+	fe.CheckExecutionReport()
+	for {
+		select {
+		case <-time.After(time.Second * 1):
+			go fe.CheckExecutionReport()
+		}
+	}
+}
+
+func (fe *FixEngine) CheckExecutionReport() {
+	executionReport, err := model.GetExecutionReportQueue(context.Background())
+	if err != nil {
+		jsonOutput(err)
+		return
+	}
+	if executionReport != nil {
+		jsonOutput(executionReport)
+		return
+	}
+	return
 }
 
 func (fe *FixEngine) NewOrder() error {
