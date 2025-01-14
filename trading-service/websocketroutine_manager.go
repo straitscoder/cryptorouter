@@ -299,7 +299,7 @@ func (m *websocketRoutineManager) websocketDataHandler(exchName string, data int
 				return nil
 			}
 
-			if err := model.AddExecutionReport(context.Background(), d); err != nil {
+			if err := model.AddExecutionReport(context.Background(), d, "new order from websocket"); err != nil {
 				m.websocketDataHandler(d.Exchange, order.ClassificationError{
 					Exchange: d.Exchange,
 					OrderID:  d.OrderID,
@@ -308,7 +308,7 @@ func (m *websocketRoutineManager) websocketDataHandler(exchName string, data int
 				return nil
 			}
 			m.printOrderSummary(d, true)
-		} else if len(d.Trades) > 0 {
+		} else if len(d.Trades) != len(existingOrder.Trades) {
 			if err := model.UpdateOrCreateOrderRedis(context.Background(), *d); err != nil {
 				m.websocketDataHandler(d.Exchange, order.ClassificationError{
 					Exchange: d.Exchange,
@@ -318,7 +318,7 @@ func (m *websocketRoutineManager) websocketDataHandler(exchName string, data int
 				return nil
 			}
 
-			if err := model.AddExecutionReport(context.Background(), d); err != nil {
+			if err := model.AddExecutionReport(context.Background(), d, "update trades from websocket"); err != nil {
 				m.websocketDataHandler(d.Exchange, order.ClassificationError{
 					Exchange: d.Exchange,
 					OrderID:  d.OrderID,
@@ -338,7 +338,7 @@ func (m *websocketRoutineManager) websocketDataHandler(exchName string, data int
 					return nil
 				}
 
-				if err := model.AddExecutionReport(context.Background(), d); err != nil {
+				if err := model.AddExecutionReport(context.Background(), d, "status update from websocket"); err != nil {
 					m.websocketDataHandler(d.Exchange, order.ClassificationError{
 						Exchange: d.Exchange,
 						OrderID:  d.OrderID,
@@ -357,7 +357,7 @@ func (m *websocketRoutineManager) websocketDataHandler(exchName string, data int
 					return nil
 				}
 
-				if err := model.AddExecutionReport(context.Background(), d); err != nil {
+				if err := model.AddExecutionReport(context.Background(), d, "update price amount from websocket"); err != nil {
 					m.websocketDataHandler(d.Exchange, order.ClassificationError{
 						Exchange: d.Exchange,
 						OrderID:  d.OrderID,

@@ -14,7 +14,6 @@ import (
 	"github.com/quickfixgo/tag"
 	"github.com/thrasher-corp/gocryptotrader/common"
 	"github.com/thrasher-corp/gocryptotrader/common/file"
-	"github.com/thrasher-corp/gocryptotrader/currency"
 	"github.com/thrasher-corp/gocryptotrader/fixcli/model"
 	"github.com/thrasher-corp/gocryptotrader/gctrpc"
 	"gopkg.in/ini.v1"
@@ -169,6 +168,7 @@ func (fe *FixEngine) CheckExecutionReport() {
 		return
 	}
 	if executionReport != nil {
+		saveOrderId(executionReport.Id, executionReport.ClientOrderId)
 		jsonOutput(executionReport)
 		return
 	}
@@ -178,10 +178,6 @@ func (fe *FixEngine) CheckExecutionReport() {
 func (fe *FixEngine) NewOrder() error {
 	clOrdId := generateClOrdID()
 	symbol := Symbol()
-	pair, err := currency.NewPairDelimiter(symbol, "-")
-	if err != nil {
-		return err
-	}
 	sideStr, _ := Side()
 	ordTypeStr, _ := OrderType()
 	// order := newordersingle.New(
@@ -211,7 +207,7 @@ func (fe *FixEngine) NewOrder() error {
 	}
 	rpcOrder := gctrpc.SubmitOrderRequest{
 		ClientOrderId: clOrdId,
-		Pair:          &gctrpc.CurrencyPair{Base: pair.Base.String(), Delimiter: pair.Delimiter, Quote: pair.Quote.String()},
+		Pair:          symbol,
 		Exchange:      exchange,
 		Side:          sideStr,
 		OrderType:     ordTypeStr,
@@ -230,10 +226,6 @@ func (fe *FixEngine) CancelOrder() error {
 	orderId := getOrderId(clOrdId)
 	sideStr, _ := Side()
 	symbol := Symbol()
-	pair, err := currency.NewPairDelimiter(symbol, "-")
-	if err != nil {
-		return err
-	}
 	// cancelReq := ordercancelrequest.New(
 	// 	field.NewOrigClOrdID(clOrdId),
 	// 	field.NewClOrdID(generateClOrdID()),
@@ -268,7 +260,7 @@ func (fe *FixEngine) CancelOrder() error {
 		Exchange:      exchange,
 		OrderId:       *orderId,
 		ClientOrderId: clOrdId,
-		Pair:          &gctrpc.CurrencyPair{Base: pair.Base.String(), Delimiter: pair.Delimiter, Quote: pair.Quote.String()},
+		Pair:          symbol,
 		AssetType:     assetStr,
 		Side:          sideStr,
 		OrderType:     orderTypeStr,
@@ -285,10 +277,6 @@ func (fe *FixEngine) ModifyOrder() error {
 	orderId := getOrderId(cliOrdId)
 	exchange := Exchange()
 	symbol := Symbol()
-	pair, err := currency.NewPairDelimiter(symbol, "-")
-	if err != nil {
-		return err
-	}
 	sideStr, _ := Side()
 	ordTypeStr, _ := OrderType()
 	// modOrder := ordercancelreplacerequest.New(
@@ -329,7 +317,7 @@ func (fe *FixEngine) ModifyOrder() error {
 	modRpc := gctrpc.ModifyOrderRequest{
 		Exchange:      exchange,
 		OrderId:       *orderId,
-		Pair:          &gctrpc.CurrencyPair{Base: pair.Base.String(), Delimiter: pair.Delimiter, Quote: pair.Quote.String()},
+		Pair:          symbol,
 		Asset:         assetDtr,
 		Amount:        amount.InexactFloat64(),
 		Price:         price.InexactFloat64(),

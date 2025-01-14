@@ -1014,7 +1014,7 @@ func (m *OrderManager) processSubmitQueue() {
 		return
 	}
 
-	pair, err := currency.NewPairFromString(rpcRequest.Pair.Base + rpcRequest.Pair.Delimiter + rpcRequest.Pair.Quote)
+	pair, err := currency.NewPairFromString(rpcRequest.Pair)
 	if err != nil {
 		log.Errorf(log.OrderMgr, "unidentified pair: %+v", err)
 		if err := model.AddSubmitQueue(context.Background(), rpcRequest); err != nil {
@@ -1089,7 +1089,7 @@ func (m *OrderManager) processModifyOrder() {
 		return
 	}
 
-	pair, err := currency.NewPairFromString(rpcRequest.Pair.Base + rpcRequest.Pair.Delimiter + rpcRequest.Pair.Quote)
+	pair, err := currency.NewPairFromString(rpcRequest.Pair)
 	if err != nil {
 		log.Errorf(log.OrderMgr, "unidentified pair: %+v", err)
 		if err := model.AddModifyQueue(context.Background(), rpcRequest); err != nil {
@@ -1162,7 +1162,7 @@ func (m *OrderManager) processCancelOrder() {
 		return
 	}
 
-	pair, err := currency.NewPairFromString(rpcRequest.Pair.Base + rpcRequest.Pair.Delimiter + rpcRequest.Pair.Quote)
+	pair, err := currency.NewPairFromString(rpcRequest.Pair)
 	if err != nil {
 		log.Errorf(log.OrderMgr, "unidentified pair: %+v", err)
 		if err := model.AddCancelQueue(context.Background(), rpcRequest); err != nil {

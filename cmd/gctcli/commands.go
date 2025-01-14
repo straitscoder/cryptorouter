@@ -1546,12 +1546,8 @@ func submitOrder(c *cli.Context) error {
 
 	client := gctrpc.NewGoCryptoTraderServiceClient(conn)
 	result, err := client.SubmitOrder(c.Context, &gctrpc.SubmitOrderRequest{
-		Exchange: exchangeName,
-		Pair: &gctrpc.CurrencyPair{
-			Delimiter: p.Delimiter,
-			Base:      p.Base.String(),
-			Quote:     p.Quote.String(),
-		},
+		Exchange:  exchangeName,
+		Pair:      p.String(),
 		Side:      orderSide,
 		OrderType: orderType,
 		Amount:    amount,
@@ -1794,14 +1790,10 @@ func cancelOrder(c *cli.Context) error {
 
 	client := gctrpc.NewGoCryptoTraderServiceClient(conn)
 	result, err := client.CancelOrder(c.Context, &gctrpc.CancelOrderRequest{
-		Exchange:  exchangeName,
-		AccountId: accountID,
-		OrderId:   orderID,
-		Pair: &gctrpc.CurrencyPair{
-			Delimiter: p.Delimiter,
-			Base:      p.Base.String(),
-			Quote:     p.Quote.String(),
-		},
+		Exchange:      exchangeName,
+		AccountId:     accountID,
+		OrderId:       orderID,
+		Pair:          p.String(),
 		AssetType:     assetType,
 		WalletAddress: walletAddress,
 		Side:          orderSide,
@@ -2100,14 +2092,10 @@ func modifyOrder(c *cli.Context) error {
 	result, err := client.ModifyOrder(c.Context, &gctrpc.ModifyOrderRequest{
 		Exchange: exchangeName,
 		OrderId:  orderID,
-		Pair: &gctrpc.CurrencyPair{
-			Delimiter: p.Delimiter,
-			Base:      p.Base.String(),
-			Quote:     p.Quote.String(),
-		},
-		Asset:  assetType,
-		Price:  price,
-		Amount: amount,
+		Pair:     p.String(),
+		Asset:    assetType,
+		Price:    price,
+		Amount:   amount,
 	})
 	if err != nil {
 		return err

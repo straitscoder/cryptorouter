@@ -308,6 +308,8 @@ message OrderDetails {
   double cost = 19;
   repeated TradeHistory trades = 20;
   double contract_amount = 21;
+  bool success = 22;
+  string error = 23;
 }
 
 message TradeHistory {
@@ -343,7 +345,7 @@ message GetOrderRequest {
 
 message SubmitOrderRequest {
   string exchange = 1;
-  CurrencyPair pair = 2;
+  string pair = 2;
   string side = 3;
   string order_type = 4;
   double amount = 5;
@@ -396,7 +398,7 @@ message CancelOrderRequest {
   string exchange = 1;
   string account_id = 2;
   string order_id = 3;
-  CurrencyPair pair = 4;
+  string pair = 4;
   string asset_type = 5;
   string wallet_address = 6;
   string side = 7;
@@ -987,7 +989,7 @@ message UpdateDataHistoryJobPrerequisiteRequest {
 message ModifyOrderRequest {
   string exchange = 1;
   string order_id = 2;
-  CurrencyPair pair = 3;
+  string pair = 3;
   string asset = 4;
   double amount = 5;
   double price = 6;

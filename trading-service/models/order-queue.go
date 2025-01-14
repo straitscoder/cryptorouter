@@ -2,6 +2,7 @@ package model
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -56,13 +57,30 @@ func GetCancelQueue(ctx context.Context) (*gctrpc.CancelOrderRequest, error) {
 	return &request, proto.Unmarshal(binary, &request)
 }
 
-func AddExecutionReport(ctx context.Context, orderDetail *order.Detail) error {
+func AddExecutionReport(ctx context.Context, orderDetail *order.Detail, source string) error {
 	rpcDetail := ToRpcOrderDetail(orderDetail)
+	rpcDetail.Success = true
+	// lousy way to know where repeated execution report come from
+	// rpcDetail.Error = source
 	binary, err := proto.Marshal(rpcDetail)
 	if err != nil {
 		return err
 	}
 
+	return rdClient.RPush(ctx, executionReportQueue, binary).Err()
+}
+
+func AddRejectExecutionReport(ctx context.Context, o *order.Detail, orderError error) error {
+	if o == nil {
+		return errors.New("order detail was nil")
+	}
+	rpcDetail := ToRpcOrderDetail(o)
+	rpcDetail.Success = false
+	rpcDetail.Error = orderError.Error()
+	binary, err := proto.Marshal(rpcDetail)
+	if err != nil {
+		return err
+	}
 	return rdClient.RPush(ctx, executionReportQueue, binary).Err()
 }
 

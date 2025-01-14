@@ -1231,14 +1231,13 @@ func (s *RPCServer) SubmitOrder(ctx context.Context, r *gctrpc.SubmitOrderReques
 			return nil, err
 		}
 	}
-	if r.Pair == nil {
+	if r.Pair == "" {
 		return nil, errCurrencyPairUnset
 	}
 
-	p := currency.Pair{
-		Delimiter: r.Pair.Delimiter,
-		Base:      currency.NewCode(r.Pair.Base),
-		Quote:     currency.NewCode(r.Pair.Quote),
+	p, err := currency.NewPairFromString(r.Pair)
+	if err != nil {
+		return nil, err
 	}
 
 	exch, err := s.GetExchangeByName(r.Exchange)
@@ -1415,14 +1414,13 @@ func (s *RPCServer) WhaleBomb(ctx context.Context, r *gctrpc.WhaleBombRequest) (
 // CancelOrder cancels an order specified by exchange, currency pair and asset
 // type
 func (s *RPCServer) CancelOrder(ctx context.Context, r *gctrpc.CancelOrderRequest) (*gctrpc.GenericResponse, error) {
-	if r.Pair == nil {
+	if r.Pair == "" {
 		return nil, errCurrencyPairUnset
 	}
 
-	p := currency.Pair{
-		Delimiter: r.Pair.Delimiter,
-		Base:      currency.NewCode(r.Pair.Base),
-		Quote:     currency.NewCode(r.Pair.Quote),
+	p, err := currency.NewPairFromString(r.Pair)
+	if err != nil {
+		return nil, err
 	}
 
 	a, err := asset.New(r.AssetType)
@@ -1546,10 +1544,10 @@ func (s *RPCServer) ModifyOrder(ctx context.Context, r *gctrpc.ModifyOrderReques
 	if err != nil {
 		return nil, err
 	}
-	pair := currency.Pair{
-		Delimiter: r.Pair.Delimiter,
-		Base:      currency.NewCode(r.Pair.Base),
-		Quote:     currency.NewCode(r.Pair.Quote),
+
+	pair, err := currency.NewPairFromString(r.Pair)
+	if err != nil {
+		return nil, err
 	}
 
 	exch, err := s.GetExchangeByName(r.Exchange)

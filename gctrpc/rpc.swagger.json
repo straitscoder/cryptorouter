@@ -3880,19 +3880,7 @@
             "type": "string"
           },
           {
-            "name": "pair.delimiter",
-            "in": "query",
-            "required": false,
-            "type": "string"
-          },
-          {
-            "name": "pair.base",
-            "in": "query",
-            "required": false,
-            "type": "string"
-          },
-          {
-            "name": "pair.quote",
+            "name": "pair",
             "in": "query",
             "required": false,
             "type": "string"
@@ -4995,7 +4983,7 @@
           "type": "string"
         },
         "pair": {
-          "$ref": "#/definitions/gctrpcCurrencyPair"
+          "type": "string"
         },
         "assetType": {
           "type": "string"
@@ -6965,6 +6953,12 @@
         "contractAmount": {
           "type": "number",
           "format": "double"
+        },
+        "success": {
+          "type": "boolean"
+        },
+        "error": {
+          "type": "string"
         }
       }
     },
@@ -7379,7 +7373,7 @@
           "type": "string"
         },
         "pair": {
-          "$ref": "#/definitions/gctrpcCurrencyPair"
+          "type": "string"
         },
         "side": {
           "type": "string"

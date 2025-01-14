@@ -25,6 +25,7 @@ backtester/backtester
 backtester/btcli/btcli
 fixengine/fixengine
 fixcli/fixcli
+trading-service/trading-service
 *.exe
 *.exe~
 *.dll
