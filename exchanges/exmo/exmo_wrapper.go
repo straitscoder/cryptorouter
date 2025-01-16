@@ -802,3 +802,7 @@ func (e *EXMO) GetCurrencyTradeURL(_ context.Context, a asset.Item, cp currency.
 	cp.Delimiter = currency.UnderscoreDelimiter
 	return tradeBaseURL + cp.Upper().String() + "/", nil
 }
+
+func (e *EXMO) ClosePosition(_ context.Context, _ *order.ClosePositionRequest) (*order.ClosePositionResponse, error) {
+	return nil, common.ErrNotYetImplemented
+}

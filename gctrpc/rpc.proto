@@ -1543,6 +1543,18 @@ message GetCurrencyTradeURLResponse {
   string url = 1;
 }
 
+message CloseOrderRequest {
+  string client_order_id = 1;
+  string orig_order_id = 2;
+  string exchange = 3;
+  string pair = 4;
+  string side = 5;
+  string asset_type = 6;
+  string order_type = 7;
+  double price = 8;
+  double amount = 9;
+}
+
 service GoCryptoTraderService {
   rpc GetInfo(GetInfoRequest) returns (GetInfoResponse) {
     option (google.api.http) = {get: "/v1/getinfo"};

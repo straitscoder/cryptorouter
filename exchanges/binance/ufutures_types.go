@@ -198,16 +198,16 @@ type UOrderData struct {
 	ClientOrderID      string    `json:"clientOrderId"`
 	CumulativeQuantity string    `json:"cumQty"`
 	CumulativeQuote    string    `json:"cumQuote"`
-	ExecutedQuantity   string    `json:"executedQty"`
+	ExecutedQuantity   float64   `json:"executedQty,string"`
 	OrderID            int64     `json:"orderId"`
-	AveragePrice       string    `json:"avgPrice"`
-	OriginalQuantity   string    `json:"origQty"`
-	Price              string    `json:"price"`
+	AveragePrice       float64   `json:"avgPrice,string"`
+	OriginalQuantity   float64   `json:"origQty,string"`
+	Price              float64   `json:"price,string"`
 	ReduceOnly         bool      `json:"reduceOnly"`
 	Side               string    `json:"side"`
 	PositionSide       string    `json:"positionSide"`
 	Status             string    `json:"status"`
-	StopPrice          string    `json:"stopPrice"`
+	StopPrice          float64   `json:"stopPrice,string"`
 	ClosePosition      bool      `json:"closePosition"`
 	Symbol             string    `json:"symbol"`
 	TimeInForce        string    `json:"timeInForce"`

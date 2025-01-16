@@ -558,7 +558,7 @@ func (c *CoinbasePro) GetPosition(ctx context.Context) (AccountOverview, error) 
 
 // ClosePosition closes a position and allowing you to repay position as well
 // repayOnly -  allows the position to be repaid
-func (c *CoinbasePro) ClosePosition(ctx context.Context, repayOnly bool) (AccountOverview, error) {
+func (c *CoinbasePro) ClsPosition(ctx context.Context, repayOnly bool) (AccountOverview, error) {
 	resp := AccountOverview{}
 	req := make(map[string]interface{})
 	req["repay_only"] = repayOnly

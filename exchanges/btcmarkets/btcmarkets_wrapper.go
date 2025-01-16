@@ -1124,3 +1124,7 @@ func (b *BTCMarkets) GetCurrencyTradeURL(_ context.Context, a asset.Item, cp cur
 	cp.Delimiter = currency.DashDelimiter
 	return tradeBaseURL + cp.Base.Upper().String(), nil
 }
+
+func (b *BTCMarkets) ClosePosition(_ context.Context, _ *order.ClosePositionRequest) (*order.ClosePositionResponse, error) {
+	return nil, common.ErrNotYetImplemented
+}

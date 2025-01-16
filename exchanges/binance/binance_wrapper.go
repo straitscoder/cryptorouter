@@ -1397,8 +1397,8 @@ func (b *Binance) GetOrderInfo(ctx context.Context, orderID string, pair currenc
 			return nil, err
 		}
 		var feeBuilder exchange.FeeBuilder
-		feeBuilder.Amount, _ = strconv.ParseFloat(orderData.ExecutedQuantity, 64)
-		feeBuilder.PurchasePrice, _ = strconv.ParseFloat(orderData.AveragePrice, 64)
+		feeBuilder.Amount = orderData.ExecutedQuantity
+		feeBuilder.PurchasePrice = orderData.AveragePrice
 		feeBuilder.Pair = pair
 		fee, err := b.GetFee(ctx, &feeBuilder)
 		if err != nil {
@@ -1440,15 +1440,15 @@ func (b *Binance) GetOrderInfo(ctx context.Context, orderID string, pair currenc
 				}
 			}
 		}
-		respData.Amount, _ = strconv.ParseFloat(orderData.OriginalQuantity, 64)
+		respData.Amount = orderData.OriginalQuantity
 		respData.AssetType = assetType
 		respData.ClientOrderID = orderData.ClientOrderID
 		respData.Exchange = b.Name
-		respData.ExecutedAmount, _ = strconv.ParseFloat(orderData.ExecutedQuantity, 64)
+		respData.ExecutedAmount = orderData.ExecutedQuantity
 		respData.Fee = fee
 		respData.OrderID = orderID
 		respData.Pair = pair
-		respData.Price, _ = strconv.ParseFloat(orderData.Price, 64)
+		respData.Price = orderData.Price
 		respData.RemainingAmount = respData.Amount - respData.ExecutedAmount
 		respData.Side = orderVars.Side
 		respData.Status = orderVars.Status
@@ -1611,10 +1611,10 @@ func (b *Binance) GetActiveOrders(ctx context.Context, req *order.MultiOrderRequ
 			}
 			for y := range openOrders {
 				var feeBuilder exchange.FeeBuilder
-				executedQty, _ := strconv.ParseFloat(openOrders[y].ExecutedQuantity, 64)
-				avgPrice, _ := strconv.ParseFloat(openOrders[y].AveragePrice, 64)
-				price, _ := strconv.ParseFloat(openOrders[y].Price, 64)
-				oriQty, _ := strconv.ParseFloat(openOrders[y].OriginalQuantity, 64)
+				executedQty := openOrders[y].ExecutedQuantity
+				avgPrice := openOrders[y].AveragePrice
+				price := openOrders[y].Price
+				oriQty := openOrders[y].OriginalQuantity
 				feeBuilder.Amount = executedQty
 				feeBuilder.PurchasePrice = avgPrice
 				feeBuilder.Pair = req.Pairs[i]
@@ -1684,10 +1684,6 @@ func (b *Binance) GetOrderHistory(ctx context.Context, req *order.MultiOrderRequ
 				orderStatus, err := order.StringToOrderStatus(resp[i].Status)
 				if err != nil {
 					log.Errorf(log.ExchangeSys, "%s %v", b.Name, err)
-				}
-				// New orders are covered in GetOpenOrders
-				if orderStatus == order.New {
-					continue
 				}
 
 				var cost float64
@@ -2122,20 +2118,7 @@ func compatibleOrderVars(side, status, orderType string) OrderVars {
 	default:
 		resp.Status = order.UnknownStatus
 	}
-	switch orderType {
-	case "MARKET":
-		resp.OrderType = order.Market
-	case "LIMIT":
-		resp.OrderType = order.Limit
-	case "STOP":
-		resp.OrderType = order.Stop
-	case "TAKE_PROFIT":
-		resp.OrderType = order.TakeProfit
-	case "LIQUIDATION":
-		resp.OrderType = order.Liquidation
-	default:
-		resp.OrderType = order.UnknownType
-	}
+	resp.OrderType, _ = order.StringToOrderType(orderType)
 	return resp
 }
 
@@ -3379,4 +3362,113 @@ func (b *Binance) GetCurrencyTradeURL(ctx context.Context, a asset.Item, cp curr
 	default:
 		return "", fmt.Errorf("%w %v", asset.ErrNotSupported, a)
 	}
+}
+
+func (b *Binance) ClosePosition(ctx context.Context, cp *order.ClosePositionRequest) (*order.ClosePositionResponse, error) {
+	if err := cp.Validate(); err != nil {
+		return nil, err
+	}
+
+	existingOrder, err := b.GetOrderInfo(ctx, cp.OrigOrderID, cp.Pair, cp.AssetType)
+	if err != nil {
+		return nil, err
+	}
+
+	if existingOrder.Status != order.Filled {
+		return nil, errors.New("order not filled yet")
+	}
+
+	var response order.ClosePositionResponse
+	switch cp.AssetType {
+	case asset.USDTMarginedFutures:
+		var side string
+		switch existingOrder.Side {
+		case order.Buy:
+			side = "SELL"
+		case order.Sell:
+			side = "BUY"
+		default:
+			return nil, order.ErrSideIsInvalid
+		}
+
+		var orderType string
+		var timeInForce string
+		switch cp.OrderType {
+		case order.Market, order.StopMarket:
+			orderType = "STOP_MARKET"
+			timeInForce = ""
+		case order.Limit, order.TakeProfitMarket:
+			orderType = "TAKE_PROFIT_MARKET"
+			timeInForce = "GTC"
+		}
+
+		closePosition := "true"
+		if cp.Amount != existingOrder.Amount {
+			orderType = "STOP"
+			if cp.OrderType == order.Limit || cp.OrderType == order.TakeProfitMarket {
+				orderType = "TAKE_PROFIT"
+			}
+			closePosition = "false"
+		}
+
+		quantity := cp.Amount
+		if closePosition == "true" {
+			quantity = 0
+		}
+
+		price := cp.Price
+		if cp.OrderType == order.Market || cp.OrderType == order.StopMarket {
+			price = 0
+		}
+
+		result, err := b.UFuturesNewOrder(ctx, &UFuturesNewOrderRequest{
+			Symbol:           existingOrder.Pair,
+			Side:             side,
+			OrderType:        orderType,
+			TimeInForce:      timeInForce,
+			NewClientOrderID: cp.ClientOrderID,
+			ClosePosition:    closePosition,
+			Quantity:         quantity,
+			StopPrice:        price,
+		})
+
+		if err != nil {
+			return nil, err
+		}
+
+		ordType, err := order.StringToOrderType(result.OrderType)
+		if err != nil {
+			return nil, err
+		}
+
+		rSide, err := order.StringToOrderSide(result.Side)
+		if err != nil {
+			return nil, err
+		}
+
+		rStatus, err := order.StringToOrderStatus(result.Status)
+		if err != nil {
+			return nil, err
+		}
+
+		response = order.ClosePositionResponse{
+			Exchange:             b.Name,
+			Type:                 ordType,
+			AssetType:            cp.AssetType,
+			Side:                 rSide,
+			Status:               rStatus,
+			Price:                result.Price,
+			AverageExecutedPrice: result.AveragePrice,
+			Amount:               result.OriginalQuantity,
+			ExecutedAmount:       result.ExecutedQuantity,
+			ClientOrderID:        result.ClientOrderID,
+			OrderID:              strconv.FormatInt(result.OrderID, 10),
+			Cost:                 result.AveragePrice * result.ExecutedQuantity,
+			Date:                 result.UpdateTime,
+			LastUpdated:          time.Now(),
+		}
+	default:
+		return nil, common.ErrNotYetImplemented
+	}
+	return &response, nil
 }

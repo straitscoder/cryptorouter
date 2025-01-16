@@ -1112,3 +1112,7 @@ func (c *COINUT) GetCurrencyTradeURL(_ context.Context, a asset.Item, cp currenc
 	cp.Delimiter = ""
 	return tradeBaseURL + cp.Upper().String() + "/", nil
 }
+
+func (c *COINUT) ClosePosition(_ context.Context, _ *order.ClosePositionRequest) (*order.ClosePositionResponse, error) {
+	return nil, common.ErrNotYetImplemented
+}

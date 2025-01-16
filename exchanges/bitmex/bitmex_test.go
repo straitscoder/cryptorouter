@@ -290,7 +290,7 @@ func TestCancelAllOrdersAfterTime(t *testing.T) {
 
 func TestClosePosition(t *testing.T) {
 	t.Parallel()
-	_, err := b.ClosePosition(context.Background(), OrderClosePositionParams{})
+	_, err := b.ClosePositionDepracated(context.Background(), OrderClosePositionParams{})
 	require.Error(t, err)
 }
 

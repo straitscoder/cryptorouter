@@ -992,3 +992,7 @@ func (l *Lbank) GetCurrencyTradeURL(_ context.Context, a asset.Item, cp currency
 	cp.Delimiter = currency.UnderscoreDelimiter
 	return tradeBaseURL + cp.Lower().String(), nil
 }
+
+func (l *Lbank) ClosePosition(_ context.Context, _ *order.ClosePositionRequest) (*order.ClosePositionResponse, error) {
+	return nil, common.ErrNotYetImplemented
+}

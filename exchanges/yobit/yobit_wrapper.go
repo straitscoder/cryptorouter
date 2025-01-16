@@ -731,3 +731,7 @@ func (y *Yobit) GetCurrencyTradeURL(_ context.Context, a asset.Item, cp currency
 	cp.Delimiter = currency.ForwardSlashDelimiter
 	return tradeBaseURL + cp.Upper().String(), nil
 }
+
+func (y *Yobit) ClosePosition(_ context.Context, _ *order.ClosePositionRequest) (*order.ClosePositionResponse, error) {
+	return nil, common.ErrNotYetImplemented
+}

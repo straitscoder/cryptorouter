@@ -48,6 +48,12 @@ func Fili() error {
 						break
 					}
 					continue Loop
+				case "4":
+					if err := fixEngine.ClosePosition(); err != nil {
+						log.Println(err)
+						break
+					}
+					continue Loop
 				case "0":
 					break Loop
 				default:
@@ -68,6 +74,7 @@ func Menu() (string, error) {
 	fmt.Println("1. Order Single")
 	fmt.Println("2. Cancel Order")
 	fmt.Println("3. Modify Order")
+	fmt.Println("4. Close position")
 	fmt.Println("0. Exit")
 	scanner := bufio.NewScanner(os.Stdin)
 	scanner.Scan()

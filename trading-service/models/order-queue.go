@@ -15,6 +15,7 @@ const (
 	submitOrderQueue     = "submitOrder"
 	modifyOrderQueue     = "modifyOrder"
 	cancelOrderQueue     = "cancelOrder"
+	closePositionQueue   = "closePosition"
 	executionReportQueue = "executionReport"
 )
 
@@ -54,6 +55,18 @@ func GetCancelQueue(ctx context.Context) (*gctrpc.CancelOrderRequest, error) {
 		return nil, err
 	}
 
+	return &request, proto.Unmarshal(binary, &request)
+}
+
+func GetClosePositionQueue(ctx context.Context) (*gctrpc.CloseOrderRequest, error) {
+	var request gctrpc.CloseOrderRequest
+	binary, err := rdClient.LPop(ctx, closePositionQueue).Bytes()
+	if err != nil {
+		if err == redis.Nil {
+			return nil, nil
+		}
+		return nil, err
+	}
 	return &request, proto.Unmarshal(binary, &request)
 }
 

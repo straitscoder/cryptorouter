@@ -873,3 +873,7 @@ func (b *Bithumb) GetCurrencyTradeURL(_ context.Context, a asset.Item, cp curren
 	cp.Delimiter = currency.DashDelimiter
 	return tradeBaseURL + cp.Upper().String(), nil
 }
+
+func (b *Bithumb) ClosePosition(_ context.Context, _ *order.ClosePositionRequest) (*order.ClosePositionResponse, error) {
+	return nil, common.ErrNotYetImplemented
+}

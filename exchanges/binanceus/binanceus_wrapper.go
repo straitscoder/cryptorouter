@@ -1158,3 +1158,7 @@ func (bi *Binanceus) GetCurrencyTradeURL(_ context.Context, a asset.Item, cp cur
 	}
 	return tradeBaseURL + symbol, nil
 }
+
+func (bi *Binanceus) ClosePosition(_ context.Context, _ *order.ClosePositionRequest) (*order.ClosePositionResponse, error) {
+	return nil, common.ErrNotYetImplemented
+}

@@ -482,3 +482,7 @@ func (a *Alphapoint) GetLatestFundingRates(context.Context, *fundingrate.LatestR
 func (a *Alphapoint) UpdateOrderExecutionLimits(_ context.Context, _ asset.Item) error {
 	return common.ErrNotYetImplemented
 }
+
+func (a *Alphapoint) ClosePosition(_ context.Context, _ *order.ClosePositionRequest) (*order.ClosePositionResponse, error) {
+	return nil, common.ErrNotYetImplemented
+}

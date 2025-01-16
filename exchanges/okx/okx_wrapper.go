@@ -2464,3 +2464,7 @@ func (ok *Okx) GetCurrencyTradeURL(ctx context.Context, a asset.Item, cp currenc
 		return "", fmt.Errorf("%w %v", asset.ErrNotSupported, a)
 	}
 }
+
+func (ok *Okx) ClosePosition(_ context.Context, _ *order.ClosePositionRequest) (*order.ClosePositionResponse, error) {
+	return nil, common.ErrNotYetImplemented
+}

@@ -3062,6 +3062,10 @@ func (f *FakeBase) GetFuturesContractDetails(context.Context, asset.Item) ([]fut
 	return nil, common.ErrFunctionNotSupported
 }
 
+func (f *FakeBase) ClosePosition(context.Context, *order.ClosePositionRequest) (*order.ClosePositionResponse, error) {
+	return nil, common.ErrNotYetImplemented
+}
+
 func TestGetCurrencyTradeURL(t *testing.T) {
 	t.Parallel()
 	b := Base{}

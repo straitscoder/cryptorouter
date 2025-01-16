@@ -1276,3 +1276,7 @@ func (b *Bitfinex) GetCurrencyTradeURL(_ context.Context, a asset.Item, cp curre
 		return "", fmt.Errorf("%w %v", asset.ErrNotSupported, a)
 	}
 }
+
+func (b *Bitfinex) ClosePosition(_ context.Context, _ *order.ClosePositionRequest) (*order.ClosePositionResponse, error) {
+	return nil, common.ErrNotYetImplemented
+}

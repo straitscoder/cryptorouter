@@ -272,6 +272,37 @@ func (fe *FixEngine) CancelOrder() error {
 	return nil
 }
 
+func (fe *FixEngine) ClosePosition() error {
+	origClOrdId := ClOrdID()
+	clienOrderID := generateClOrdID()
+	orderID := getOrderId(origClOrdId)
+	pairStr := Symbol()
+	sideStr, _ := Side()
+	ordTypeStr, _ := OrderType()
+	assetTypeStr, _ := AssetType()
+	exchange := Exchange()
+	price := Price()
+	amount := Amount()
+
+	closePosition := gctrpc.CloseOrderRequest{
+		ClientOrderId: clienOrderID,
+		OrigOrderId:   *orderID,
+		Exchange:      exchange,
+		Pair:          pairStr,
+		Side:          sideStr,
+		OrderType:     ordTypeStr,
+		AssetType:     assetTypeStr,
+		Price:         price.InexactFloat64(),
+		Amount:        amount.InexactFloat64(),
+	}
+
+	if err := model.AddClosePositionQueue(context.Background(), &closePosition); err != nil {
+		return err
+	}
+
+	return nil
+}
+
 func (fe *FixEngine) ModifyOrder() error {
 	cliOrdId := ClOrdID()
 	orderId := getOrderId(cliOrdId)

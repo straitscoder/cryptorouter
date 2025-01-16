@@ -2501,3 +2501,7 @@ func (ku *Kucoin) GetCurrencyTradeURL(_ context.Context, a asset.Item, cp curren
 		return "", fmt.Errorf("%w %v", asset.ErrNotSupported, a)
 	}
 }
+
+func (ku *Kucoin) ClosePosition(_ context.Context, _ *order.ClosePositionRequest) (*order.ClosePositionResponse, error) {
+	return nil, common.ErrNotYetImplemented
+}

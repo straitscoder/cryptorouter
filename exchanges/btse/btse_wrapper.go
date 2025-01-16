@@ -1468,3 +1468,7 @@ func (b *BTSE) GetCurrencyTradeURL(_ context.Context, a asset.Item, cp currency.
 		return "", fmt.Errorf("%w %v", asset.ErrNotSupported, a)
 	}
 }
+
+func (b *BTSE) ClosePosition(_ context.Context, _ *order.ClosePositionRequest) (*order.ClosePositionResponse, error) {
+	return nil, common.ErrNotYetImplemented
+}

@@ -1413,3 +1413,7 @@ func (b *Bitmex) GetCurrencyTradeURL(_ context.Context, a asset.Item, cp currenc
 	cp.Delimiter = currency.DashDelimiter
 	return tradeBaseURL + cp.Upper().String(), nil
 }
+
+func (b *Bitmex) ClosePosition(_ context.Context, _ *order.ClosePositionRequest) (*order.ClosePositionResponse, error) {
+	return nil, common.ErrNotYetImplemented
+}

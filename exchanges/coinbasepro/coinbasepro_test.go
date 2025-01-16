@@ -204,7 +204,7 @@ func TestAuthRequests(t *testing.T) {
 	if err == nil {
 		t.Error("Expecting error")
 	}
-	_, err = c.ClosePosition(context.Background(), false)
+	_, err = c.ClsPosition(context.Background(), false)
 	if err == nil {
 		t.Error("Expecting error")
 	}

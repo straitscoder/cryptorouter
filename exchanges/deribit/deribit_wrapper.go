@@ -1717,3 +1717,7 @@ func (d *Deribit) formatPairString(assetType asset.Item, pair currency.Pair) str
 	}
 	return pair.String()
 }
+
+func (d *Deribit) ClosePosition(_ context.Context, _ *order.ClosePositionRequest) (*order.ClosePositionResponse, error) {
+	return nil, common.ErrNotYetImplemented
+}

@@ -2132,3 +2132,7 @@ func (by *Bybit) GetCurrencyTradeURL(ctx context.Context, a asset.Item, cp curre
 		return "", fmt.Errorf("%w %v", asset.ErrNotSupported, a)
 	}
 }
+
+func (by *Bybit) ClosePosition(_ context.Context, _ *order.ClosePositionRequest) (*order.ClosePositionResponse, error) {
+	return nil, common.ErrNotYetImplemented
+}

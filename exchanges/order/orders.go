@@ -39,6 +39,7 @@ var (
 	ErrAmountMustBeSet             = errors.New("amount must be set")
 	ErrClientOrderIDMustBeSet      = errors.New("client order ID must be set")
 	ErrUnknownSubmissionAmountType = errors.New("unknown submission amount type")
+	ErrInvalidAssetType            = errors.New("invalid asset type")
 )
 
 var (
@@ -1137,6 +1138,8 @@ func StringToOrderType(oType string) (Type, error) {
 		return StopLimit, nil
 	case StopMarket.String(), "STOP_MARKET":
 		return StopMarket, nil
+	case TakeProfitMarket.String(), "TAKE_PROFIT_MARKET", "TAKE PROFIT MARKET":
+		return TakeProfitMarket, nil
 	case TrailingStop.String(), "TRAILING STOP", "EXCHANGE TRAILING STOP":
 		return TrailingStop, nil
 	case FillOrKill.String(), "EXCHANGE FOK":
@@ -1370,4 +1373,28 @@ func (t PriceType) StringToPriceType(priceType string) (PriceType, error) {
 	default:
 		return UnknownPriceType, ErrUnknownPriceType
 	}
+}
+
+func (cp *ClosePositionRequest) Validate(opt ...validate.Checker) error {
+	if cp == nil {
+		return ErrClosePositionIsNil
+	}
+
+	if cp.OrigOrderID == "" {
+		return ErrOrderIDNotSet
+	}
+
+	if cp.Exchange == "" {
+		return errExchangeNameUnset
+	}
+
+	if cp.Pair.IsEmpty() {
+		return ErrPairIsEmpty
+	}
+
+	if !cp.AssetType.IsFutures() {
+		return ErrInvalidAssetType
+	}
+
+	return nil
 }

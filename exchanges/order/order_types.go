@@ -17,6 +17,7 @@ var (
 	ErrOrderDetailIsNil           = errors.New("order detail is nil")
 	ErrGetOrdersRequestIsNil      = errors.New("get order request is nil")
 	ErrModifyOrderIsNil           = errors.New("modify order request is nil")
+	ErrClosePositionIsNil         = errors.New("close position request is nil")
 	ErrPairIsEmpty                = errors.New("order pair is empty")
 	ErrAssetNotSet                = errors.New("order asset type is not set")
 	ErrSideIsInvalid              = errors.New("order side is invalid")
@@ -452,3 +453,39 @@ const (
 	MarkPrice
 	UnknownPriceType
 )
+
+type ClosePositionRequest struct {
+	ClientOrderID string
+	OrigOrderID   string
+	Exchange      string
+	Pair          currency.Pair
+	AssetType     asset.Item
+	OrderType     Type
+	Side          Side
+	Price         float64
+	Amount        float64
+}
+
+type ClosePositionResponse struct {
+	Exchange  string
+	Type      Type
+	Side      Side
+	Pair      currency.Pair
+	AssetType asset.Item
+
+	Price                float64
+	AverageExecutedPrice float64
+	Amount               float64
+	ExecutedAmount       float64
+	QuoteAmount          float64
+	ClientOrderID        string
+
+	LastUpdated time.Time
+	Date        time.Time
+	Status      Status
+	OrderID     string
+	Trades      []TradeHistory
+	Fee         float64
+	FeeAsset    currency.Code
+	Cost        float64
+}

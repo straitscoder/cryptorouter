@@ -471,7 +471,7 @@ func (b *Bitmex) CancelAllOrdersAfterTime(ctx context.Context, params OrderCance
 }
 
 // ClosePosition closes a position WARNING deprecated use /order endpoint
-func (b *Bitmex) ClosePosition(ctx context.Context, params OrderClosePositionParams) ([]Order, error) {
+func (b *Bitmex) ClosePositionDepracated(ctx context.Context, params OrderClosePositionParams) ([]Order, error) {
 	var closedPositions []Order
 
 	return closedPositions, b.SendAuthenticatedHTTPRequest(ctx, exchange.RestSpot, http.MethodPost,

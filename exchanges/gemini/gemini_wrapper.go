@@ -861,3 +861,7 @@ func (g *Gemini) GetCurrencyTradeURL(_ context.Context, a asset.Item, cp currenc
 	cp.Delimiter = ""
 	return tradeBaseURL + cp.Upper().String(), nil
 }
+
+func (g *Gemini) ClosePosition(_ context.Context, _ *order.ClosePositionRequest) (*order.ClosePositionResponse, error) {
+	return nil, common.ErrNotYetImplemented
+}

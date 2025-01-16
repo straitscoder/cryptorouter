@@ -902,3 +902,7 @@ func (c *CoinbasePro) GetCurrencyTradeURL(_ context.Context, a asset.Item, cp cu
 	cp.Delimiter = currency.DashDelimiter
 	return tradeBaseURL + cp.Upper().String(), nil
 }
+
+func (c *CoinbasePro) ClosePosition(_ context.Context, _ *order.ClosePositionRequest) (*order.ClosePositionResponse, error) {
+	return nil, common.ErrNotYetImplemented
+}

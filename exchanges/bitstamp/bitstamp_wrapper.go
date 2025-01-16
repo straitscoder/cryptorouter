@@ -939,3 +939,7 @@ func (b *Bitstamp) GetCurrencyTradeURL(_ context.Context, a asset.Item, cp curre
 	cp.Delimiter = ""
 	return tradeBaseURL + cp.Lower().String() + "/", nil
 }
+
+func (b *Bitstamp) ClosePosition(_ context.Context, _ *order.ClosePositionRequest) (*order.ClosePositionResponse, error) {
+	return nil, common.ErrNotYetImplemented
+}

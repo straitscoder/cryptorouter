@@ -365,3 +365,7 @@ func (c *CustomEx) GetLatestFundingRates(_ context.Context, _ *fundingrate.Lates
 func (c *CustomEx) GetFuturesContractDetails(context.Context, asset.Item) ([]futures.Contract, error) {
 	return nil, common.ErrFunctionNotSupported
 }
+
+func (c *CustomEx) ClosePosition(context.Context, *order.ClosePositionRequest) (*order.ClosePositionResponse, error) {
+	return nil, common.ErrNotYetImplemented
+}

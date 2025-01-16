@@ -467,3 +467,7 @@ func (b *Bitflyer) GetCurrencyTradeURL(_ context.Context, a asset.Item, cp curre
 	cp.Delimiter = ""
 	return tradeBaseURL + cp.Lower().String(), nil
 }
+
+func (b *Bitflyer) ClosePosition(_ context.Context, _ *order.ClosePositionRequest) (*order.ClosePositionResponse, error) {
+	return nil, common.ErrNotYetImplemented
+}

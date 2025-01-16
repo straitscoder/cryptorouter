@@ -12,6 +12,7 @@ const (
 	submitOrderQueue     = "submitOrder"
 	modifyOrderQueue     = "modifyOrder"
 	cancelOrderQueue     = "cancelOrder"
+	closePositionQueue   = "closePosition"
 	executionReportQueue = "executionReport"
 )
 
@@ -47,6 +48,18 @@ func AddCancelQueue(ctx context.Context, req *gctrpc.CancelOrderRequest) error {
 	}
 
 	if err := rdClient.RPush(ctx, cancelOrderQueue, binary).Err(); err != nil {
+		return err
+	}
+	return nil
+}
+
+func AddClosePositionQueue(ctx context.Context, req *gctrpc.CloseOrderRequest) error {
+	binary, err := proto.Marshal(req)
+	if err != nil {
+		return err
+	}
+
+	if err := rdClient.RPush(ctx, closePositionQueue, binary).Err(); err != nil {
 		return err
 	}
 	return nil

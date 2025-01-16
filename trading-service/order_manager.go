@@ -658,6 +658,35 @@ func (m *OrderManager) GetOrdersActive(f *order.Filter) ([]order.Detail, error) 
 	return m.orderStore.getActiveOrders(f), nil
 }
 
+func (m *OrderManager) ClosePosition(ctx context.Context, cp *order.ClosePositionRequest) (*order.ClosePositionResponse, error) {
+	if m == nil {
+		return nil, fmt.Errorf("order manager %w", ErrNilSubsystem)
+	}
+	if atomic.LoadInt32(&m.started) == 0 {
+		return nil, fmt.Errorf("order manager %w", ErrSubSystemNotStarted)
+	}
+
+	if cp == nil {
+		return nil, errNilOrder
+	}
+
+	exch, err := m.orderStore.exchangeManager.GetExchangeByName(cp.Exchange)
+	if err != nil {
+		return nil, err
+	}
+
+	err = exch.CheckOrderExecutionLimits(cp.AssetType, cp.Pair, cp.Price, cp.Amount, cp.OrderType)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := exch.CanTradePair(cp.Pair, cp.AssetType); err != nil {
+		return nil, err
+	}
+
+	return exch.ClosePosition(ctx, cp)
+}
+
 // processSubmittedOrder adds a new order to the manager
 func (m *OrderManager) processSubmittedOrder(newOrderResp *order.SubmitResponse) (*OrderSubmitResponse, error) {
 	if newOrderResp == nil {
@@ -796,7 +825,6 @@ func (m *OrderManager) processOrders() {
 			if len(exchangeOrders) == 0 {
 				continue
 			}
-
 			for z := range exchangeOrders {
 				// skip old cancelled order
 				if exchangeOrders[z].Status == order.Cancelled && exchangeOrders[z].Date.Before(time.Now().Add(-2*time.Hour)) {
@@ -986,6 +1014,7 @@ func (m *OrderManager) processRequest() {
 	go m.processSubmitQueue()
 	go m.processModifyOrder()
 	go m.processCancelOrder()
+	go m.processClosePositionQueue()
 	for {
 		select {
 		case <-m.shutdown:
@@ -995,6 +1024,7 @@ func (m *OrderManager) processRequest() {
 			go m.processSubmitQueue()
 			go m.processModifyOrder()
 			go m.processCancelOrder()
+			go m.processClosePositionQueue()
 		}
 	}
 }
@@ -1159,11 +1189,66 @@ func (m *OrderManager) processCancelOrder() {
 	return
 }
 
+func (m *OrderManager) processClosePositionQueue() {
+	rpcRequest, err := model.GetClosePositionQueue(context.Background())
+	if err != nil {
+		log.Errorf(log.OrderMgr, "Error when getting close position queue: %+v", err)
+		return
+	}
+
+	if rpcRequest == nil {
+		return
+	}
+
+	closePosition := order.ClosePositionRequest{
+		Exchange:      rpcRequest.Exchange,
+		ClientOrderID: rpcRequest.ClientOrderId,
+		OrigOrderID:   rpcRequest.OrigOrderId,
+		Price:         rpcRequest.Price,
+		Amount:        rpcRequest.Amount,
+	}
+
+	pair, err := currency.NewPairFromString(rpcRequest.Pair)
+	if err != nil {
+		m.RejectOrder(&closePosition, err)
+		return
+	}
+	closePosition.Pair = pair
+
+	assetType, err := asset.New(rpcRequest.AssetType)
+	if err != nil {
+		m.RejectOrder(&closePosition, err)
+		return
+	}
+	closePosition.AssetType = assetType
+
+	ordType, err := order.StringToOrderType(rpcRequest.OrderType)
+	if err != nil {
+		m.RejectOrder(&closePosition, err)
+		return
+	}
+	closePosition.OrderType = ordType
+
+	side, err := order.StringToOrderSide(rpcRequest.Side)
+	if err != nil {
+		m.RejectOrder(&closePosition, err)
+		return
+	}
+	closePosition.Side = side
+
+	if _, err := m.ClosePosition(context.TODO(), &closePosition); err != nil {
+		m.RejectOrder(&closePosition, err)
+		return
+	}
+	return
+}
+
 func (m *OrderManager) RejectOrder(data interface{}, err error) {
 	switch d := data.(type) {
 	case *order.Submit:
 		orderDetail := &order.Detail{
-			ClientOrderID: fmt.Sprint(time.Now().Unix()),
+			OrderID:       fmt.Sprint(time.Now().Unix()),
+			ClientOrderID: d.ClientOrderID,
 			Exchange:      d.Exchange,
 			Side:          d.Side,
 			Pair:          d.Pair,
@@ -1210,6 +1295,23 @@ func (m *OrderManager) RejectOrder(data interface{}, err error) {
 		existingOrder.Side = d.Side
 		existingOrder.Status = order.Rejected
 		if e := model.AddRejectExecutionReport(context.Background(), &existingOrder, err); e != nil {
+			log.Errorf(log.OrderMgr, "Error when create reject execution report: %+v", e)
+			return
+		}
+		return
+	case *order.ClosePositionRequest:
+		orderDetail := &order.Detail{
+			ClientOrderID: d.ClientOrderID,
+			OrderID:       fmt.Sprint(time.Now().Unix()),
+			Exchange:      d.Exchange,
+			AssetType:     d.AssetType,
+			Type:          d.OrderType,
+			Pair:          d.Pair,
+			Side:          d.Side,
+			Price:         d.Price,
+			Amount:        d.Amount,
+		}
+		if e := model.AddRejectExecutionReport(context.Background(), orderDetail, err); e != nil {
 			log.Errorf(log.OrderMgr, "Error when create reject execution report: %+v", e)
 			return
 		}

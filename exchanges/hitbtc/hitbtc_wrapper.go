@@ -914,3 +914,7 @@ func (h *HitBTC) GetCurrencyTradeURL(_ context.Context, a asset.Item, cp currenc
 		return "", fmt.Errorf("%w %v", asset.ErrNotSupported, a)
 	}
 }
+
+func (h *HitBTC) ClosePosition(_ context.Context, _ *order.ClosePositionRequest) (*order.ClosePositionResponse, error) {
+	return nil, common.ErrNotYetImplemented
+}

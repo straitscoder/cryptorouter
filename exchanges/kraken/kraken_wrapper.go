@@ -1827,3 +1827,7 @@ func (k *Kraken) GetCurrencyTradeURL(_ context.Context, a asset.Item, cp currenc
 		return "", fmt.Errorf("%w %v", asset.ErrNotSupported, a)
 	}
 }
+
+func (k *Kraken) ClosePosition(_ context.Context, _ *order.ClosePositionRequest) (*order.ClosePositionResponse, error) {
+	return nil, common.ErrNotYetImplemented
+}
