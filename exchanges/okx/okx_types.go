@@ -644,8 +644,10 @@ type ClosePositionsRequestParams struct {
 
 // ClosePositionResponse response data for close position.
 type ClosePositionResponse struct {
-	InstrumentID string `json:"instId"`
-	PositionSide string `json:"posSide"`
+	InstrumentID  string `json:"instId"`
+	PositionSide  string `json:"posSide"`
+	ClientOrderID string `json:"clOrdId"`
+	Tag           string `json:"tag"`
 }
 
 // OrderDetailRequestParam payload data to request order detail
@@ -1340,18 +1342,18 @@ type AccountBalanceData struct {
 
 // PositionData holds account position data.
 type PositionData struct {
-	BaseBal          string `json:"baseBal"`
-	Currency         string `json:"ccy"`
-	InstrumentID     string `json:"instId"`
-	InstrumentType   string `json:"instType"`
-	ManagementMode   string `json:"mgnMode"`
-	NotionalCurrency string `json:"notionalCcy"`
-	NotionalUsd      string `json:"notionalUsd"`
-	Position         string `json:"pos"`
-	PositionedCcy    string `json:"posCcy"`
-	PositionedID     string `json:"posId"`
-	PositionedSide   string `json:"posSide"`
-	QuoteBalance     string `json:"quoteBal"`
+	BaseBal          string  `json:"baseBal"`
+	Currency         string  `json:"ccy"`
+	InstrumentID     string  `json:"instId"`
+	InstrumentType   string  `json:"instType"`
+	ManagementMode   string  `json:"mgnMode"`
+	NotionalCurrency string  `json:"notionalCcy"`
+	NotionalUsd      string  `json:"notionalUsd"`
+	Position         float64 `json:"pos,string"`
+	PositionedCcy    string  `json:"posCcy"`
+	PositionedID     string  `json:"posId"`
+	PositionedSide   string  `json:"posSide"`
+	QuoteBalance     string  `json:"quoteBal"`
 }
 
 // AccountAndPositionRisk holds information.

@@ -737,7 +737,7 @@ func (ok *Okx) SubmitOrder(ctx context.Context, s *order.Submit) (*order.SubmitR
 	}
 	instrumentID := pairFormat.Format(s.Pair)
 	tradeMode := ok.marginTypeToString(s.MarginType)
-	if s.AssetType == asset.Futures && tradeMode == "cash" {
+	if s.AssetType.IsFutures() && tradeMode == "cash" {
 		tradeMode = TradeModeCross
 	}
 	if s.Leverage != 0 && s.Leverage != 1 {
@@ -790,7 +790,7 @@ func (ok *Okx) SubmitOrder(ctx context.Context, s *order.Submit) (*order.SubmitR
 			return nil, fmt.Errorf("invalid side from request: %s", errInvalidOrderSide.Error())
 		}
 	}
-	log.Debugf(log.ExchangeSys, "submit order req: %+v", orderRequest)
+
 	if ok.Websocket.CanUseAuthenticatedWebsocketForWrapper() {
 		placeOrderResponse, err = ok.WsPlaceOrder(orderRequest)
 		if err != nil {
@@ -1129,7 +1129,8 @@ func (ok *Okx) GetOrderInfo(ctx context.Context, orderID string, pair currency.P
 		AssetType:            assetType,
 		Status:               status,
 		Price:                orderDetail.Price.Float64(),
-		ExecutedAmount:       orderDetail.RebateAmount.Float64(),
+		ExecutedAmount:       orderDetail.FillSize.Float64(),
+		RemainingAmount:      float64(orderDetail.Size - orderDetail.FillSize),
 		AverageExecutedPrice: orderDetail.AveragePrice.Float64(),
 		Date:                 orderDetail.CreationTime,
 		LastUpdated:          orderDetail.UpdateTime,
@@ -2465,6 +2466,60 @@ func (ok *Okx) GetCurrencyTradeURL(ctx context.Context, a asset.Item, cp currenc
 	}
 }
 
-func (ok *Okx) ClosePosition(_ context.Context, _ *order.ClosePositionRequest) (*order.ClosePositionResponse, error) {
-	return nil, common.ErrNotYetImplemented
+func (ok *Okx) ClosePosition(ctx context.Context, cp *order.ClosePositionRequest) (*order.ClosePositionResponse, error) {
+	if err := cp.Validate(); err != nil {
+		return nil, err
+	}
+
+	pairFormat, err := ok.GetPairFormat(cp.AssetType, false)
+	if err != nil {
+		return nil, err
+	}
+	if !cp.Pair.IsPopulated() {
+		return nil, errIncompleteCurrencyPair
+	}
+	instrumentID := pairFormat.Format(cp.Pair)
+	instrumentType := ok.GetInstrumentTypeFromAssetItem(cp.AssetType)
+	existingOrders, err := ok.GetAccountAndPositionRisk(ctx, instrumentType)
+	if err != nil {
+		return nil, err
+	}
+
+	var response order.ClosePositionResponse
+	for x := range existingOrders {
+		activePositions := existingOrders[x].PosData
+		for y := range activePositions {
+			if activePositions[y].InstrumentID == instrumentID {
+				result, err := ok.ClosePositions(ctx, &ClosePositionsRequestParams{
+					InstrumentID: instrumentID,
+					MarginMode:   activePositions[y].ManagementMode,
+					Currency:     activePositions[y].Currency,
+					ClientID:     cp.ClientOrderID,
+					PositionSide: activePositions[y].PositionedSide,
+				})
+				if err != nil {
+					return nil, err
+				}
+
+				side, err := order.StringToOrderSide(result.PositionSide)
+				if err != nil {
+					return nil, err
+				}
+
+				response = order.ClosePositionResponse{
+					Exchange:      ok.Name,
+					Type:          cp.OrderType,
+					Side:          side,
+					Pair:          cp.Pair,
+					AssetType:     cp.AssetType,
+					ClientOrderID: cp.ClientOrderID,
+					Status:        order.Closed,
+				}
+
+				return &response, nil
+			}
+			continue
+		}
+	}
+	return nil, errors.New("no match active order")
 }
