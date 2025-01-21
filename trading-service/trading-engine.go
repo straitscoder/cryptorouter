@@ -136,6 +136,7 @@ type TradingEngine struct {
 	currencyPairSyncer      *syncManager
 	ExchangeManager         *ExchangeManager
 	OrderManager            *OrderManager
+	MarketMaker             *MarketMaker
 	websocketRoutineManager *websocketRoutineManager
 	Settings                Settings
 	uptime                  time.Time
@@ -374,6 +375,12 @@ func (te *TradingEngine) Start() error {
 	}
 	te.OrderManager = orderManager
 
+	marketMaker, err := NewMarketMaker(te.ExchangeManager)
+	if err != nil {
+		gctlog.Errorf(gctlog.Global, "Unable to initiate market maker: %+v", err)
+	}
+	marketMaker.Start()
+	te.MarketMaker = marketMaker
 	return nil
 }
 
@@ -406,6 +413,8 @@ func (tradeEngine *TradingEngine) Stop() {
 	if err != nil {
 		gctlog.Errorf(gctlog.Global, "Exchange manager unable to stop. Error: %v", err)
 	}
+
+	tradeEngine.MarketMaker.Stop()
 
 	// Wait for services to gracefully shutdown
 	tradeEngine.ServicesWG.Wait()
