@@ -379,7 +379,9 @@ func (te *TradingEngine) Start() error {
 	if err != nil {
 		gctlog.Errorf(gctlog.Global, "Unable to initiate market maker: %+v", err)
 	}
-	marketMaker.Start()
+	if err := marketMaker.Start(); err != nil {
+		gctlog.Errorf(gctlog.Global, "Unable to start market maker: %+v", err)
+	}
 	te.MarketMaker = marketMaker
 	return nil
 }

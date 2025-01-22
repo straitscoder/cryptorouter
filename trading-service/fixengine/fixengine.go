@@ -1,9 +1,11 @@
-package main
+package fixengine
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"path"
 	"time"
@@ -11,10 +13,19 @@ import (
 	"github.com/quickfixgo/enum"
 	"github.com/quickfixgo/field"
 	"github.com/quickfixgo/fix42/newordersingle"
+	"github.com/quickfixgo/fix42/ordercancelrequest"
 	"github.com/quickfixgo/fix42/securitydefinitionrequest"
 	"github.com/quickfixgo/quickfix"
 	"github.com/quickfixgo/tag"
+	"github.com/shopspring/decimal"
+	"github.com/thrasher-corp/gocryptotrader/currency"
+	"github.com/thrasher-corp/gocryptotrader/exchanges/order"
+	model "github.com/thrasher-corp/gocryptotrader/trading-service/models"
 	"gopkg.in/ini.v1"
+)
+
+const (
+	CCX = "CCX"
 )
 
 type fixApplication struct {
@@ -36,34 +47,18 @@ func (c *fixApplication) FromApp(msg *quickfix.Message, sessionID quickfix.Sessi
 	msgType, _ := msg.Header.GetString(tag.MsgType)
 	switch msgType {
 	case "d":
-		parsed := parseFIXMessage(msg)
-		jsonOutput(parsed)
+		symbol, _ := msg.Body.GetString(tag.Symbol)
+		if err := model.CheckExistingandAddPair(context.Background(), symbol); err != nil {
+			log.Print(err)
+			return
+		}
 	case "8":
-		clOrdID, _ := msg.Body.GetString(tag.ClOrdID)
-		orderId, _ := msg.Body.GetString(tag.OrderID)
-		ordStatus, _ := msg.Body.GetString(tag.OrdStatus)
-		savedOrderId := getOrderId(clOrdID)
-		if ordStatus == "4" || ordStatus == "3" {
-			parsed := parseFIXMessage(msg)
-			jsonOutput(parsed)
+		orderDetail := ToOrderDetail(msg)
+		if err := model.UpdateOrCreateOrderRedis(context.TODO(), orderDetail); err != nil {
+			log.Print(err)
+			return
 		}
-		if savedOrderId != nil {
-			if ordStatus != "0" {
-				parsed := parseFIXMessage(msg)
-				jsonOutput(parsed)
-			}
-			return nil
-		} else {
-			saveOrderId(orderId, clOrdID)
-			if ordStatus == "0" {
-				parsed := parseFIXMessage(msg)
-				jsonOutput(parsed)
-				orderResponse := make(map[string]string)
-				orderResponse["Client_Order_ID"] = clOrdID
-				orderResponse["Order_ID"] = orderId
-				jsonOutput(orderResponse)
-			}
-		}
+		return
 	}
 	return nil
 }
@@ -82,13 +77,14 @@ func (c *fixApplication) ToApp(msg *quickfix.Message, sessionID quickfix.Session
 }
 
 type FixEngine struct {
-	senderCompId string
-	targetCompId string
-	accountCode  string
-	initiator    *quickfix.Initiator
-	settings     *quickfix.Settings
-	logFactory   *quickfix.LogFactory
-	storeFactory quickfix.MessageStoreFactory
+	senderCompId  string
+	targetCompId  string
+	accountCode   string
+	pairFormatter *currency.PairFormat
+	initiator     *quickfix.Initiator
+	settings      *quickfix.Settings
+	logFactory    *quickfix.LogFactory
+	storeFactory  quickfix.MessageStoreFactory
 }
 
 func (fe *FixEngine) Start() error {
@@ -126,6 +122,10 @@ func (fe *FixEngine) Start() error {
 	fe.logFactory = &logFactory
 
 	fe.storeFactory = quickfix.NewMemoryStoreFactory()
+	fe.pairFormatter = &currency.PairFormat{
+		Uppercase: true,
+		Delimiter: "-",
+	}
 
 	app := &fixApplication{}
 	app.Username = config.Section("SESSION").Key("UserName").String()
@@ -145,48 +145,75 @@ func (fe *FixEngine) Stop() {
 
 func (fe *FixEngine) SecuritiesDetail() error {
 	securityDefinitionRequest := securitydefinitionrequest.New(
-		field.NewSecurityReqID(SecReqId()),
+		field.NewSecurityReqID("1"),
 		field.NewSecurityRequestType(enum.SecurityRequestType_REQUEST_LIST_SECURITIES),
 	)
 	securityDefinitionRequest.Set(field.NewSecurityExchange("CCX"))
 	sdrMsg := securityDefinitionRequest.ToMessage()
 	sdrMsg.Header.Set(field.NewSenderCompID(fe.senderCompId))
 	sdrMsg.Header.Set(field.NewTargetCompID(fe.targetCompId))
-	parsed := parseFIXMessage(sdrMsg)
-	jsonOutput(parsed)
-	if !Confirmation() {
-		fmt.Println("abort security definition request")
-		return nil
-	}
 
 	return quickfix.Send(sdrMsg)
 }
 
-func (fe *FixEngine) NewOrderSingle() error {
+func (fe *FixEngine) NewOrderSingle(order order.Detail) error {
 	newOrder := newordersingle.New(
 		field.NewClOrdID(generateClOrdID()),
-		field.NewHandlInst(HandleIns()),
-		field.NewSymbol(Symbol()),
-		field.NewSide(Side()),
+		field.NewHandlInst(enum.HandlInst_AUTOMATED_EXECUTION_ORDER_PRIVATE_NO_BROKER_INTERVENTION),
+		field.NewSymbol(order.Pair.Base.String()),
+		field.NewSide(convertSide(order.Side.String())),
 		field.NewTransactTime(time.Now().UTC()),
-		field.NewOrdType(OrderType()),
+		field.NewOrdType(convertOrdType(order.Type.String())),
 	)
 
 	newOrder.Set(field.NewAccount(fe.accountCode))
-	newOrder.Set(field.NewSecurityType(AssetType()))
-	newOrder.Set(field.NewSecurityExchange(Exchange()))
-	newOrder.Set(field.NewTimeInForce(TimeInForce()))
-	newOrder.Set(field.NewPrice(Price(), 8))
-	newOrder.Set(field.NewOrderQty(Amount(), 8))
+	newOrder.Set(field.NewSecurityType(convertAsset(order.AssetType.String())))
+	newOrder.Set(field.NewSecurityExchange(order.Exchange))
+	newOrder.Set(field.NewTimeInForce(convertTIF("DAY")))
+	newOrder.Set(field.NewPrice(decimal.NewFromFloat(order.Price), 8))
+	newOrder.Set(field.NewOrderQty(decimal.NewFromFloat(order.Amount), 8))
 	orderMsg := newOrder.ToMessage()
 	orderMsg.Header.Set(field.NewSenderCompID(fe.senderCompId))
 	orderMsg.Header.Set(field.NewTargetCompID(fe.targetCompId))
-	parsed := parseFIXMessage(orderMsg)
-	jsonOutput(parsed)
-	if !Confirmation() {
-		fmt.Println("abort new order")
-		return nil
-	}
 
 	return quickfix.Send(orderMsg)
+}
+
+func (fe *FixEngine) CancelOrder(order order.Detail) error {
+	symbol := fe.pairFormatter.Format(order.Pair)
+	cancelReq := ordercancelrequest.New(
+		field.NewOrigClOrdID(order.ClientOrderID),
+		field.NewClOrdID(generateClOrdID()),
+		field.NewSymbol(symbol),
+		field.NewSide(convertSide(order.Side.String())),
+		field.NewTransactTime(time.Now().UTC()),
+	)
+	cancelReq.SetOrderID(order.OrderID)
+	cancelReq.SetSecurityType(convertAsset(order.AssetType.String()))
+	cancelReq.SetSecurityExchange(order.Exchange)
+	cancelReq.SetAccount(fe.accountCode)
+	cancelMsg := cancelReq.ToMessage()
+	cancelMsg.Header.Set(field.NewSenderCompID(fe.senderCompId))
+	cancelMsg.Header.Set(field.NewTargetCompID(fe.targetCompId))
+	return quickfix.Send(cancelMsg)
+}
+
+func (fe *FixEngine) GetCCXPairs() (currency.Pairs, error) {
+	var ccxPairs currency.Pairs
+	pairs, err := model.GetPairs(context.Background())
+	if err != nil {
+		return nil, err
+	}
+	if len(pairs) == 0 {
+		return ccxPairs, nil
+	}
+	for i := range pairs {
+		switch pairs[i].Base {
+		case "AVAX", "BCH", "BTC", "BNB", "ETH", "LTC", "SOL":
+			ccxPairs = append(ccxPairs, currency.NewPairWithDelimiter(pairs[i].Base, pairs[i].Quote, pairs[i].Delimiter))
+		default:
+			continue
+		}
+	}
+	return ccxPairs, nil
 }

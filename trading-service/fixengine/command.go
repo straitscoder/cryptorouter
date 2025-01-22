@@ -1,4 +1,4 @@
-package main
+package fixengine
 
 import (
 	"bufio"
@@ -31,10 +31,10 @@ func MarketMaker() error {
 
 				switch action {
 				case "1":
-					if err := fixEngine.NewOrderSingle(); err != nil {
-						log.Println(err)
-						break
-					}
+					// if err := fixEngine.NewOrderSingle(); err != nil {
+					// 	log.Println(err)
+					// 	break
+					// }
 					continue Loop
 				case "2":
 					// if err := fixEngine.CancelOrder(); err != nil {

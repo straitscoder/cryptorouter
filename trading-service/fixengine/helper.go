@@ -1,4 +1,4 @@
-package main
+package fixengine
 
 import (
 	"bufio"
@@ -14,6 +14,11 @@ import (
 
 	"github.com/quickfixgo/enum"
 	"github.com/quickfixgo/quickfix"
+	"github.com/quickfixgo/tag"
+	"github.com/shopspring/decimal"
+	"github.com/thrasher-corp/gocryptotrader/currency"
+	"github.com/thrasher-corp/gocryptotrader/exchanges/asset"
+	"github.com/thrasher-corp/gocryptotrader/exchanges/order"
 )
 
 func closeConn(conn *quickfix.Initiator, cancel context.CancelFunc) {
@@ -101,11 +106,11 @@ func convertOrdType(ordType string) enum.OrdType {
 	}
 }
 
-func convertAsset(asset string) enum.SecurityType {
-	switch strings.ToUpper(asset) {
+func convertAsset(orderAsset string) enum.SecurityType {
+	switch strings.ToUpper(orderAsset) {
 	case "SPOT":
 		return enum.SecurityType_FX_SPOT
-	case "FUTURE":
+	case "FUTURE", asset.Futures.String(), "FUTURES":
 		return enum.SecurityType_FUTURE
 	default:
 		return enum.SecurityType_FX_FORWARD
@@ -180,6 +185,115 @@ func convertTIF(timeInForce string) enum.TimeInForce {
 	default:
 		return enum.TimeInForce_DAY
 	}
+}
+
+func ToStatus(ordStatus string) order.Status {
+	switch ordStatus {
+	case "0":
+		return order.New
+	case "1":
+		return order.PartiallyFilled
+	case "2":
+		return order.Filled
+	case "4":
+		return order.Cancelled
+	case "6":
+		return order.PendingCancel
+	case "A":
+		return order.Pending
+	default:
+		return order.Rejected
+	}
+}
+
+func ToType(ordType string) order.Type {
+	switch ordType {
+	case "1":
+		return order.Market
+	case "2":
+		return order.Limit
+	case "3":
+		return order.Stop
+	case "4":
+		return order.Stop
+	default:
+		return order.UnknownType
+	}
+}
+
+func ToSide(side string) order.Side {
+	switch side {
+	case "1":
+		return order.Buy
+	case "2":
+		return order.Sell
+	default:
+		return order.AnySide
+	}
+}
+
+func ToOrderDetail(msg *quickfix.Message) order.Detail {
+	clOrdID, _ := msg.Body.GetString(tag.ClOrdID)
+	orderId, _ := msg.Body.GetString(tag.OrderID)
+	ordStatus, _ := msg.Body.GetString(tag.OrdStatus)
+	exchange, _ := msg.Body.GetString(tag.SecurityExchange)
+	ordType, _ := msg.Body.GetString(tag.OrdType)
+	symbol, _ := msg.Body.GetString(tag.Symbol)
+	side, _ := msg.Body.GetString(tag.Side)
+	ordQty, _ := msg.Body.GetString(tag.OrderQty)
+	price, _ := msg.Body.GetString(tag.Price)
+	remainingQty, _ := msg.Body.GetString(tag.LeavesQty)
+	filledQty, _ := msg.Body.GetString(tag.CumQty)
+	avgPrice, _ := msg.Body.GetString(tag.AvgPx)
+	timestamp, _ := msg.Body.GetTime(tag.TransactTime)
+	orderDetail := order.Detail{
+		AssetType: asset.Futures,
+	}
+	if clOrdID != "" {
+		orderDetail.ClientOrderID = clOrdID
+	}
+	if orderId != "" {
+		orderDetail.OrderID = orderId
+	}
+	if ordStatus != "" {
+		orderDetail.Status = ToStatus(ordStatus)
+	}
+	if exchange != "" {
+		orderDetail.Exchange = exchange
+	}
+	if ordType != "" {
+		orderDetail.Type = ToType(ordType)
+	}
+	if symbol != "" {
+		orderDetail.Pair = currency.NewPairWithDelimiter(symbol, "USD", "-")
+	}
+	if side != "" {
+		orderDetail.Side = ToSide(side)
+	}
+	if ordQty != "" {
+		amount, _ := decimal.NewFromString(ordQty)
+		orderDetail.Amount = amount.InexactFloat64()
+	}
+	if price != "" {
+		priceD, _ := decimal.NewFromString(price)
+		orderDetail.Price = priceD.InexactFloat64()
+	}
+	if remainingQty != "" {
+		remainingAmount, _ := decimal.NewFromString(remainingQty)
+		orderDetail.RemainingAmount = remainingAmount.InexactFloat64()
+	}
+	if filledQty != "" {
+		FilledAmount, _ := decimal.NewFromString(filledQty)
+		orderDetail.ExecutedAmount = FilledAmount.InexactFloat64()
+	}
+	if avgPrice != "" {
+		avgPx, _ := decimal.NewFromString(avgPrice)
+		orderDetail.AverageExecutedPrice = avgPx.InexactFloat64()
+	}
+	if !timestamp.IsZero() {
+		orderDetail.LastUpdated = timestamp
+	}
+	return orderDetail
 }
 
 var (
