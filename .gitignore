@@ -26,6 +26,7 @@ backtester/btcli/btcli
 fixengine/fixengine
 fixcli/fixcli
 trading-service/trading-service
+market-maker/market-maker
 *.exe
 *.exe~
 *.dll

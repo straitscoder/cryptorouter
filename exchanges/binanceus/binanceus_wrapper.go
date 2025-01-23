@@ -377,7 +377,8 @@ func (bi *Binanceus) UpdateOrderbook(ctx context.Context, pair currency.Pair, as
 	if err != nil {
 		return book, err
 	}
-	return orderbook.Get(bi.Name, pair, assetType)
+	// return orderbook.Get(bi.Name, pair, assetType)
+	return book, nil
 }
 
 // UpdateAccountInfo retrieves balances for all enabled currencies

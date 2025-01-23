@@ -333,17 +333,28 @@ func (b *BTSE) UpdateOrderbook(ctx context.Context, p currency.Pair, assetType a
 	if err := b.CurrencyPairs.IsAssetEnabled(assetType); err != nil {
 		return nil, err
 	}
+	pairFormat, err := b.GetPairFormat(assetType, true)
+	if err != nil {
+		return nil, err
+	}
+
+	pairStr := pairFormat.Format(p)
+	// pair, err := currency.NewPairFromString(pairStr)
+	// if err != nil {
+	// 	return nil, err
+	// }
+
 	book := &orderbook.Base{
 		Exchange:        b.Name,
 		Pair:            p,
 		Asset:           assetType,
 		VerifyOrderbook: b.CanVerifyOrderbook,
 	}
-	fPair, err := b.FormatExchangeCurrency(p, assetType)
-	if err != nil {
-		return book, err
-	}
-	a, err := b.FetchOrderBook(ctx, fPair.String(), 0, 0, 0, assetType == asset.Spot)
+	// fPair, err := b.FormatExchangeCurrency(p, assetType)
+	// if err != nil {
+	// 	return book, err
+	// }
+	a, err := b.FetchOrderBook(ctx, pairStr, 0, 0, 0, assetType == asset.Spot)
 	if err != nil {
 		return book, err
 	}
@@ -376,7 +387,8 @@ func (b *BTSE) UpdateOrderbook(ctx context.Context, p currency.Pair, assetType a
 	if err != nil {
 		return book, err
 	}
-	return orderbook.Get(b.Name, p, assetType)
+	// return orderbook.Get(b.Name, p, assetType)
+	return book, nil
 }
 
 // UpdateAccountInfo retrieves balances for all enabled currencies for the

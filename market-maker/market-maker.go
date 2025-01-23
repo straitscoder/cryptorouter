@@ -112,12 +112,6 @@ func (m *MarketMaker) GetFairPrice() (PriceReferences, error) {
 		}
 
 		for y := range enabledAssets {
-			pairs, err := exchanges[x].GetAvailablePairs(enabledAssets[y])
-			if err != nil {
-				log.Printf("Error when Get enbaled pair: %+v", err)
-				continue
-			}
-
 			ccxPairs, err := m.FixEngine.GetCCXPairs()
 			if err != nil {
 				log.Print(err)
@@ -132,10 +126,6 @@ func (m *MarketMaker) GetFairPrice() (PriceReferences, error) {
 				continue
 			}
 
-			if len(pairs) == 0 {
-				continue
-			}
-
 			for z := range ccxPairs {
 				if enabledAssets[y] != asset.Spot {
 					continue
@@ -143,7 +133,10 @@ func (m *MarketMaker) GetFairPrice() (PriceReferences, error) {
 
 				orderbook, err := exchanges[x].FetchOrderbook(context.TODO(), ccxPairs[z], enabledAssets[y])
 				if err != nil {
-					// log.Printf("Error when fetch %s order book from %s %s: %+v", pairs[z].String(), exchanges[x].GetName(), enabledAssets[y].String(), err)
+					if strings.Contains(err.Error(), "400") {
+						continue
+					}
+					log.Printf("Error when fetch %s order book from %s %s: %+v", ccxPairs[z].String(), exchanges[x].GetName(), enabledAssets[y].String(), err)
 					continue
 				}
 
@@ -254,7 +247,8 @@ func (m *MarketMaker) PlaceOrder() {
 		log.Printf("error when get fair prices: %+v", err)
 		return
 	}
-	log.Printf("%+v\n", fairPrices)
+
+FairPricesLoop:
 	for _, value := range fairPrices {
 		if !strings.Contains(value.Symbol, "USDT") {
 			continue
@@ -267,19 +261,18 @@ func (m *MarketMaker) PlaceOrder() {
 		}
 
 		ccxPair := currency.NewPairWithDelimiter(pair.Base.String(), "USD", "-")
-		log.Printf("ccx pairs: %+v", ccxPair)
+
 		createdOrders, err := model.GetOrdersRedis(context.Background(),
 			&order.Filter{Exchange: fixengine.CCX, Pair: ccxPair, Status: order.New},
 			nil,
 		)
-		log.Printf("existing order: %+v", createdOrders)
+
 		if err != nil {
 			log.Printf("error getting created order: %+v", err)
 			continue
 		}
 
 		if len(createdOrders) == 0 {
-			// continue
 			bidPriceLeves := GeneratePriceLevels(value.Price, "bid")
 			for b := range bidPriceLeves {
 				reqOrder := order.Detail{
@@ -289,7 +282,7 @@ func (m *MarketMaker) PlaceOrder() {
 					Type:      order.Limit,
 					Pair:      ccxPair,
 					Price:     bidPriceLeves[b],
-					Amount:    float64(b + 1),
+					Amount:    GetQuantity(b + 1),
 				}
 				if err := m.FixEngine.NewOrderSingle(reqOrder); err != nil {
 					log.Printf("error when sent new order request: %+v", err)
@@ -306,7 +299,7 @@ func (m *MarketMaker) PlaceOrder() {
 					Type:      order.Limit,
 					Pair:      ccxPair,
 					Price:     askPriceLeves[b],
-					Amount:    float64(b + 1),
+					Amount:    GetQuantity(b + 1),
 				}
 				if err := m.FixEngine.NewOrderSingle(reqOrder); err != nil {
 					log.Printf("error when sent new order request: %+v", err)
@@ -316,96 +309,92 @@ func (m *MarketMaker) PlaceOrder() {
 			continue
 		}
 
+	CancelOrderLoop:
 		for i := range createdOrders {
 			if createdOrders[i].Status.IsInactive() {
 				continue
 			}
+			log.Printf("existing orders: %+v", createdOrders)
+			decimalMultiplier := m.GetRelevantPrice(createdOrders[i].Price)
+			if m.CheckPriceDifference(value.Price, createdOrders[i], decimalMultiplier) {
+				if err := m.CancelAllOrders(createdOrders); err != nil {
+					log.Printf("error when cancelling orders: %+v", err)
+					continue
+				}
+				log.Printf("price changed for %s", createdOrders[i].Pair.Base.String())
+				break CancelOrderLoop
+			}
+			log.Printf("price not change for %s", createdOrders[i].Pair.Base.String())
+			continue FairPricesLoop
+		}
 
-			decimalCoef := m.GetRelevantPrice(createdOrders[i].Price)
-			switch createdOrders[i].Amount {
-			case 1:
-				if (createdOrders[i].Price-value.Price) > (2*decimalCoef) || (createdOrders[i].Price-value.Price) < (-2*decimalCoef) {
-					if err := m.FixEngine.CancelOrder(createdOrders[i]); err != nil {
-						log.Printf("error when cancelling order: %+v", err)
-						continue
-					}
-					continue
-				}
-				continue
-			case 2:
-				if (createdOrders[i].Price-value.Price) > (3*decimalCoef) || (createdOrders[i].Price-value.Price) < (-3*decimalCoef) {
-					if err := m.FixEngine.CancelOrder(createdOrders[i]); err != nil {
-						log.Printf("error when cancelling order: %+v", err)
-						continue
-					}
-					continue
-				}
-				continue
-			case 3:
-				if (createdOrders[i].Price-value.Price) > (4*decimalCoef) || (createdOrders[i].Price-value.Price) < (-4*decimalCoef) {
-					if err := m.FixEngine.CancelOrder(createdOrders[i]); err != nil {
-						log.Printf("error when cancelling order: %+v", err)
-						continue
-					}
-					continue
-				}
-				continue
-			case 4:
-				if (createdOrders[i].Price-value.Price) > (5*decimalCoef) || (createdOrders[i].Price-value.Price) < (-5*decimalCoef) {
-					if err := m.FixEngine.CancelOrder(createdOrders[i]); err != nil {
-						log.Printf("error when cancelling order: %+v", err)
-						continue
-					}
-					continue
-				}
-				continue
-			default:
-				if (createdOrders[i].Price-value.Price) > (6*decimalCoef) || (createdOrders[i].Price-value.Price) < (-6*decimalCoef) {
-					if err := m.FixEngine.CancelOrder(createdOrders[i]); err != nil {
-						log.Printf("error when cancelling order: %+v", err)
-						continue
-					}
-					continue
-				}
+		bidPriceLeves := GeneratePriceLevels(value.Price, "bid")
+		for b := range bidPriceLeves {
+			reqOrder := order.Detail{
+				Exchange:  fixengine.CCX,
+				AssetType: asset.Futures,
+				Side:      order.Buy,
+				Type:      order.Limit,
+				Pair:      ccxPair,
+				Price:     bidPriceLeves[b],
+				Amount:    GetQuantity(b + 1),
+			}
+			if err := m.FixEngine.NewOrderSingle(reqOrder); err != nil {
+				log.Printf("error when sent new order request: %+v", err)
 				continue
 			}
 		}
 
-		// bidPriceLeves := GeneratePriceLevels(value.Price, "bid")
-		// for b := range bidPriceLeves {
-		// 	reqOrder := order.Detail{
-		// 		Exchange:  fixengine.CCX,
-		// 		AssetType: asset.Futures,
-		// 		Side:      order.Buy,
-		// 		Type:      order.Limit,
-		// 		Pair:      ccxPair,
-		// 		Price:     bidPriceLeves[b],
-		// 		Amount:    float64(b + 1),
-		// 	}
-		// 	if err := m.FixEngine.NewOrderSingle(reqOrder); err != nil {
-		// 		log.Printf("error when sent new order request: %+v", err)
-		// 		continue
-		// 	}
-		// }
-
-		// askPriceLeves := GeneratePriceLevels(value.Price, "ask")
-		// for b := range askPriceLeves {
-		// 	reqOrder := order.Detail{
-		// 		Exchange:  fixengine.CCX,
-		// 		AssetType: asset.Futures,
-		// 		Side:      order.Sell,
-		// 		Type:      order.Limit,
-		// 		Pair:      ccxPair,
-		// 		Price:     askPriceLeves[b],
-		// 		Amount:    float64(b + 1),
-		// 	}
-		// 	if err := m.FixEngine.NewOrderSingle(reqOrder); err != nil {
-		// 		log.Printf("error when sent new order request: %+v", err)
-		// 		continue
-		// 	}
-		// }
+		askPriceLeves := GeneratePriceLevels(value.Price, "ask")
+		for b := range askPriceLeves {
+			reqOrder := order.Detail{
+				Exchange:  fixengine.CCX,
+				AssetType: asset.Futures,
+				Side:      order.Sell,
+				Type:      order.Limit,
+				Pair:      ccxPair,
+				Price:     askPriceLeves[b],
+				Amount:    GetQuantity(b + 1),
+			}
+			if err := m.FixEngine.NewOrderSingle(reqOrder); err != nil {
+				log.Printf("error when sent new order request: %+v", err)
+				continue
+			}
+		}
 		continue
 	}
+}
+
+func (m *MarketMaker) CheckPriceDifference(fairPrice float64, orderDetail order.Detail, decimalCoef float64) bool {
+	var allowedDifference float64
+	switch orderDetail.Amount {
+	case 1:
+		allowedDifference = priceLevel1 * decimalCoef
+	case 2:
+		allowedDifference = priceLevel2 * decimalCoef
+	case 3:
+		allowedDifference = priceLevel3 * decimalCoef
+	case 4:
+		allowedDifference = priceLevel4 * decimalCoef
+	default:
+		allowedDifference = priceLevel5 * decimalCoef
+	}
+
+	switch orderDetail.Side {
+	case order.Buy:
+		return (orderDetail.Price - fairPrice) > -allowedDifference
+	default:
+		return (orderDetail.Price - fairPrice) > allowedDifference
+	}
+}
+
+func (m *MarketMaker) CancelAllOrders(orders []order.Detail) error {
+	for i := range orders {
+		if err := m.FixEngine.CancelOrder(orders[i]); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (m *MarketMaker) ShutdownRoutine() {
@@ -432,7 +421,7 @@ func (m *MarketMaker) ShutdownRoutine() {
 }
 
 func GeneratePriceLevels(price float64, side string) []float64 {
-	priceDepth := make([]float64, 5)
+	priceDepth := make([]float64, priceLevelDepth)
 	side = strings.ToUpper(side)
 	zeros := countPrice(price)
 	var decimals int
@@ -445,27 +434,27 @@ func GeneratePriceLevels(price float64, side string) []float64 {
 	case 0:
 		for i := range priceDepth {
 			if side == "BID" {
-				price -= 2
+				price -= priceLevel1
 			} else {
-				price += 2
+				price += priceLevel1
 			}
 			priceDepth[i] = decimal.NewFromFloatWithExponent(price, -2).InexactFloat64()
 		}
 	case 1:
 		for i := range priceDepth {
 			if side == "BID" {
-				price -= 0.2
+				price -= priceLevel1 * decimalMultiplier1
 			} else {
-				price += 0.2
+				price += priceLevel1 * decimalMultiplier1
 			}
 			priceDepth[i] = decimal.NewFromFloatWithExponent(price, -2).InexactFloat64()
 		}
 	default:
 		for i := range priceDepth {
 			if side == "BID" {
-				price -= 0.02
+				price -= priceLevel1 * decimalMultiplier2
 			} else {
-				price += 0.02
+				price += priceLevel1 * decimalMultiplier2
 			}
 			priceDepth[i] = decimal.NewFromFloatWithExponent(price, -2).InexactFloat64()
 		}
@@ -495,21 +484,41 @@ func (m *MarketMaker) GetNotionalAmout(price float64) float64 {
 	priceLength := countPrice(price)
 	switch priceLength {
 	case 1, 2:
-		return 1
+		return decimalMultiplier
 	case 3:
-		return 0.1
+		return decimalMultiplier1
 	default:
-		return 0.01
+		return decimalMultiplier2
 	}
 }
 func (m *MarketMaker) GetRelevantPrice(price float64) float64 {
 	decimals := countDecimals(price)
+	if price > 999 {
+		decimals = 0
+	}
 	switch decimals {
 	case 0:
-		return 1
+		return decimalMultiplier
 	case 1:
-		return 0.1
+		return decimalMultiplier1
 	default:
-		return 0.01
+		return decimalMultiplier2
+	}
+}
+
+func GetQuantity(sequence int) float64 {
+	switch sequence {
+	case 1, 6, 11:
+		return quantityLevel1
+	case 2, 7, 12:
+		return quantityLevel2
+	case 3, 8, 13:
+		return quantityLevel3
+	case 4, 9, 14:
+		return quantityLevel4
+	case 5, 10, 15:
+		return quantityLevel5
+	default:
+		return quantityLevel1
 	}
 }

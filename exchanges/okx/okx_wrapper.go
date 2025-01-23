@@ -502,7 +502,8 @@ func (ok *Okx) UpdateOrderbook(ctx context.Context, pair currency.Pair, assetTyp
 	if err != nil {
 		return book, err
 	}
-	return orderbook.Get(ok.Name, pair, assetType)
+	// return orderbook.Get(ok.Name, pair, assetType)
+	return book, nil
 }
 
 // UpdateAccountInfo retrieves balances for all enabled currencies.

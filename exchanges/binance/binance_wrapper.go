@@ -610,7 +610,8 @@ func (b *Binance) UpdateOrderbook(ctx context.Context, p currency.Pair, assetTyp
 	if err != nil {
 		return book, err
 	}
-	return orderbook.Get(b.Name, p, assetType)
+	// return orderbook.Get(b.Name, p, assetType)
+	return book, nil
 }
 
 // UpdateAccountInfo retrieves balances for all enabled currencies for the

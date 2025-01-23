@@ -388,7 +388,8 @@ func (d *Deribit) UpdateOrderbook(ctx context.Context, p currency.Pair, assetTyp
 	if err != nil {
 		return book, err
 	}
-	return orderbook.Get(d.Name, p, assetType)
+	// return orderbook.Get(d.Name, p, assetType)
+	return book, nil
 }
 
 // UpdateAccountInfo retrieves balances for all enabled currencies
