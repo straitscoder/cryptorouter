@@ -135,12 +135,12 @@ type MarketMakerEngine struct {
 	currencyPairSyncer *syncManager
 	ExchangeManager    *ExchangeManager
 	// OrderManager            *OrderManager
-	MarketMaker *MarketMaker
-	// websocketRoutineManager *websocketRoutineManager
-	Settings           Settings
-	uptime             time.Time
-	GRPCShutdownSignal chan struct{}
-	ServicesWG         sync.WaitGroup
+	MarketMaker             *MarketMaker
+	websocketRoutineManager *websocketRoutineManager
+	Settings                Settings
+	uptime                  time.Time
+	GRPCShutdownSignal      chan struct{}
+	ServicesWG              sync.WaitGroup
 }
 
 func New() (*MarketMakerEngine, error) {
@@ -356,15 +356,15 @@ func (te *MarketMakerEngine) Start() error {
 		}
 	}
 
-	// te.websocketRoutineManager, err = setupWebsocketRoutineManager(te.ExchangeManager, nil, te.currencyPairSyncer, &te.Config.Currency, te.Settings.Verbose)
-	// if err != nil {
-	// 	gctlog.Errorf(gctlog.Global, "Unable to initialise websocket routine manager. Err: %s", err)
-	// } else {
-	// 	err = te.websocketRoutineManager.Start()
-	// 	if err != nil {
-	// 		gctlog.Errorf(gctlog.Global, "failed to start websocket routine manager. Err: %s", err)
-	// 	}
-	// }
+	te.websocketRoutineManager, err = setupWebsocketRoutineManager(te.ExchangeManager, nil, te.currencyPairSyncer, &te.Config.Currency, te.Settings.Verbose)
+	if err != nil {
+		gctlog.Errorf(gctlog.Global, "Unable to initialise websocket routine manager. Err: %s", err)
+	} else {
+		err = te.websocketRoutineManager.Start()
+		if err != nil {
+			gctlog.Errorf(gctlog.Global, "failed to start websocket routine manager. Err: %s", err)
+		}
+	}
 	// orderManager, err := SetupOrderManager(te.ExchangeManager, te.communicationManager, &te.ServicesWG, &te.Config.OrderManager)
 	// if err != nil {
 	// 	gctlog.Errorf(gctlog.Global, "Unable to initialise order manager. Err: %s", err)
@@ -374,7 +374,7 @@ func (te *MarketMakerEngine) Start() error {
 	// }
 	// te.OrderManager = orderManager
 
-	marketMaker, err := NewMarketMaker(te.ExchangeManager)
+	marketMaker, err := NewMarketMaker(te.ExchangeManager, te.websocketRoutineManager)
 	if err != nil {
 		gctlog.Errorf(gctlog.Global, "Unable to initiate market maker: %+v", err)
 	}
@@ -397,11 +397,11 @@ func (tradeEngine *MarketMakerEngine) Stop() {
 		}
 	}
 	tradeEngine.MarketMaker.Stop()
-	// if tradeEngine.websocketRoutineManager.IsRunning() {
-	// 	if err := tradeEngine.websocketRoutineManager.Stop(); err != nil {
-	// 		gctlog.Errorf(gctlog.Global, "websocket routine manager unable to stop. Error: %v", err)
-	// 	}
-	// }
+	if tradeEngine.websocketRoutineManager.IsRunning() {
+		if err := tradeEngine.websocketRoutineManager.Stop(); err != nil {
+			gctlog.Errorf(gctlog.Global, "websocket routine manager unable to stop. Error: %v", err)
+		}
+	}
 
 	// if err := tradeEngine.OrderManager.Stop(); err != nil {
 	// 	gctlog.Errorf(gctlog.Global, "Order manager unable to stop. Error: %v", err)

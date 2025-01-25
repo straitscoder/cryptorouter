@@ -2,12 +2,11 @@ package main
 
 import (
 	"context"
-	"crypto/rand"
 	"errors"
-	"fmt"
 	"log"
-	"strconv"
+	"math"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -15,30 +14,85 @@ import (
 	"github.com/thrasher-corp/gocryptotrader/currency"
 	"github.com/thrasher-corp/gocryptotrader/exchanges/asset"
 	"github.com/thrasher-corp/gocryptotrader/exchanges/order"
-	"github.com/thrasher-corp/gocryptotrader/trading-service/fixengine"
-	model "github.com/thrasher-corp/gocryptotrader/trading-service/models"
+	"github.com/thrasher-corp/gocryptotrader/exchanges/ticker"
+	"github.com/thrasher-corp/gocryptotrader/market-maker/fixengine"
+	model "github.com/thrasher-corp/gocryptotrader/market-maker/models"
 )
 
 type PriceReference struct {
-	Exchange  string
-	AssetType string
-	isFuture  bool
-	Symbol    string
-	Price     float64
-	Volume    float64
+	Exchange           string
+	AssetType          string
+	isFuture           bool
+	Symbol             string
+	Price              float64
+	Volume             float64
+	ContractMultiplier float64
+	PriceMultiplier    float64
 }
 
-type PriceReferences map[string]PriceReference
+var (
+	tempPRStore = make(map[string]PriceReference)
+	PRMutex     sync.Mutex
+)
+
+func SavePriceReference(priceReference PriceReference) {
+	PRMutex.Lock()
+	tempPRStore[priceReference.Symbol] = priceReference
+	PRMutex.Unlock()
+}
+
+func CheckPriceReference(symbol string) bool {
+	PRMutex.Lock()
+	defer PRMutex.Unlock()
+
+	_, exist := tempPRStore[symbol]
+	return exist
+}
+
+func GetPriceReference(symbol string) *PriceReference {
+	PRMutex.Lock()
+	defer PRMutex.Unlock()
+
+	priceReference, exist := tempPRStore[symbol]
+	if !exist {
+		return nil
+	}
+
+	return &priceReference
+}
+
+func UpdatePriceReference(priceReference PriceReference) *PriceReference {
+	PRMutex.Lock()
+	defer PRMutex.Unlock()
+
+	_, exist := tempPRStore[priceReference.Symbol]
+	if !exist {
+		return nil
+	}
+	tempPRStore[priceReference.Symbol] = priceReference
+
+	return &priceReference
+}
+
+func ClearPRStore() {
+	PRMutex.Lock()
+	defer PRMutex.Unlock()
+
+	for key := range tempPRStore {
+		delete(tempPRStore, key)
+	}
+}
 
 type MarketMaker struct {
 	ProcessingOrder int32
 	FixEngine       *fixengine.FixEngine
 	ExchangeManager *ExchangeManager
+	SocketManager   *websocketRoutineManager
 	PairFormatter   *currency.PairFormat
 	Shutdown        chan struct{}
 }
 
-func NewMarketMaker(exchManager *ExchangeManager) (*MarketMaker, error) {
+func NewMarketMaker(exchManager *ExchangeManager, eventRoutine *websocketRoutineManager) (*MarketMaker, error) {
 	if exchManager == nil {
 		return nil, errors.New("exchange manager is nil")
 	}
@@ -50,6 +104,7 @@ func NewMarketMaker(exchManager *ExchangeManager) (*MarketMaker, error) {
 	}
 	marketMaker.Shutdown = make(chan struct{})
 	marketMaker.ExchangeManager = exchManager
+	marketMaker.SocketManager = eventRoutine
 	marketMaker.FixEngine = new(fixengine.FixEngine)
 	return &marketMaker, nil
 }
@@ -62,6 +117,7 @@ func (m *MarketMaker) Start() error {
 		log.Printf("error when requesting security detail: %+v", err)
 		return err
 	}
+	m.SocketManager.registerWebsocketDataHandler(m.WsDataHandler, false)
 	m.ShutdownRoutine()
 	go m.run()
 	return nil
@@ -70,6 +126,7 @@ func (m *MarketMaker) Start() error {
 func (m *MarketMaker) Stop() {
 	m.ShutdownRoutine()
 	m.FixEngine.Stop()
+	ClearPRStore()
 	m.Shutdown <- struct{}{}
 	close(m.Shutdown)
 	return
@@ -77,7 +134,7 @@ func (m *MarketMaker) Stop() {
 
 func (m *MarketMaker) run() {
 	m.PlaceOrder()
-	ticker := time.NewTicker(time.Second * 1)
+	ticker := time.NewTicker(time.Millisecond * 500)
 	defer ticker.Stop()
 
 	for {
@@ -86,20 +143,21 @@ func (m *MarketMaker) run() {
 			ticker.Stop()
 			return
 		case <-ticker.C:
+			go m.GetFairPrice()
 			go m.PlaceOrder()
 		}
 	}
 }
 
-func (m *MarketMaker) GetFairPrice() (PriceReferences, error) {
-	result := make(PriceReferences)
+func (m *MarketMaker) GetFairPrice() {
 	exchanges, err := m.ExchangeManager.GetExchanges()
 	if err != nil {
-		return result, err
+		log.Printf("error when getting exchanges: %+v", err)
+		return
 	}
 
 	if len(exchanges) == 0 {
-		return result, nil
+		return
 	}
 
 	for x := range exchanges {
@@ -131,110 +189,65 @@ func (m *MarketMaker) GetFairPrice() (PriceReferences, error) {
 					continue
 				}
 
-				orderbook, err := exchanges[x].FetchOrderbook(context.TODO(), ccxPairs[z], enabledAssets[y])
+				priceTicker, err := exchanges[x].UpdateTicker(context.Background(), ccxPairs[z].Pair, enabledAssets[y])
 				if err != nil {
-					if strings.Contains(err.Error(), "400") {
+					if strings.Contains(err.Error(), "400") || strings.Contains(err.Error(), "not found") {
 						continue
 					}
-					log.Printf("Error when fetch %s order book from %s %s: %+v", ccxPairs[z].String(), exchanges[x].GetName(), enabledAssets[y].String(), err)
+					log.Printf("Error when fetch %s order book from %s %s: %+v", ccxPairs[z].Pair.String(), exchanges[x].GetName(), enabledAssets[y].String(), err)
 					continue
 				}
 
-				symbol := m.PairFormatter.Format(orderbook.Pair)
-				quoteCurrency := strings.Split(orderbook.Pair.Quote.String(), "-")[0]
+				symbol := m.PairFormatter.Format(priceTicker.Pair)
+				quoteCurrency := strings.Split(priceTicker.Pair.Quote.String(), "-")[0]
 				var fieldName string
-				switch orderbook.Asset.IsFutures() {
+				switch priceTicker.AssetType.IsFutures() {
 				case true:
-					fieldName = orderbook.Pair.Base.String() + "-" + quoteCurrency
+					fieldName = priceTicker.Pair.Base.String() + "-" + quoteCurrency
 				case false:
 					fieldName = symbol
 				}
-				var bestBuyPrice float64
-				var bestSellPrice float64
-				var totalAskVolume decimal.Decimal
-				var totalBidVolume decimal.Decimal
-				var totalVolumeFloat float64
-				for a := range orderbook.Asks {
-					totalAskVolume = totalAskVolume.Add(decimal.NewFromFloatWithExponent(orderbook.Asks[a].Amount, -8))
-					totalVolumeFloat += orderbook.Asks[a].Amount
-					if bestSellPrice == 0 {
-						bestSellPrice = orderbook.Asks[a].Price
-					} else if bestSellPrice > orderbook.Asks[a].Price {
-						bestSellPrice = orderbook.Asks[a].Price
-					} else {
-						continue
-					}
-				}
 
-				for b := range orderbook.Bids {
-					totalBidVolume = totalBidVolume.Add(decimal.NewFromFloatWithExponent(orderbook.Bids[b].Amount, -8))
-					totalVolumeFloat += orderbook.Bids[b].Amount
-					if bestBuyPrice == 0 {
-						bestBuyPrice = orderbook.Bids[b].Price
-					} else if bestBuyPrice < orderbook.Bids[b].Price {
-						bestBuyPrice = orderbook.Bids[b].Price
-					} else {
-						continue
-					}
+				var fairPrice float64
+				if priceTicker.Bid != 0 && priceTicker.Ask != 0 {
+					fairPrice = math.Abs((priceTicker.Bid + priceTicker.Ask) / 2)
+				} else if priceTicker.Bid != 0 && priceTicker.Ask == 0 {
+					fairPrice = priceTicker.Bid
+				} else if priceTicker.Ask != 0 && priceTicker.Bid == 0 {
+					fairPrice = priceTicker.Ask
 				}
-
-				fairPrice := (bestBuyPrice + bestSellPrice) / 2
-				// exchangeTotalVolume := decimal.Sum(totalAskVolume, totalBidVolume)
-				if result[fieldName].Price == 0 && result[fieldName].Volume == 0 {
-					result[fieldName] = PriceReference{
-						Exchange:  orderbook.Exchange,
-						AssetType: orderbook.Asset.String(),
-						isFuture:  orderbook.Asset.IsFutures(),
-						Symbol:    orderbook.Pair.String(),
-						Price:     fairPrice,
-						Volume:    totalVolumeFloat,
+				exchangeTotalVolume := math.Abs(priceTicker.Volume)
+				result := GetPriceReference(fieldName)
+				if result == nil {
+					result = &PriceReference{
+						Exchange:           priceTicker.ExchangeName,
+						AssetType:          priceTicker.AssetType.String(),
+						isFuture:           priceTicker.AssetType.IsFutures(),
+						Symbol:             priceTicker.Pair.String(),
+						Price:              fairPrice,
+						Volume:             exchangeTotalVolume,
+						PriceMultiplier:    ccxPairs[z].PriceMultiplier,
+						ContractMultiplier: ccxPairs[z].ContractMultiplier,
 					}
-				} else if result[fieldName].Volume < totalVolumeFloat {
-					result[fieldName] = PriceReference{
-						Exchange:  orderbook.Exchange,
-						AssetType: orderbook.Asset.String(),
-						isFuture:  orderbook.Asset.IsFutures(),
-						Symbol:    orderbook.Pair.String(),
-						Price:     fairPrice,
-						Volume:    totalVolumeFloat,
+					SavePriceReference(*result)
+				} else if result.Volume < exchangeTotalVolume {
+					result = &PriceReference{
+						Exchange:           priceTicker.ExchangeName,
+						AssetType:          priceTicker.AssetType.String(),
+						isFuture:           priceTicker.AssetType.IsFutures(),
+						Symbol:             priceTicker.Pair.String(),
+						Price:              fairPrice,
+						Volume:             exchangeTotalVolume,
+						PriceMultiplier:    ccxPairs[z].PriceMultiplier,
+						ContractMultiplier: ccxPairs[z].ContractMultiplier,
 					}
+					UpdatePriceReference(*result)
 				} else {
 					continue
 				}
-
 			}
 		}
 	}
-	for key := range result {
-		if result[key].Volume == 0 {
-			delete(result, key)
-		}
-	}
-	return result, nil
-}
-
-func generateRandomString(n int) string {
-	const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
-	b := make([]byte, n)
-	_, err := rand.Read(b)
-	if err != nil {
-		log.Printf("error when create clien order id: %+v", err)
-		return ""
-	}
-	for i := range b {
-		b[i] = charset[int(b[i])%len(charset)]
-	}
-	return string(b)
-}
-
-func (m *MarketMaker) GenerateClOrdID() string {
-	timestamp := time.Now().Unix()         // Unix timestamp for uniqueness
-	randomPart := generateRandomString(10) // Random alphanumeric string
-	clOrdId := fmt.Sprintf("%d%s", timestamp, randomPart)
-	if len(clOrdId) > 36 {
-		clOrdId = clOrdId[:36]
-	}
-	return clOrdId
 }
 
 func (m *MarketMaker) PlaceOrder() {
@@ -242,12 +255,12 @@ func (m *MarketMaker) PlaceOrder() {
 		return
 	}
 	defer atomic.StoreInt32(&m.ProcessingOrder, 0)
-	fairPrices, err := m.GetFairPrice()
-	if err != nil {
-		log.Printf("error when get fair prices: %+v", err)
+	fairPrices := tempPRStore
+
+	if len(fairPrices) == 0 {
 		return
 	}
-
+	log.Printf("fairPrices: %+v", fairPrices)
 FairPricesLoop:
 	for _, value := range fairPrices {
 		if !strings.Contains(value.Symbol, "USDT") {
@@ -273,7 +286,7 @@ FairPricesLoop:
 		}
 
 		if len(createdOrders) == 0 {
-			bidPriceLeves := GeneratePriceLevels(value.Price, "bid")
+			bidPriceLeves := GeneratePriceLevels(value.Price, value.PriceMultiplier, "bid")
 			for b := range bidPriceLeves {
 				reqOrder := order.Detail{
 					Exchange:  fixengine.CCX,
@@ -282,15 +295,16 @@ FairPricesLoop:
 					Type:      order.Limit,
 					Pair:      ccxPair,
 					Price:     bidPriceLeves[b],
-					Amount:    GetQuantity(b + 1),
+					Amount:    quantityLevels[b%len(quantityLevels)], // use config supplied quantity level that base on book depth and prevent out of range error
 				}
+
 				if err := m.FixEngine.NewOrderSingle(reqOrder); err != nil {
 					log.Printf("error when sent new order request: %+v", err)
 					continue
 				}
 			}
 
-			askPriceLeves := GeneratePriceLevels(value.Price, "ask")
+			askPriceLeves := GeneratePriceLevels(value.Price, value.PriceMultiplier, "ask")
 			for b := range askPriceLeves {
 				reqOrder := order.Detail{
 					Exchange:  fixengine.CCX,
@@ -299,7 +313,7 @@ FairPricesLoop:
 					Type:      order.Limit,
 					Pair:      ccxPair,
 					Price:     askPriceLeves[b],
-					Amount:    GetQuantity(b + 1),
+					Amount:    quantityLevels[b%len(quantityLevels)],
 				}
 				if err := m.FixEngine.NewOrderSingle(reqOrder); err != nil {
 					log.Printf("error when sent new order request: %+v", err)
@@ -314,9 +328,8 @@ FairPricesLoop:
 			if createdOrders[i].Status.IsInactive() {
 				continue
 			}
-			log.Printf("existing orders: %+v", createdOrders)
-			decimalMultiplier := m.GetRelevantPrice(createdOrders[i].Price)
-			if m.CheckPriceDifference(value.Price, createdOrders[i], decimalMultiplier) {
+
+			if !m.CheckPriceDifference(value.Price, createdOrders[i], value.PriceMultiplier) {
 				if err := m.CancelAllOrders(createdOrders); err != nil {
 					log.Printf("error when cancelling orders: %+v", err)
 					continue
@@ -328,7 +341,7 @@ FairPricesLoop:
 			continue FairPricesLoop
 		}
 
-		bidPriceLeves := GeneratePriceLevels(value.Price, "bid")
+		bidPriceLeves := GeneratePriceLevels(value.Price, value.PriceMultiplier, "bid")
 		for b := range bidPriceLeves {
 			reqOrder := order.Detail{
 				Exchange:  fixengine.CCX,
@@ -337,7 +350,7 @@ FairPricesLoop:
 				Type:      order.Limit,
 				Pair:      ccxPair,
 				Price:     bidPriceLeves[b],
-				Amount:    GetQuantity(b + 1),
+				Amount:    quantityLevels[b%len(quantityLevels)],
 			}
 			if err := m.FixEngine.NewOrderSingle(reqOrder); err != nil {
 				log.Printf("error when sent new order request: %+v", err)
@@ -345,7 +358,7 @@ FairPricesLoop:
 			}
 		}
 
-		askPriceLeves := GeneratePriceLevels(value.Price, "ask")
+		askPriceLeves := GeneratePriceLevels(value.Price, value.PriceMultiplier, "ask")
 		for b := range askPriceLeves {
 			reqOrder := order.Detail{
 				Exchange:  fixengine.CCX,
@@ -354,7 +367,7 @@ FairPricesLoop:
 				Type:      order.Limit,
 				Pair:      ccxPair,
 				Price:     askPriceLeves[b],
-				Amount:    GetQuantity(b + 1),
+				Amount:    quantityLevels[b%len(quantityLevels)],
 			}
 			if err := m.FixEngine.NewOrderSingle(reqOrder); err != nil {
 				log.Printf("error when sent new order request: %+v", err)
@@ -365,26 +378,37 @@ FairPricesLoop:
 	}
 }
 
-func (m *MarketMaker) CheckPriceDifference(fairPrice float64, orderDetail order.Detail, decimalCoef float64) bool {
+func (m *MarketMaker) CheckPriceDifference(fairPrice float64, orderDetail order.Detail, priceMultiplier float64) bool {
 	var allowedDifference float64
+	fairPrice = decimal.NewFromFloatWithExponent(fairPrice, -2).InexactFloat64()
+	if fairPrice > 999 {
+		priceMultiplier = 1
+	}
 	switch orderDetail.Amount {
-	case 1:
-		allowedDifference = priceLevel1 * decimalCoef
-	case 2:
-		allowedDifference = priceLevel2 * decimalCoef
-	case 3:
-		allowedDifference = priceLevel3 * decimalCoef
-	case 4:
-		allowedDifference = priceLevel4 * decimalCoef
+	case quantityLevel1:
+		allowedDifference = priceLevel1 * priceMultiplier
+	case quantityLevel2:
+		allowedDifference = priceLevel2 * priceMultiplier
+	case quantityLevel3:
+		allowedDifference = priceLevel3 * priceMultiplier
+	case quantityLevel4:
+		allowedDifference = priceLevel4 * priceMultiplier
 	default:
-		allowedDifference = priceLevel5 * decimalCoef
+		allowedDifference = priceLevel5 * priceMultiplier
 	}
 
+	pricedifference := orderDetail.Price - fairPrice
 	switch orderDetail.Side {
 	case order.Buy:
-		return (orderDetail.Price - fairPrice) > -allowedDifference
+		log.Printf("price difference: %f", pricedifference)
+		log.Printf("allowed diffence: %f", -allowedDifference)
+		log.Printf("gap between price difference and allowed difference: %f", math.Abs(pricedifference - -allowedDifference))
+		return math.Abs(pricedifference - -allowedDifference) <= priceGapTolerance
 	default:
-		return (orderDetail.Price - fairPrice) > allowedDifference
+		log.Printf("price difference: %f", pricedifference)
+		log.Printf("allowed diffence: %f", allowedDifference)
+		log.Printf("gap between price difference and allwed difference: %f", math.Abs(pricedifference-allowedDifference))
+		return math.Abs(pricedifference-allowedDifference) <= priceGapTolerance
 	}
 }
 
@@ -420,105 +444,89 @@ func (m *MarketMaker) ShutdownRoutine() {
 	}
 }
 
-func GeneratePriceLevels(price float64, side string) []float64 {
+func (m *MarketMaker) WsDataHandler(exchName string, data interface{}) error {
+	if m == nil {
+		return nil
+	}
+
+	switch d := data.(type) {
+	case *ticker.Price:
+		if d.AssetType != asset.Spot {
+			return nil
+		}
+
+		ccxPair, err := model.GetPair(context.Background(), d.Pair.Base.String())
+		if err != nil {
+			return err
+		}
+
+		if ccxPair == nil {
+			return nil
+		}
+
+		symbol := m.PairFormatter.Format(d.Pair)
+		fairPrice := GetPriceReference(symbol)
+		if fairPrice == nil {
+			fairPrice = &PriceReference{
+				Exchange:           exchName,
+				AssetType:          d.AssetType.String(),
+				isFuture:           d.AssetType.IsFutures(),
+				Symbol:             symbol,
+				Volume:             math.Abs(d.Volume),
+				ContractMultiplier: ccxPair.ContractMultiplier,
+				PriceMultiplier:    ccxPair.PriceIncrement,
+			}
+			if d.Ask != 0 && d.Bid != 0 {
+				fairPrice.Price = math.Abs((d.Ask + d.Bid) / 2)
+			} else if d.Ask != 0 && d.Bid == 0 {
+				fairPrice.Price = d.Ask
+			} else if d.Bid != 0 && d.Ask == 0 {
+				fairPrice.Price = d.Bid
+			}
+			SavePriceReference(*fairPrice)
+			return nil
+		} else if fairPrice.Volume < d.Volume {
+			fairPrice = &PriceReference{
+				Exchange:           exchName,
+				AssetType:          d.AssetType.String(),
+				isFuture:           d.AssetType.IsFutures(),
+				Symbol:             symbol,
+				Volume:             math.Abs(d.Volume),
+				ContractMultiplier: ccxPair.ContractMultiplier,
+				PriceMultiplier:    ccxPair.PriceIncrement,
+			}
+			if d.Ask != 0 && d.Bid != 0 {
+				fairPrice.Price = math.Abs((d.Ask + d.Bid) / 2)
+			} else if d.Ask != 0 && d.Bid == 0 {
+				fairPrice.Price = d.Ask
+			} else if d.Bid != 0 && d.Ask == 0 {
+				fairPrice.Price = d.Bid
+			}
+			UpdatePriceReference(*fairPrice)
+		}
+
+		return nil
+	default:
+	}
+	return nil
+}
+
+func GeneratePriceLevels(price, priceMultiplier float64, side string) []float64 {
 	priceDepth := make([]float64, priceLevelDepth)
 	side = strings.ToUpper(side)
-	zeros := countPrice(price)
-	var decimals int
-	if zeros >= 4 || price > 999 {
-		decimals = 0
-	} else {
-		decimals = countDecimals(price)
+
+	if price > 999 {
+		priceMultiplier = 1
 	}
-	switch decimals {
-	case 0:
-		for i := range priceDepth {
-			if side == "BID" {
-				price -= priceLevel1
-			} else {
-				price += priceLevel1
-			}
-			priceDepth[i] = decimal.NewFromFloatWithExponent(price, -2).InexactFloat64()
-		}
-	case 1:
-		for i := range priceDepth {
-			if side == "BID" {
-				price -= priceLevel1 * decimalMultiplier1
-			} else {
-				price += priceLevel1 * decimalMultiplier1
-			}
-			priceDepth[i] = decimal.NewFromFloatWithExponent(price, -2).InexactFloat64()
-		}
-	default:
-		for i := range priceDepth {
-			if side == "BID" {
-				price -= priceLevel1 * decimalMultiplier2
-			} else {
-				price += priceLevel1 * decimalMultiplier2
-			}
-			priceDepth[i] = decimal.NewFromFloatWithExponent(price, -2).InexactFloat64()
+
+	for i := range priceDepth {
+		priceLevel := priceLevels[i%len(priceLevels)] * priceMultiplier
+
+		if side == "BID" {
+			priceDepth[i] = price - priceLevel
+		} else {
+			priceDepth[i] = price + priceLevel
 		}
 	}
 	return priceDepth
-}
-
-func countDecimals(number float64) int {
-	nmbrStr := strconv.FormatFloat(number, 'f', -1, 64)
-
-	parts := strings.Split(nmbrStr, ".")
-
-	if len(parts) == 1 {
-		return 0
-	}
-
-	return len(parts[1])
-}
-
-func countPrice(number float64) int {
-	numbrStr := strconv.FormatFloat(number, 'f', -1, 64)
-	parts := strings.Split(numbrStr, ".")
-	return len(parts[0])
-}
-
-func (m *MarketMaker) GetNotionalAmout(price float64) float64 {
-	priceLength := countPrice(price)
-	switch priceLength {
-	case 1, 2:
-		return decimalMultiplier
-	case 3:
-		return decimalMultiplier1
-	default:
-		return decimalMultiplier2
-	}
-}
-func (m *MarketMaker) GetRelevantPrice(price float64) float64 {
-	decimals := countDecimals(price)
-	if price > 999 {
-		decimals = 0
-	}
-	switch decimals {
-	case 0:
-		return decimalMultiplier
-	case 1:
-		return decimalMultiplier1
-	default:
-		return decimalMultiplier2
-	}
-}
-
-func GetQuantity(sequence int) float64 {
-	switch sequence {
-	case 1, 6, 11:
-		return quantityLevel1
-	case 2, 7, 12:
-		return quantityLevel2
-	case 3, 8, 13:
-		return quantityLevel3
-	case 4, 9, 14:
-		return quantityLevel4
-	case 5, 10, 15:
-		return quantityLevel5
-	default:
-		return quantityLevel1
-	}
 }

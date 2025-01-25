@@ -235,3 +235,13 @@ func UpdateOrCreateOrderRedis(ctx context.Context, orderD order.Detail) error {
 
 	return nil
 }
+
+func DeleteOrder(ctx context.Context, orderDetail order.Detail) error {
+	if err := rdClient.HDel(ctx, orderKey, orderDetail.OrderID).Err(); err != nil {
+		return err
+	}
+	if err := rdClient.LRem(ctx, orderIDListKey, 0, orderDetail.OrderID).Err(); err != nil {
+		return err
+	}
+	return nil
+}

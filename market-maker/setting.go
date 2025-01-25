@@ -14,18 +14,17 @@ var (
 	priceLevel3 float64
 	priceLevel4 float64
 	priceLevel5 float64
-
-	decimalMultiplier  float64
-	decimalMultiplier1 float64
-	decimalMultiplier2 float64
+	priceLevels []float64
 
 	quantityLevel1 float64
 	quantityLevel2 float64
 	quantityLevel3 float64
 	quantityLevel4 float64
 	quantityLevel5 float64
+	quantityLevels []float64
 
-	priceLevelDepth int
+	priceLevelDepth   int
+	priceGapTolerance float64
 )
 
 func init() {
@@ -46,20 +45,27 @@ func LoadPrice() {
 	}
 
 	priceLevel1 = sec.Key("PriceLevel1").MustFloat64(2)
+	priceLevels = append(priceLevels, priceLevel1)
 	priceLevel2 = sec.Key("PriceLevel2").MustFloat64(4)
+	priceLevels = append(priceLevels, priceLevel2)
 	priceLevel3 = sec.Key("PriceLevel3").MustFloat64(6)
+	priceLevels = append(priceLevels, priceLevel3)
 	priceLevel4 = sec.Key("PriceLevel4").MustFloat64(8)
+	priceLevels = append(priceLevels, priceLevel4)
 	priceLevel5 = sec.Key("PriceLevel5").MustFloat64(10)
-
-	decimalMultiplier = sec.Key("DecimalMultiplier").MustFloat64(1)
-	decimalMultiplier1 = sec.Key("DecimalMultiplier1").MustFloat64(0.1)
-	decimalMultiplier2 = sec.Key("DecimalMultiplier2").MustFloat64(0.01)
+	priceLevels = append(priceLevels, priceLevel5)
 
 	quantityLevel1 = sec.Key("QuantityLeve1").MustFloat64(1)
+	quantityLevels = append(quantityLevels, quantityLevel1)
 	quantityLevel2 = sec.Key("QuantityLeve2").MustFloat64(2)
+	quantityLevels = append(quantityLevels, quantityLevel2)
 	quantityLevel3 = sec.Key("QuantityLeve3").MustFloat64(3)
+	quantityLevels = append(quantityLevels, quantityLevel3)
 	quantityLevel4 = sec.Key("QuantityLeve4").MustFloat64(4)
+	quantityLevels = append(quantityLevels, quantityLevel4)
 	quantityLevel5 = sec.Key("QuantityLeve5").MustFloat64(5)
+	quantityLevels = append(quantityLevels, quantityLevel5)
 
 	priceLevelDepth = sec.Key("PriceLevelDepth").MustInt(5)
+	priceGapTolerance = sec.Key("PriceGapTolerance").MustFloat64(0.05)
 }

@@ -20,13 +20,19 @@ import (
 	"github.com/shopspring/decimal"
 	"github.com/thrasher-corp/gocryptotrader/currency"
 	"github.com/thrasher-corp/gocryptotrader/exchanges/order"
-	model "github.com/thrasher-corp/gocryptotrader/trading-service/models"
+	model "github.com/thrasher-corp/gocryptotrader/market-maker/models"
 	"gopkg.in/ini.v1"
 )
 
 const (
 	CCX = "CCX"
 )
+
+type SecurityDetail struct {
+	Pair               currency.Pair
+	ContractMultiplier float64
+	PriceMultiplier    float64
+}
 
 type fixApplication struct {
 	Username string
@@ -48,12 +54,22 @@ func (c *fixApplication) FromApp(msg *quickfix.Message, sessionID quickfix.Sessi
 	switch msgType {
 	case "d":
 		symbol, _ := msg.Body.GetString(tag.Symbol)
-		if err := model.CheckExistingandAddPair(context.Background(), symbol); err != nil {
+		contractMultiplier, _ := msg.Body.GetString(tag.ContractMultiplier)
+		priceIncrement, _ := msg.Body.GetString(tag.TickIncrement)
+		if err := model.CheckExistingandAddPair(context.Background(), symbol, contractMultiplier, priceIncrement); err != nil {
 			log.Print(err)
 			return
 		}
 	case "8":
 		orderDetail := ToOrderDetail(msg)
+		// delete order from redis if it's been cancelled
+		if orderDetail.Status == order.Cancelled {
+			if err := model.DeleteOrder(context.Background(), orderDetail); err != nil {
+				log.Print(err)
+				return
+			}
+			return
+		}
 		if err := model.UpdateOrCreateOrderRedis(context.TODO(), orderDetail); err != nil {
 			log.Print(err)
 			return
@@ -197,8 +213,8 @@ func (fe *FixEngine) CancelOrder(order order.Detail) error {
 	return quickfix.Send(cancelMsg)
 }
 
-func (fe *FixEngine) GetCCXPairs() (currency.Pairs, error) {
-	var ccxPairs currency.Pairs
+func (fe *FixEngine) GetCCXPairs() ([]SecurityDetail, error) {
+	var ccxPairs []SecurityDetail
 	pairs, err := model.GetPairs(context.Background())
 	if err != nil {
 		return nil, err
@@ -208,10 +224,13 @@ func (fe *FixEngine) GetCCXPairs() (currency.Pairs, error) {
 	}
 	for i := range pairs {
 		switch pairs[i].Base {
+		// only available for this base
 		case "AVAX", "BCH", "BTC", "BNB", "ETH", "LTC", "SOL":
-			ccxPairs = append(ccxPairs, currency.NewPairWithDelimiter(pairs[i].Base, pairs[i].Quote, pairs[i].Delimiter))
-		default:
-			continue
+			ccxPairs = append(ccxPairs, SecurityDetail{
+				Pair:               currency.NewPairWithDelimiter(pairs[i].Base, pairs[i].Quote, pairs[i].Delimiter),
+				ContractMultiplier: pairs[i].ContractMultiplier,
+				PriceMultiplier:    pairs[i].PriceIncrement,
+			})
 		}
 	}
 	return ccxPairs, nil
