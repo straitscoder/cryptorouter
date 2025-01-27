@@ -85,6 +85,7 @@ func ClearPRStore() {
 
 type MarketMaker struct {
 	ProcessingOrder int32
+	FetchTicker     int32
 	FixEngine       *fixengine.FixEngine
 	ExchangeManager *ExchangeManager
 	SocketManager   *websocketRoutineManager
@@ -150,6 +151,10 @@ func (m *MarketMaker) run() {
 }
 
 func (m *MarketMaker) GetFairPrice() {
+	if !atomic.CompareAndSwapInt32(&m.FetchTicker, 0, 1) {
+		return
+	}
+	defer atomic.StoreInt32(&m.FetchTicker, 0)
 	exchanges, err := m.ExchangeManager.GetExchanges()
 	if err != nil {
 		log.Printf("error when getting exchanges: %+v", err)
@@ -230,7 +235,7 @@ func (m *MarketMaker) GetFairPrice() {
 						ContractMultiplier: ccxPairs[z].ContractMultiplier,
 					}
 					SavePriceReference(*result)
-				} else if result.Volume < exchangeTotalVolume {
+				} else if math.Abs(result.Volume) < exchangeTotalVolume {
 					result = &PriceReference{
 						Exchange:           priceTicker.ExchangeName,
 						AssetType:          priceTicker.AssetType.String(),
@@ -451,7 +456,7 @@ func (m *MarketMaker) WsDataHandler(exchName string, data interface{}) error {
 
 	switch d := data.(type) {
 	case *ticker.Price:
-		if d.AssetType != asset.Spot {
+		if d.AssetType != asset.Spot || d.Pair.Quote.String() != "USDT" {
 			return nil
 		}
 
@@ -485,7 +490,7 @@ func (m *MarketMaker) WsDataHandler(exchName string, data interface{}) error {
 			}
 			SavePriceReference(*fairPrice)
 			return nil
-		} else if fairPrice.Volume < d.Volume {
+		} else if math.Abs(fairPrice.Volume) < math.Abs(d.Volume) {
 			fairPrice = &PriceReference{
 				Exchange:           exchName,
 				AssetType:          d.AssetType.String(),
@@ -515,9 +520,9 @@ func GeneratePriceLevels(price, priceMultiplier float64, side string) []float64 
 	priceDepth := make([]float64, priceLevelDepth)
 	side = strings.ToUpper(side)
 
-	if price > 999 {
-		priceMultiplier = 1
-	}
+	// if price > 999 {
+	// 	priceMultiplier = 1
+	// }
 
 	for i := range priceDepth {
 		priceLevel := priceLevels[i%len(priceLevels)] * priceMultiplier

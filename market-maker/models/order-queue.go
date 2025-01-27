@@ -2,6 +2,7 @@ package model
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"time"
 
@@ -17,6 +18,7 @@ const (
 	cancelOrderQueue     = "cancelOrder"
 	closePositionQueue   = "closePosition"
 	executionReportQueue = "executionReport"
+	counterOrder         = "counterOrder"
 )
 
 func GetSubmitQueue(ctx context.Context) (*gctrpc.SubmitOrderRequest, error) {
@@ -132,6 +134,35 @@ func AddCancelQueue(ctx context.Context, req *gctrpc.CancelOrderRequest) error {
 		return err
 	}
 	return nil
+}
+
+func AddCounterOrderQueue(ctx context.Context, req order.Detail) error {
+	jsonOrder, err := json.Marshal(req)
+	if err != nil {
+		return err
+	}
+
+	if err := rdClient.RPush(ctx, counterOrder, jsonOrder).Err(); err != nil {
+		return err
+	}
+	return nil
+}
+
+func GetCounterOrderQueue(ctx context.Context) (order.Detail, error) {
+	var orderDetail order.Detail
+	ordDetailBinary, err := rdClient.LPop(ctx, counterOrder).Bytes()
+	if err != nil {
+		if err == redis.Nil {
+			return orderDetail, nil
+		}
+		return orderDetail, err
+	}
+
+	err = json.Unmarshal(ordDetailBinary, &orderDetail)
+	if err != nil {
+		return orderDetail, err
+	}
+	return orderDetail, nil
 }
 
 func ToRpcOrderDetail(od *order.Detail) *gctrpc.OrderDetails {

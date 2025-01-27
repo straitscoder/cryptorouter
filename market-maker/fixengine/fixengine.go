@@ -8,6 +8,7 @@ import (
 	"log"
 	"os"
 	"path"
+	"sync/atomic"
 	"time"
 
 	"github.com/quickfixgo/enum"
@@ -63,18 +64,26 @@ func (c *fixApplication) FromApp(msg *quickfix.Message, sessionID quickfix.Sessi
 	case "8":
 		orderDetail := ToOrderDetail(msg)
 		// delete order from redis if it's been cancelled
-		if orderDetail.Status == order.Cancelled {
+		switch orderDetail.Status {
+		case order.Cancelled:
 			if err := model.DeleteOrder(context.Background(), orderDetail); err != nil {
-				log.Print(err)
-				return
+				log.Printf("error when delete cancelled order: %+v", err)
+				return nil
 			}
-			return
+			return nil
+		case order.Filled:
+			if err := c.AddCounterORderQueue(orderDetail); err != nil {
+				log.Printf("error when add counter order queue: %+v", err)
+				return nil
+			}
+			return nil
+		default:
+			if err := model.UpdateOrCreateOrderRedis(context.Background(), orderDetail); err != nil {
+				log.Printf("error when updating the order: %+v", err)
+				return nil
+			}
+			return nil
 		}
-		if err := model.UpdateOrCreateOrderRedis(context.TODO(), orderDetail); err != nil {
-			log.Print(err)
-			return
-		}
-		return
 	}
 	return nil
 }
@@ -92,7 +101,23 @@ func (c *fixApplication) ToApp(msg *quickfix.Message, sessionID quickfix.Session
 	return nil
 }
 
+func (c *fixApplication) AddCounterORderQueue(orderDetail order.Detail) error {
+	switch orderDetail.Side {
+	case order.Buy:
+		orderDetail.Side = order.Sell
+	case order.Sell:
+		orderDetail.Side = order.Buy
+	default:
+		return order.ErrSideIsInvalid
+	}
+
+	orderDetail.Type = order.Market
+
+	return model.AddCounterOrderQueue(context.Background(), orderDetail)
+}
+
 type FixEngine struct {
+	processOrder  int32
 	senderCompId  string
 	targetCompId  string
 	accountCode   string
@@ -151,12 +176,30 @@ func (fe *FixEngine) Start() error {
 		return fmt.Errorf("error when initiate initiator : %+v", err)
 	}
 	fe.initiator = initiator
-
+	go fe.CounterOrderRoutine()
 	return fe.initiator.Start()
 }
 
 func (fe *FixEngine) Stop() {
 	fe.initiator.Stop()
+}
+
+func (fe *FixEngine) CounterOrderRoutine() {
+	if fe == nil {
+		return
+	}
+
+	ticker := time.NewTicker(time.Millisecond * 500)
+	defer ticker.Stop()
+
+	fe.SendCounterOrder()
+
+	for {
+		select {
+		case <-ticker.C:
+			go fe.SendCounterOrder()
+		}
+	}
 }
 
 func (fe *FixEngine) SecuritiesDetail() error {
@@ -234,4 +277,26 @@ func (fe *FixEngine) GetCCXPairs() ([]SecurityDetail, error) {
 		}
 	}
 	return ccxPairs, nil
+}
+
+func (fe *FixEngine) SendCounterOrder() {
+	if !atomic.CompareAndSwapInt32(&fe.processOrder, 0, 1) {
+		return
+	}
+	defer atomic.StoreInt32(&fe.processOrder, 0)
+
+	if !fe.initiator.BuildInitiators {
+		return
+	}
+
+	orderDetail, err := model.GetCounterOrderQueue(context.Background())
+	if err != nil {
+		log.Printf("error when get counter order queue: %+v", err)
+		return
+	}
+	if err := fe.NewOrderSingle(orderDetail); err != nil {
+		log.Printf("error when send counter order queue: %+v", err)
+		return
+	}
+	return
 }
