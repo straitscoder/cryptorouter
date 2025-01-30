@@ -14,6 +14,7 @@ import (
 	"github.com/quickfixgo/enum"
 	"github.com/quickfixgo/field"
 	"github.com/quickfixgo/fix42/newordersingle"
+	"github.com/quickfixgo/fix42/ordercancelreplacerequest"
 	"github.com/quickfixgo/fix42/ordercancelrequest"
 	"github.com/quickfixgo/fix42/securitydefinitionrequest"
 	"github.com/quickfixgo/quickfix"
@@ -74,6 +75,10 @@ func (c *fixApplication) FromApp(msg *quickfix.Message, sessionID quickfix.Sessi
 		case order.Filled:
 			if err := c.AddCounterORderQueue(orderDetail); err != nil {
 				log.Printf("error when add counter order queue: %+v", err)
+				return nil
+			}
+			if err := model.UpdateOrCreateOrderRedis(context.Background(), orderDetail); err != nil {
+				log.Printf("error when updating the order: %+v", err)
 				return nil
 			}
 			return nil
@@ -191,7 +196,7 @@ func (fe *FixEngine) CounterOrderRoutine() {
 
 	ticker := time.NewTicker(time.Millisecond * 500)
 	defer ticker.Stop()
-
+	log.Println("start counter order routine ...")
 	fe.SendCounterOrder()
 
 	for {
@@ -256,6 +261,30 @@ func (fe *FixEngine) CancelOrder(order order.Detail) error {
 	return quickfix.Send(cancelMsg)
 }
 
+func (fe *FixEngine) CancelReplaceOrder(order order.Detail) error {
+	symbol := fe.pairFormatter.Format(order.Pair)
+	modifyReq := ordercancelreplacerequest.New(
+		field.NewOrigClOrdID(order.ClientOrderID),
+		field.NewClOrdID(generateClOrdID()),
+		field.NewHandlInst(enum.HandlInst_AUTOMATED_EXECUTION_ORDER_PRIVATE_NO_BROKER_INTERVENTION),
+		field.NewSymbol(symbol),
+		field.NewSide(convertSide(order.Side.String())),
+		field.NewTransactTime(time.Now().UTC()),
+		field.NewOrdType(convertOrdType(order.Type.String())),
+	)
+
+	modifyReq.SetOrderID(order.OrderID)
+	modifyReq.SetSecurityType(convertAsset(order.AssetType.String()))
+	modifyReq.SetSecurityExchange(order.Exchange)
+	modifyReq.SetPrice(decimal.NewFromFloat(order.Price), 8)
+	modifyReq.SetOrderQty(decimal.NewFromFloat(order.Amount), 8)
+	modifyReq.SetAccount(fe.accountCode)
+	modifyMsg := modifyReq.ToMessage()
+	modifyMsg.Header.Set(field.NewSenderCompID(fe.senderCompId))
+	modifyMsg.Header.Set(field.NewTargetCompID(fe.targetCompId))
+	return quickfix.Send(modifyMsg)
+}
+
 func (fe *FixEngine) GetCCXPairs() ([]SecurityDetail, error) {
 	var ccxPairs []SecurityDetail
 	pairs, err := model.GetPairs(context.Background())
@@ -294,8 +323,15 @@ func (fe *FixEngine) SendCounterOrder() {
 		log.Printf("error when get counter order queue: %+v", err)
 		return
 	}
+	if orderDetail.OrderID == "" {
+		return
+	}
 	if err := fe.NewOrderSingle(orderDetail); err != nil {
 		log.Printf("error when send counter order queue: %+v", err)
+		if err := model.AddCounterOrderQueue(context.Background(), orderDetail); err != nil {
+			log.Printf("error when resaved error counter order: %+v", err)
+			return
+		}
 		return
 	}
 	return

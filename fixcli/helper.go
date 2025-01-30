@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -37,11 +38,11 @@ func generateRandomString(n int) string {
 }
 
 func generateClOrdID() string {
-	timestamp := time.Now().Unix()         // Unix timestamp for uniqueness
-	randomPart := generateRandomString(10) // Random alphanumeric string
-	clOrdId := fmt.Sprintf("%d%s", timestamp, randomPart)
-	if len(clOrdId) > 36 {
-		clOrdId = clOrdId[:36]
+	timestamp := time.Now().Unix()        // Unix timestamp for uniqueness
+	randomPart := generateRandomString(5) // Random alphanumeric string
+	clOrdId := fmt.Sprintf("%s%s", strconv.FormatInt(timestamp, 10)[5:], randomPart)
+	if len(clOrdId) > 10 {
+		clOrdId = clOrdId[:10]
 	}
 	return clOrdId
 }

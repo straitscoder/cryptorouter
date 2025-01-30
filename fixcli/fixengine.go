@@ -10,6 +10,9 @@ import (
 	"runtime"
 	"time"
 
+	"github.com/quickfixgo/enum"
+	"github.com/quickfixgo/field"
+	"github.com/quickfixgo/fix42/newordersingle"
 	"github.com/quickfixgo/quickfix"
 	"github.com/quickfixgo/tag"
 	"github.com/thrasher-corp/gocryptotrader/common"
@@ -21,6 +24,8 @@ import (
 
 type fixApplication struct {
 	*quickfix.MessageRouter
+	Username string
+	Password string
 }
 
 func (c *fixApplication) OnCreate(sessionID quickfix.SessionID) {}
@@ -69,7 +74,14 @@ func (c *fixApplication) FromApp(msg *quickfix.Message, sessionID quickfix.Sessi
 	return nil
 }
 
-func (c *fixApplication) ToAdmin(msg *quickfix.Message, sessionID quickfix.SessionID) {}
+func (c *fixApplication) ToAdmin(msg *quickfix.Message, sessionID quickfix.SessionID) {
+	msgType, _ := msg.Header.GetString(tag.MsgType)
+
+	if msgType == string(enum.MsgType_LOGON) {
+		msg.Body.Set(field.NewUsername(c.Username))
+		msg.Body.Set(field.NewPassword(c.Password))
+	}
+}
 
 func (c *fixApplication) ToApp(msg *quickfix.Message, sessionID quickfix.SessionID) error {
 	return nil
@@ -92,6 +104,7 @@ func NewInitiator(settings *quickfix.Settings, storeFactory quickfix.MessageStor
 type FixEngine struct {
 	senderCompId string
 	targetCompId string
+	accountCode  string
 	initiator    *quickfix.Initiator
 	settings     *quickfix.Settings
 	logFactory   *quickfix.LogFactory
@@ -124,6 +137,7 @@ func (fe *FixEngine) Start() error {
 	}
 	fe.senderCompId = config.Section("DEFAULT").Key("SenderCompID").String()
 	fe.targetCompId = config.Section("SESSION").Key("TargetCompID").String()
+	fe.accountCode = config.Section("SESSION").Key("AccountCode").String()
 
 	fe.settings, err = quickfix.ParseSettings(bytes.NewReader(stringData))
 	if err != nil {
@@ -139,6 +153,8 @@ func (fe *FixEngine) Start() error {
 	fe.storeFactory = quickfix.NewMemoryStoreFactory()
 
 	app := &fixApplication{MessageRouter: quickfix.NewMessageRouter()}
+	app.Username = config.Section("SESSION").Key("UserName").String()
+	app.Password = config.Section("SESSION").Key("Password").String()
 	initiator, err := quickfix.NewInitiator(app, fe.storeFactory, fe.settings, *fe.logFactory)
 	if err != nil {
 		return fmt.Errorf("error when initiate initiator : %+v", err)
@@ -178,47 +194,48 @@ func (fe *FixEngine) CheckExecutionReport() {
 func (fe *FixEngine) NewOrder() error {
 	clOrdId := generateClOrdID()
 	symbol := Symbol()
-	sideStr, _ := Side()
-	ordTypeStr, _ := OrderType()
-	// order := newordersingle.New(
-	// 	field.NewClOrdID(clOrdId),
-	// 	field.NewHandlInst(HandleIns()),
-	// 	field.NewSymbol(symbol),
-	// 	field.NewSide(sideFix),
-	// 	field.NewTransactTime(time.Now().UTC()),
-	// 	field.NewOrdType(ordTypeFix),
-	// )
-	assetStr, _ := AssetType()
+	_, sideFix := Side()
+	_, ordTypeFix := OrderType()
+	order := newordersingle.New(
+		field.NewClOrdID(clOrdId),
+		field.NewHandlInst(HandleIns()),
+		field.NewSymbol(symbol),
+		field.NewSide(sideFix),
+		field.NewTransactTime(time.Now().UTC()),
+		field.NewOrdType(ordTypeFix),
+	)
+	_, securityType := AssetType()
 	price := Price()
 	amount := Amount()
 	exchange := Exchange()
-	// order.SetSecurityExchange(exchange)
-	// order.SetSecurityType(securityType)
-	// order.Set(field.NewPrice(price, 8))
-	// order.Set(field.NewOrderQty(amount, 8))
-	// orderMsg := order.ToMessage()
-	// orderMsg.Header.Set(field.NewSenderCompID(fe.senderCompId))
-	// orderMsg.Header.Set(field.NewTargetCompID(fe.targetCompId))
-	// parsed := parseFIXMessage(orderMsg)
-	// jsonOutput(parsed)
+	order.SetSecurityExchange(exchange)
+	order.SetSecurityType(securityType)
+	order.Set(field.NewPrice(price, 8))
+	order.Set(field.NewOrderQty(amount, 8))
+	order.SetAccount(fe.accountCode)
+	orderMsg := order.ToMessage()
+	orderMsg.Header.Set(field.NewSenderCompID(fe.senderCompId))
+	orderMsg.Header.Set(field.NewTargetCompID(fe.targetCompId))
+	parsed := parseFIXMessage(orderMsg)
+	jsonOutput(parsed)
 	if !Confirmation() {
 		fmt.Println("Order canceled")
 		return nil
 	}
-	rpcOrder := gctrpc.SubmitOrderRequest{
-		ClientOrderId: clOrdId,
-		Pair:          symbol,
-		Exchange:      exchange,
-		Side:          sideStr,
-		OrderType:     ordTypeStr,
-		Amount:        amount.InexactFloat64(),
-		Price:         price.InexactFloat64(),
-		AssetType:     assetStr,
-	}
-	if err := model.AddSubmitQueue(context.Background(), &rpcOrder); err != nil {
-		return err
-	}
-	return nil
+	// rpcOrder := gctrpc.SubmitOrderRequest{
+	// 	ClientOrderId: clOrdId,
+	// 	Pair:          symbol,
+	// 	Exchange:      exchange,
+	// 	Side:          sideStr,
+	// 	OrderType:     ordTypeStr,
+	// 	Amount:        amount.InexactFloat64(),
+	// 	Price:         price.InexactFloat64(),
+	// 	AssetType:     assetStr,
+	// }
+	// if err := model.AddSubmitQueue(context.Background(), &rpcOrder); err != nil {
+	// 	return err
+	// }
+	return quickfix.Send(orderMsg)
 }
 
 func (fe *FixEngine) CancelOrder() error {

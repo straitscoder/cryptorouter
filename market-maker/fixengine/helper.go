@@ -43,9 +43,9 @@ func generateRandomString(n int) string {
 }
 
 func generateClOrdID() string {
-	timestamp := time.Now().Unix()         // Unix timestamp for uniqueness
-	randomPart := generateRandomString(10) // Random alphanumeric string
-	clOrdId := fmt.Sprintf("%s%s", randomPart[4:], strconv.FormatInt(timestamp, 10)[5:])
+	timestamp := time.Now().Unix()        // Unix timestamp for uniqueness
+	randomPart := generateRandomString(5) // Random alphanumeric string
+	clOrdId := fmt.Sprintf("%s%s", randomPart, strconv.FormatInt(timestamp, 10)[4:])
 	if len(clOrdId) > 9 {
 		clOrdId = clOrdId[:9]
 	}
