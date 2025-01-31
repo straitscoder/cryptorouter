@@ -77,8 +77,59 @@ func (c *fixApplication) FromApp(msg *quickfix.Message, sessionID quickfix.Sessi
 				log.Printf("error when add counter order queue: %+v", err)
 				return nil
 			}
-			if err := model.UpdateOrCreateOrderRedis(context.Background(), orderDetail); err != nil {
+			if err := model.UpdateOrCreateOrder(orderDetail, "filled order"); err != nil {
 				log.Printf("error when updating the order: %+v", err)
+				return nil
+			}
+			executedAmountStr, _ := msg.Body.GetString(tag.LastQty)
+			lastPriceStr, _ := msg.Body.GetString(tag.LastPx)
+			if executedAmountStr != "0" && lastPriceStr != "0" {
+				executedAmount, _ := decimal.NewFromString(executedAmountStr)
+				lastPrice, _ := decimal.NewFromString(lastPriceStr)
+				trade := model.Trade{
+					TradeID:   generateRandomString(8),
+					OrderID:   orderDetail.OrderID,
+					Price:     lastPrice.InexactFloat64(),
+					Quantity:  executedAmount.InexactFloat64(),
+					Timestamp: orderDetail.LastUpdated,
+				}
+				if err := model.UpdateOrCreateTrade(trade.TradeID, trade); err != nil {
+					log.Printf("error when saved trade: %+v", err)
+					return nil
+				}
+				return nil
+			}
+			return nil
+		case order.PartiallyFilled:
+			executedAmountStr, _ := msg.Body.GetString(tag.LastQty)
+			lastPriceStr, _ := msg.Body.GetString(tag.LastPx)
+			if executedAmountStr != "0" && lastPriceStr != "0" {
+				executedAmount, _ := decimal.NewFromString(executedAmountStr)
+				lastPrice, _ := decimal.NewFromString(lastPriceStr)
+				orderDetail.Price = lastPrice.InexactFloat64()
+				orderDetail.Amount = executedAmount.InexactFloat64()
+				if err := c.AddCounterORderQueue(orderDetail); err != nil {
+					log.Printf("error when add counter order queue: %+v", err)
+					return nil
+				}
+				trade := model.Trade{
+					TradeID:   generateRandomString(8),
+					OrderID:   orderDetail.OrderID,
+					Price:     lastPrice.InexactFloat64(),
+					Quantity:  executedAmount.InexactFloat64(),
+					Timestamp: orderDetail.LastUpdated,
+				}
+				if err := model.UpdateOrCreateTrade(trade.TradeID, trade); err != nil {
+					log.Printf("error when create trade: %+v", err)
+					return nil
+				}
+				return nil
+			}
+		case order.Rejected:
+			description, _ := msg.Body.GetString(tag.Text)
+			orderDetail.OrderID = fmt.Sprintf("%d-%s", time.Now().Unix(), generateRandomString(7))
+			if err := model.UpdateOrCreateOrder(orderDetail, description); err != nil {
+				log.Printf("error when save rejected order: %+v", err)
 				return nil
 			}
 			return nil
@@ -262,12 +313,11 @@ func (fe *FixEngine) CancelOrder(order order.Detail) error {
 }
 
 func (fe *FixEngine) CancelReplaceOrder(order order.Detail) error {
-	symbol := fe.pairFormatter.Format(order.Pair)
 	modifyReq := ordercancelreplacerequest.New(
 		field.NewOrigClOrdID(order.ClientOrderID),
 		field.NewClOrdID(generateClOrdID()),
 		field.NewHandlInst(enum.HandlInst_AUTOMATED_EXECUTION_ORDER_PRIVATE_NO_BROKER_INTERVENTION),
-		field.NewSymbol(symbol),
+		field.NewSymbol(order.Pair.Base.String()),
 		field.NewSide(convertSide(order.Side.String())),
 		field.NewTransactTime(time.Now().UTC()),
 		field.NewOrdType(convertOrdType(order.Type.String())),

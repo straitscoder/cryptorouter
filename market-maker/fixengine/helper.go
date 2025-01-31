@@ -292,6 +292,7 @@ func ToOrderDetail(msg *quickfix.Message) order.Detail {
 	}
 	if !timestamp.IsZero() {
 		orderDetail.LastUpdated = timestamp
+		orderDetail.Date = timestamp
 	}
 	return orderDetail
 }

@@ -325,64 +325,27 @@ FairPricesLoop:
 					continue
 				}
 			}
-			continue
+			continue FairPricesLoop
 		}
 
-	CancelOrderLoop:
+	ModifyOrderLoop:
 		for i := range createdOrders {
 			if createdOrders[i].Status.IsInactive() {
 				continue
 			}
 
 			if !m.CheckPriceDifference(value.Price, createdOrders[i], value.PriceMultiplier) {
-				// if err := m.CancelAllOrders(createdOrders); err != nil {
-				// 	log.Printf("error when cancelling orders: %+v", err)
-				// 	continue
-				// }
 				if err := m.ModifyOrders(createdOrders, value); err != nil {
 					log.Printf("error when modifying orders: %+v", err)
 					continue
 				}
 				log.Printf("price changed for %s", createdOrders[i].Pair.Base.String())
-				break CancelOrderLoop
+				break ModifyOrderLoop
 			}
 			log.Printf("price not change for %s", createdOrders[i].Pair.Base.String())
 			continue FairPricesLoop
 		}
 
-		// bidPriceLeves := GeneratePriceLevels(value.Price, value.PriceMultiplier, "bid")
-		// for b := range bidPriceLeves {
-		// 	reqOrder := order.Detail{
-		// 		Exchange:  fixengine.CCX,
-		// 		AssetType: asset.Futures,
-		// 		Side:      order.Buy,
-		// 		Type:      order.Limit,
-		// 		Pair:      ccxPair,
-		// 		Price:     bidPriceLeves[b],
-		// 		Amount:    quantityLevels[b%len(quantityLevels)],
-		// 	}
-		// 	if err := m.FixEngine.NewOrderSingle(reqOrder); err != nil {
-		// 		log.Printf("error when sent new order request: %+v", err)
-		// 		continue
-		// 	}
-		// }
-
-		// askPriceLeves := GeneratePriceLevels(value.Price, value.PriceMultiplier, "ask")
-		// for b := range askPriceLeves {
-		// 	reqOrder := order.Detail{
-		// 		Exchange:  fixengine.CCX,
-		// 		AssetType: asset.Futures,
-		// 		Side:      order.Sell,
-		// 		Type:      order.Limit,
-		// 		Pair:      ccxPair,
-		// 		Price:     askPriceLeves[b],
-		// 		Amount:    quantityLevels[b%len(quantityLevels)],
-		// 	}
-		// 	if err := m.FixEngine.NewOrderSingle(reqOrder); err != nil {
-		// 		log.Printf("error when sent new order request: %+v", err)
-		// 		continue
-		// 	}
-		// }
 		continue
 	}
 }
@@ -521,45 +484,59 @@ func (m *MarketMaker) WsDataHandler(exchName string, data interface{}) error {
 }
 
 func (m *MarketMaker) ModifyOrders(orders []order.Detail, fairPrice PriceReference) error {
-	buyPrices := GeneratePriceLevels(fairPrice.Price, fairPrice.PriceMultiplier, "bid")
-BuyOrdersLoop:
-	for b := range buyPrices {
-		for i := range orders {
-			if orders[i].Side != order.Buy {
-				continue
-			}
-			log.Printf("unmodified order: %+v", orders[i])
-			orders[i].Price = buyPrices[b]
-			orders[i].Amount = quantityLevels[b%len(quantityLevels)]
+	var modifiedOrder []order.Detail
+	priceMap := map[order.Side][]float64{
+		order.Buy:  GeneratePriceLevels(fairPrice.Price, fairPrice.PriceMultiplier, "bid"),
+		order.Sell: GeneratePriceLevels(fairPrice.Price, fairPrice.PriceMultiplier, "ask"),
+	}
 
-			if err := m.FixEngine.CancelReplaceOrder(orders[i]); err != nil {
-				return err
+	for side, prices := range priceMap {
+	PricesLoop:
+		for x := range prices {
+			if len(orders) == 0 {
+				// log.Printf("triggered on price index %d", x)
+				// create missing order
+				pair, err := currency.NewPairFromString(fairPrice.Symbol)
+				if err != nil {
+					return err
+				}
+				reqOrder := order.Detail{
+					Exchange:  fixengine.CCX,
+					AssetType: asset.Futures,
+					Side:      side,
+					Type:      order.Limit,
+					Pair:      pair,
+					Price:     prices[x],
+					Amount:    quantityLevels[x%len(quantityLevels)],
+				}
+
+				if err := m.FixEngine.NewOrderSingle(reqOrder); err != nil {
+					return err
+				}
 			}
-			log.Printf("poped order: %+v", orders[i])
-			orders = append(orders[:i], orders[i+1:]...)
-			log.Printf("after poped order: %+v", orders)
-			continue BuyOrdersLoop
+
+			for y := range orders {
+				if side != orders[y].Side {
+					continue
+				}
+
+				orders[y].Price = prices[x]
+				orders[y].Amount = quantityLevels[x%len(quantityLevels)]
+
+				modifiedOrder = append(modifiedOrder, orders[y])
+				orders = append(orders[:y], orders[y+1:]...)
+				continue PricesLoop
+			}
 		}
 	}
 
-	sellPrices := GeneratePriceLevels(fairPrice.Price, fairPrice.PriceMultiplier, "ask")
-SellOrdersLoop:
-	for a := range sellPrices {
-		for i := range orders {
-			if orders[i].Side != order.Sell {
-				continue
-			}
-			log.Printf("unmodified order: %+v", orders[i])
-			orders[i].Price = buyPrices[a]
-			orders[i].Amount = quantityLevels[a%len(quantityLevels)]
-			// modify existing order
-			if err := m.FixEngine.CancelReplaceOrder(orders[i]); err != nil {
-				return err
-			}
-			log.Printf("poped order: %+v", orders[i])
-			orders = append(orders[:i], orders[i+1:]...) // remove modified order from the list
-			log.Printf("after poped order: %+v", orders)
-			continue SellOrdersLoop
+	if len(modifiedOrder) == 0 {
+		return nil
+	}
+
+	for i := range modifiedOrder {
+		if err := m.FixEngine.CancelReplaceOrder(modifiedOrder[i]); err != nil {
+			return err
 		}
 	}
 	return nil
