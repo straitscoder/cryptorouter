@@ -59,16 +59,47 @@ func UpdateOrder(clOrdId string, order Order) error {
 }
 
 func UpdateOrCreateOrder(orderDetail order.Detail, description string) error {
-	order := ToOrder(orderDetail, description)
+	order, trades := ToOrder(orderDetail, description)
 	existingOrder := GetOrderByOrderID(order.OrderID)
 	if existingOrder.ClientOrderID == "" {
+		if len(trades) > 0 {
+			for x := range trades {
+				if err := UpdateOrCreateTrade(trades[x].TradeID, trades[x]); err != nil {
+					return err
+				}
+			}
+		}
 		return CreateOrder(order)
+	}
+
+	if len(trades) > 0 {
+		for x := range trades {
+			if err := UpdateOrCreateTrade(trades[x].TradeID, trades[x]); err != nil {
+				return err
+			}
+		}
 	}
 
 	return UpdateOrder(existingOrder.ClientOrderID, order)
 }
 
-func ToOrder(orderDetail order.Detail, description string) Order {
+func ToOrder(orderDetail order.Detail, description string) (Order, []Trade) {
+	var trades []Trade
+	if len(orderDetail.Trades) > 0 {
+		trades = make([]Trade, len(orderDetail.Trades))
+		for x := range orderDetail.Trades {
+			trades[x] = Trade{
+				TradeID:   orderDetail.Trades[x].TID,
+				OrderID:   orderDetail.OrderID,
+				Exchange:  orderDetail.Exchange,
+				Price:     orderDetail.Trades[x].Price,
+				Quantity:  orderDetail.Trades[x].Amount,
+				Fee:       orderDetail.Trades[x].Fee,
+				FeeAsset:  orderDetail.Trades[x].FeeAsset,
+				Timestamp: orderDetail.Trades[x].Timestamp,
+			}
+		}
+	}
 	return Order{
 		ClientOrderID: orderDetail.ClientOrderID,
 		OrderID:       orderDetail.OrderID,
@@ -84,5 +115,5 @@ func ToOrder(orderDetail order.Detail, description string) Order {
 		Status:        orderDetail.Status.String(),
 		Description:   description,
 		Timestamp:     orderDetail.Date,
-	}
+	}, trades
 }

@@ -18,6 +18,7 @@ import (
 	"github.com/quickfixgo/fix42/ordercancelrequest"
 	"github.com/quickfixgo/fix42/securitydefinitionrequest"
 	"github.com/quickfixgo/quickfix"
+	"github.com/quickfixgo/quickfix/store/file"
 	"github.com/quickfixgo/tag"
 	"github.com/shopspring/decimal"
 	"github.com/thrasher-corp/gocryptotrader/currency"
@@ -29,6 +30,8 @@ import (
 const (
 	CCX = "CCX"
 )
+
+var seqNum int
 
 type SecurityDetail struct {
 	Pair               currency.Pair
@@ -63,6 +66,10 @@ func (c *fixApplication) FromApp(msg *quickfix.Message, sessionID quickfix.Sessi
 			return
 		}
 	case "8":
+		ordStatus, _ := msg.Body.GetString(tag.OrdStatus)
+		if ordStatus != "0" && ordStatus != "4" {
+			log.Printf("execution report: %+v", msg)
+		}
 		orderDetail := ToOrderDetail(msg)
 		// delete order from redis if it's been cancelled
 		switch orderDetail.Status {
@@ -73,6 +80,7 @@ func (c *fixApplication) FromApp(msg *quickfix.Message, sessionID quickfix.Sessi
 			}
 			return nil
 		case order.Filled:
+			log.Printf("filled order: %+v", orderDetail)
 			if err := c.AddCounterORderQueue(orderDetail); err != nil {
 				log.Printf("error when add counter order queue: %+v", err)
 				return nil
@@ -81,14 +89,19 @@ func (c *fixApplication) FromApp(msg *quickfix.Message, sessionID quickfix.Sessi
 				log.Printf("error when updating the order: %+v", err)
 				return nil
 			}
+			if err := model.DeleteOrder(context.Background(), orderDetail); err != nil {
+				log.Printf("error when delete filled order from redis: %+v", err)
+				return nil
+			}
 			executedAmountStr, _ := msg.Body.GetString(tag.LastQty)
 			lastPriceStr, _ := msg.Body.GetString(tag.LastPx)
 			if executedAmountStr != "0" && lastPriceStr != "0" {
 				executedAmount, _ := decimal.NewFromString(executedAmountStr)
 				lastPrice, _ := decimal.NewFromString(lastPriceStr)
 				trade := model.Trade{
-					TradeID:   generateRandomString(8),
+					TradeID:   orderDetail.ClientID,
 					OrderID:   orderDetail.OrderID,
+					Exchange:  CCX,
 					Price:     lastPrice.InexactFloat64(),
 					Quantity:  executedAmount.InexactFloat64(),
 					Timestamp: orderDetail.LastUpdated,
@@ -101,6 +114,11 @@ func (c *fixApplication) FromApp(msg *quickfix.Message, sessionID quickfix.Sessi
 			}
 			return nil
 		case order.PartiallyFilled:
+			log.Printf("partially filled order: %+v", orderDetail)
+			if err := model.AddCancelQueue(context.Background(), orderDetail); err != nil {
+				log.Printf("error when add cancel order queue: %+v", err)
+				return
+			}
 			executedAmountStr, _ := msg.Body.GetString(tag.LastQty)
 			lastPriceStr, _ := msg.Body.GetString(tag.LastPx)
 			if executedAmountStr != "0" && lastPriceStr != "0" {
@@ -113,8 +131,9 @@ func (c *fixApplication) FromApp(msg *quickfix.Message, sessionID quickfix.Sessi
 					return nil
 				}
 				trade := model.Trade{
-					TradeID:   generateRandomString(8),
+					TradeID:   orderDetail.ClientID,
 					OrderID:   orderDetail.OrderID,
+					Exchange:  orderDetail.Exchange,
 					Price:     lastPrice.InexactFloat64(),
 					Quantity:  executedAmount.InexactFloat64(),
 					Timestamp: orderDetail.LastUpdated,
@@ -133,11 +152,14 @@ func (c *fixApplication) FromApp(msg *quickfix.Message, sessionID quickfix.Sessi
 				return nil
 			}
 			return nil
-		default:
+		case order.New:
 			if err := model.UpdateOrCreateOrderRedis(context.Background(), orderDetail); err != nil {
 				log.Printf("error when updating the order: %+v", err)
 				return nil
 			}
+			return nil
+		default:
+			log.Printf("invalid order status: %+v", orderDetail)
 			return nil
 		}
 	}
@@ -168,7 +190,9 @@ func (c *fixApplication) AddCounterORderQueue(orderDetail order.Detail) error {
 	}
 
 	orderDetail.Type = order.Market
-
+	if orderDetail.ClientID != "" {
+		orderDetail.ClientOrderID = orderDetail.ClientID
+	}
 	return model.AddCounterOrderQueue(context.Background(), orderDetail)
 }
 
@@ -218,7 +242,7 @@ func (fe *FixEngine) Start() error {
 	}
 	fe.logFactory = &logFactory
 
-	fe.storeFactory = quickfix.NewMemoryStoreFactory()
+	fe.storeFactory = file.NewStoreFactory(fe.settings)
 	fe.pairFormatter = &currency.PairFormat{
 		Uppercase: true,
 		Delimiter: "-",
@@ -232,7 +256,7 @@ func (fe *FixEngine) Start() error {
 		return fmt.Errorf("error when initiate initiator : %+v", err)
 	}
 	fe.initiator = initiator
-	go fe.CounterOrderRoutine()
+	go fe.CancelOrderRoutine()
 	return fe.initiator.Start()
 }
 
@@ -240,20 +264,19 @@ func (fe *FixEngine) Stop() {
 	fe.initiator.Stop()
 }
 
-func (fe *FixEngine) CounterOrderRoutine() {
+func (fe *FixEngine) CancelOrderRoutine() {
 	if fe == nil {
 		return
 	}
 
 	ticker := time.NewTicker(time.Millisecond * 500)
 	defer ticker.Stop()
-	log.Println("start counter order routine ...")
-	fe.SendCounterOrder()
+	fe.SendCancelOrder()
 
 	for {
 		select {
 		case <-ticker.C:
-			go fe.SendCounterOrder()
+			go fe.SendCancelOrder()
 		}
 	}
 }
@@ -272,8 +295,11 @@ func (fe *FixEngine) SecuritiesDetail() error {
 }
 
 func (fe *FixEngine) NewOrderSingle(order order.Detail) error {
+	if !fe.initiator.BuildInitiators {
+		return nil
+	}
 	newOrder := newordersingle.New(
-		field.NewClOrdID(generateClOrdID()),
+		field.NewClOrdID(GenerateClOrdID()),
 		field.NewHandlInst(enum.HandlInst_AUTOMATED_EXECUTION_ORDER_PRIVATE_NO_BROKER_INTERVENTION),
 		field.NewSymbol(order.Pair.Base.String()),
 		field.NewSide(convertSide(order.Side.String())),
@@ -297,7 +323,7 @@ func (fe *FixEngine) NewOrderSingle(order order.Detail) error {
 func (fe *FixEngine) CancelOrder(order order.Detail) error {
 	cancelReq := ordercancelrequest.New(
 		field.NewOrigClOrdID(order.ClientOrderID),
-		field.NewClOrdID(generateClOrdID()),
+		field.NewClOrdID(GenerateClOrdID()),
 		field.NewSymbol(order.Pair.Base.String()),
 		field.NewSide(convertSide(order.Side.String())),
 		field.NewTransactTime(time.Now().UTC()),
@@ -315,7 +341,7 @@ func (fe *FixEngine) CancelOrder(order order.Detail) error {
 func (fe *FixEngine) CancelReplaceOrder(order order.Detail) error {
 	modifyReq := ordercancelreplacerequest.New(
 		field.NewOrigClOrdID(order.ClientOrderID),
-		field.NewClOrdID(generateClOrdID()),
+		field.NewClOrdID(GenerateClOrdID()),
 		field.NewHandlInst(enum.HandlInst_AUTOMATED_EXECUTION_ORDER_PRIVATE_NO_BROKER_INTERVENTION),
 		field.NewSymbol(order.Pair.Base.String()),
 		field.NewSide(convertSide(order.Side.String())),
@@ -358,7 +384,7 @@ func (fe *FixEngine) GetCCXPairs() ([]SecurityDetail, error) {
 	return ccxPairs, nil
 }
 
-func (fe *FixEngine) SendCounterOrder() {
+func (fe *FixEngine) SendCancelOrder() {
 	if !atomic.CompareAndSwapInt32(&fe.processOrder, 0, 1) {
 		return
 	}
@@ -368,7 +394,7 @@ func (fe *FixEngine) SendCounterOrder() {
 		return
 	}
 
-	orderDetail, err := model.GetCounterOrderQueue(context.Background())
+	orderDetail, err := model.GetCancelQueue(context.Background())
 	if err != nil {
 		log.Printf("error when get counter order queue: %+v", err)
 		return
@@ -376,9 +402,9 @@ func (fe *FixEngine) SendCounterOrder() {
 	if orderDetail.OrderID == "" {
 		return
 	}
-	if err := fe.NewOrderSingle(orderDetail); err != nil {
+	if err := fe.CancelOrder(orderDetail); err != nil {
 		log.Printf("error when send counter order queue: %+v", err)
-		if err := model.AddCounterOrderQueue(context.Background(), orderDetail); err != nil {
+		if err := model.AddCancelQueue(context.Background(), orderDetail); err != nil {
 			log.Printf("error when resaved error counter order: %+v", err)
 			return
 		}

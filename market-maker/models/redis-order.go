@@ -245,3 +245,11 @@ func DeleteOrder(ctx context.Context, orderDetail order.Detail) error {
 	}
 	return nil
 }
+
+func DeleteOrders(ctx context.Context) error {
+	if err := rdClient.Del(ctx, orderIDListKey).Err(); err != nil {
+		return err
+	}
+
+	return rdClient.Del(ctx, orderKey).Err()
+}

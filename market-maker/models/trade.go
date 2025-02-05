@@ -5,8 +5,11 @@ import "time"
 type Trade struct {
 	TradeID   string    `json:"tradeId" gorm:"primary_key"`
 	OrderID   string    `json:"orderId" gorm:"primary_key"`
+	Exchange  string    `json:"exchange"`
 	Price     float64   `json:"price" gorm:"type:numeric(12,8)"`
 	Quantity  float64   `json:"qty" gorm:"type:numeric(12,8)"`
+	Fee       float64   `json:"fee"`
+	FeeAsset  string    `json:"feeAsset"`
 	Timestamp time.Time `json:"timestamp"`
 }
 

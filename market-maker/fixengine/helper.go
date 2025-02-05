@@ -42,7 +42,7 @@ func generateRandomString(n int) string {
 	return string(b)
 }
 
-func generateClOrdID() string {
+func GenerateClOrdID() string {
 	timestamp := time.Now().Unix()        // Unix timestamp for uniqueness
 	randomPart := generateRandomString(5) // Random alphanumeric string
 	clOrdId := fmt.Sprintf("%s%s", randomPart, strconv.FormatInt(timestamp, 10)[4:])
@@ -246,6 +246,7 @@ func ToOrderDetail(msg *quickfix.Message) order.Detail {
 	filledQty, _ := msg.Body.GetString(tag.CumQty)
 	avgPrice, _ := msg.Body.GetString(tag.AvgPx)
 	timestamp, _ := msg.Body.GetTime(tag.TransactTime)
+	execID, _ := msg.Body.GetString(tag.ExecID)
 	orderDetail := order.Detail{
 		AssetType: asset.Futures,
 	}
@@ -293,6 +294,9 @@ func ToOrderDetail(msg *quickfix.Message) order.Detail {
 	if !timestamp.IsZero() {
 		orderDetail.LastUpdated = timestamp
 		orderDetail.Date = timestamp
+	}
+	if execID != "" {
+		orderDetail.ClientID = execID
 	}
 	return orderDetail
 }

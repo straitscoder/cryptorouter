@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log"
 	"math"
 	"strings"
@@ -10,6 +11,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/gofrs/uuid"
 	"github.com/shopspring/decimal"
 	"github.com/thrasher-corp/gocryptotrader/currency"
 	"github.com/thrasher-corp/gocryptotrader/exchanges/asset"
@@ -84,13 +86,14 @@ func ClearPRStore() {
 }
 
 type MarketMaker struct {
-	ProcessingOrder int32
-	FetchTicker     int32
-	FixEngine       *fixengine.FixEngine
-	ExchangeManager *ExchangeManager
-	SocketManager   *websocketRoutineManager
-	PairFormatter   *currency.PairFormat
-	Shutdown        chan struct{}
+	ProcessingOrder      int32
+	FetchTicker          int32
+	processExchangeOrder int32
+	FixEngine            *fixengine.FixEngine
+	ExchangeManager      *ExchangeManager
+	SocketManager        *websocketRoutineManager
+	PairFormatter        *currency.PairFormat
+	Shutdown             chan struct{}
 }
 
 func NewMarketMaker(exchManager *ExchangeManager, eventRoutine *websocketRoutineManager) (*MarketMaker, error) {
@@ -125,10 +128,13 @@ func (m *MarketMaker) Start() error {
 }
 
 func (m *MarketMaker) Stop() {
+	m.Shutdown <- struct{}{}
 	m.ShutdownRoutine()
 	m.FixEngine.Stop()
 	ClearPRStore()
-	m.Shutdown <- struct{}{}
+	// if err := model.DeleteOrders(context.Background()); err != nil {
+	// 	log.Printf("failed to delete orders: %+v", err)
+	// }
 	close(m.Shutdown)
 	return
 }
@@ -146,6 +152,7 @@ func (m *MarketMaker) run() {
 		case <-ticker.C:
 			go m.GetFairPrice()
 			go m.PlaceOrder()
+			go m.CreateCounterOrder()
 		}
 	}
 }
@@ -260,12 +267,13 @@ func (m *MarketMaker) PlaceOrder() {
 		return
 	}
 	defer atomic.StoreInt32(&m.ProcessingOrder, 0)
+
 	fairPrices := tempPRStore
 
 	if len(fairPrices) == 0 {
 		return
 	}
-	log.Printf("fairPrices: %+v", fairPrices)
+	// log.Printf("fairPrices: %+v", fairPrices)
 FairPricesLoop:
 	for _, value := range fairPrices {
 		if !strings.Contains(value.Symbol, "USDT") {
@@ -288,6 +296,13 @@ FairPricesLoop:
 		if err != nil {
 			log.Printf("error getting created order: %+v", err)
 			continue
+		}
+
+		if len(createdOrders) > 10 {
+			if err := m.CancelAllOrders(createdOrders); err != nil {
+				log.Printf("error cancelling exceed orders: %+v", err)
+				continue FairPricesLoop
+			}
 		}
 
 		if len(createdOrders) == 0 {
@@ -339,10 +354,10 @@ FairPricesLoop:
 					log.Printf("error when modifying orders: %+v", err)
 					continue
 				}
-				log.Printf("price changed for %s", createdOrders[i].Pair.Base.String())
+				// log.Printf("price changed for %s", createdOrders[i].Pair.Base.String())
 				break ModifyOrderLoop
 			}
-			log.Printf("price not change for %s", createdOrders[i].Pair.Base.String())
+			// log.Printf("price not change for %s", createdOrders[i].Pair.Base.String())
 			continue FairPricesLoop
 		}
 
@@ -372,15 +387,18 @@ func (m *MarketMaker) CheckPriceDifference(fairPrice float64, orderDetail order.
 	pricedifference := orderDetail.Price - fairPrice
 	switch orderDetail.Side {
 	case order.Buy:
-		log.Printf("price difference: %f", pricedifference)
-		log.Printf("allowed diffence: %f", -allowedDifference)
-		log.Printf("gap between price difference and allowed difference: %f", math.Abs(pricedifference - -allowedDifference))
+		// log.Printf("price difference: %f", pricedifference)
+		// log.Printf("allowed diffence: %f", -allowedDifference)
+		// log.Printf("gap between price difference and allowed difference: %f", math.Abs(pricedifference - -allowedDifference))
 		return math.Abs(pricedifference - -allowedDifference) <= priceGapTolerance
-	default:
-		log.Printf("price difference: %f", pricedifference)
-		log.Printf("allowed diffence: %f", allowedDifference)
-		log.Printf("gap between price difference and allwed difference: %f", math.Abs(pricedifference-allowedDifference))
+	case order.Sell:
+		// log.Printf("price difference: %f", pricedifference)
+		// log.Printf("allowed diffence: %f", allowedDifference)
+		// log.Printf("gap between price difference and allowed difference: %f", math.Abs(pricedifference-allowedDifference))
 		return math.Abs(pricedifference-allowedDifference) <= priceGapTolerance
+	default:
+		log.Printf("invalid side: %+v", orderDetail)
+		return true
 	}
 }
 
@@ -478,6 +496,15 @@ func (m *MarketMaker) WsDataHandler(exchName string, data interface{}) error {
 		}
 
 		return nil
+	case *order.Detail:
+		if d == nil {
+			return nil
+		}
+
+		if err := model.UpdateOrCreateOrder(*d, fmt.Sprintf("update order from %s websocket", d.Exchange)); err != nil {
+			return err
+		}
+		log.Printf("created order from external exchange: %+v", d)
 	default:
 	}
 	return nil
@@ -493,40 +520,40 @@ func (m *MarketMaker) ModifyOrders(orders []order.Detail, fairPrice PriceReferen
 	for side, prices := range priceMap {
 	PricesLoop:
 		for x := range prices {
-			if len(orders) == 0 {
-				// log.Printf("triggered on price index %d", x)
-				// create missing order
-				pair, err := currency.NewPairFromString(fairPrice.Symbol)
-				if err != nil {
-					return err
-				}
-				reqOrder := order.Detail{
-					Exchange:  fixengine.CCX,
-					AssetType: asset.Futures,
-					Side:      side,
-					Type:      order.Limit,
-					Pair:      pair,
-					Price:     prices[x],
-					Amount:    quantityLevels[x%len(quantityLevels)],
-				}
+			if len(orders) != 0 {
+				for y := range orders {
+					if side != orders[y].Side {
+						continue
+					}
 
-				if err := m.FixEngine.NewOrderSingle(reqOrder); err != nil {
-					return err
+					orders[y].Price = prices[x]
+					orders[y].Amount = quantityLevels[x%len(quantityLevels)]
+
+					modifiedOrder = append(modifiedOrder, orders[y])
+					orders = append(orders[:y], orders[y+1:]...)
+					continue PricesLoop
 				}
 			}
-
-			for y := range orders {
-				if side != orders[y].Side {
-					continue
-				}
-
-				orders[y].Price = prices[x]
-				orders[y].Amount = quantityLevels[x%len(quantityLevels)]
-
-				modifiedOrder = append(modifiedOrder, orders[y])
-				orders = append(orders[:y], orders[y+1:]...)
-				continue PricesLoop
+			// log.Printf("triggered on price index %d of %s field", x, side.String())
+			// create missing order
+			pair, err := currency.NewPairFromString(fairPrice.Symbol)
+			if err != nil {
+				return err
 			}
+			reqOrder := order.Detail{
+				Exchange:  fixengine.CCX,
+				AssetType: asset.Futures,
+				Side:      side,
+				Type:      order.Limit,
+				Pair:      pair,
+				Price:     prices[x],
+				Amount:    quantityLevels[x%len(quantityLevels)],
+			}
+
+			if err := m.FixEngine.NewOrderSingle(reqOrder); err != nil {
+				return err
+			}
+			continue PricesLoop
 		}
 	}
 
@@ -540,6 +567,93 @@ func (m *MarketMaker) ModifyOrders(orders []order.Detail, fairPrice PriceReferen
 		}
 	}
 	return nil
+}
+
+func (m *MarketMaker) CreateCounterOrder() {
+	if !atomic.CompareAndSwapInt32(&m.processExchangeOrder, 0, 1) {
+		return
+	}
+	defer atomic.StoreInt32(&m.processExchangeOrder, 0)
+	orderDetail, err := model.GetCounterOrderQueue(context.Background())
+	if err != nil {
+		log.Printf("error when get counter order queue: %+v", err)
+		return
+	}
+
+	if orderDetail.OrderID == "" {
+		return
+	}
+
+	existingOrder := model.GetOrderByClOrdID(orderDetail.ClientOrderID)
+	if existingOrder.OrderID != "" {
+		return
+	}
+
+	orderDetail.Pair = currency.NewPairWithDelimiter(orderDetail.Pair.Base.String(), "USDT", "-")
+	symbol := m.PairFormatter.Format(orderDetail.Pair)
+	priceReference := GetPriceReference(symbol)
+	if priceReference == nil {
+		log.Printf("no price reference provided for: %+v", orderDetail)
+		return
+	}
+
+	exch, err := m.ExchangeManager.GetExchangeByName(priceReference.Exchange)
+	if err != nil {
+		log.Printf("error when get exchange for: %+v", priceReference)
+		return
+	}
+
+	a, err := asset.New(priceReference.AssetType)
+	if err != nil {
+		log.Printf("invalid asset: %+v", priceReference)
+		return
+	}
+
+	err = exch.CheckOrderExecutionLimits(a, orderDetail.Pair, priceReference.Price, orderDetail.Amount, orderDetail.Type)
+	if err != nil {
+		log.Printf("Execution limit error %+v", err)
+		return
+	}
+
+	err = exch.CanTradePair(orderDetail.Pair, a)
+	if err != nil {
+		log.Printf("Trade pair error: %+v", err)
+		return
+	}
+
+	submiRequest := order.Submit{
+		Exchange:      exch.GetName(),
+		Type:          orderDetail.Type,
+		AssetType:     a,
+		Pair:          orderDetail.Pair,
+		ClientOrderID: fixengine.GenerateClOrdID(),
+		Price:         orderDetail.Price,
+		Amount:        orderDetail.Amount,
+		Side:          orderDetail.Side,
+	}
+
+	response, err := exch.SubmitOrder(context.TODO(), &submiRequest)
+	if err != nil {
+		log.Printf("Failed to submit this order: %+v", submiRequest)
+		return
+	}
+
+	if response == nil {
+		return
+	}
+	log.Printf("Submitted order: %+v", *response)
+
+	internalId, _ := uuid.NewV4()
+	willSaveORder, err := response.DeriveDetail(internalId)
+	if err != nil {
+		log.Printf("error when generate order detail: %+v", err)
+		return
+	}
+
+	if err := model.UpdateOrCreateOrder(*willSaveORder, fmt.Sprintf("Hedging order from %s", willSaveORder.Exchange)); err != nil {
+		log.Printf("error when save hedging order: %+v", err)
+		return
+	}
 }
 
 func GeneratePriceLevels(price, priceMultiplier float64, side string) []float64 {

@@ -1301,7 +1301,6 @@
    <field name='Text' required='N' />
    <field name='EncodedTextLen' required='N' />
    <field name='EncodedText' required='N' />
-   <field name='TickIncrement' required='N' />
    <group name='NoRelatedSym' required='N'>
     <field name='UnderlyingSymbol' required='N' />
     <field name='UnderlyingSymbolSfx' required='N' />
@@ -2106,6 +2105,7 @@
    <value enum='C' description='EXPIRED' />
    <value enum='D' description='RESTATED' />
    <value enum='E' description='PENDING_REPLACE' />
+   <value enum='F' description='TRADE' />
   </field>
   <field number='151' name='LeavesQty' type='QTY' />
   <field number='152' name='CashOrderQty' type='QTY' />
@@ -2180,8 +2180,6 @@
    <value enum='USTB' description='US_TREASURY_BILL' />
    <value enum='WAR' description='WARRANT' />
    <value enum='ZOO' description='CATS_TIGERS_LIONS' />
-   <value enum='FXSPOT' description='FX_SPOT' />
-   <value enum='FXNDF' description='NON_DELIVERABLE_FORWARD' />
   </field>
   <field number='168' name='EffectiveTime' type='UTCTIMESTAMP' />
   <field number='169' name='StandInstDbType' type='INT'>

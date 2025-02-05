@@ -47,17 +47,17 @@ func GetModifyQueue(ctx context.Context) (*gctrpc.ModifyOrderRequest, error) {
 	return &request, proto.Unmarshal(binary, &request)
 }
 
-func GetCancelQueue(ctx context.Context) (*gctrpc.CancelOrderRequest, error) {
-	var request gctrpc.CancelOrderRequest
+func GetCancelQueue(ctx context.Context) (order.Detail, error) {
+	var request order.Detail
 	binary, err := rdClient.LPop(ctx, cancelOrderQueue).Bytes()
 	if err != nil {
 		if err == redis.Nil {
-			return nil, nil
+			return request, nil
 		}
-		return nil, err
+		return request, err
 	}
 
-	return &request, proto.Unmarshal(binary, &request)
+	return request, json.Unmarshal(binary, &request)
 }
 
 func GetClosePositionQueue(ctx context.Context) (*gctrpc.CloseOrderRequest, error) {
@@ -124,8 +124,8 @@ func AddModifyQueue(ctx context.Context, req *gctrpc.ModifyOrderRequest) error {
 	return nil
 }
 
-func AddCancelQueue(ctx context.Context, req *gctrpc.CancelOrderRequest) error {
-	binary, err := proto.Marshal(req)
+func AddCancelQueue(ctx context.Context, req order.Detail) error {
+	binary, err := json.Marshal(req)
 	if err != nil {
 		return err
 	}
