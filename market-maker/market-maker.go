@@ -7,7 +7,6 @@ import (
 	"log"
 	"math"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -20,70 +19,6 @@ import (
 	"github.com/thrasher-corp/gocryptotrader/market-maker/fixengine"
 	model "github.com/thrasher-corp/gocryptotrader/market-maker/models"
 )
-
-type PriceReference struct {
-	Exchange           string
-	AssetType          string
-	isFuture           bool
-	Symbol             string
-	Price              float64
-	Volume             float64
-	ContractMultiplier float64
-	PriceMultiplier    float64
-}
-
-var (
-	tempPRStore = make(map[string]PriceReference)
-	PRMutex     sync.Mutex
-)
-
-func SavePriceReference(priceReference PriceReference) {
-	PRMutex.Lock()
-	tempPRStore[priceReference.Symbol] = priceReference
-	PRMutex.Unlock()
-}
-
-func CheckPriceReference(symbol string) bool {
-	PRMutex.Lock()
-	defer PRMutex.Unlock()
-
-	_, exist := tempPRStore[symbol]
-	return exist
-}
-
-func GetPriceReference(symbol string) *PriceReference {
-	PRMutex.Lock()
-	defer PRMutex.Unlock()
-
-	priceReference, exist := tempPRStore[symbol]
-	if !exist {
-		return nil
-	}
-
-	return &priceReference
-}
-
-func UpdatePriceReference(priceReference PriceReference) *PriceReference {
-	PRMutex.Lock()
-	defer PRMutex.Unlock()
-
-	_, exist := tempPRStore[priceReference.Symbol]
-	if !exist {
-		return nil
-	}
-	tempPRStore[priceReference.Symbol] = priceReference
-
-	return &priceReference
-}
-
-func ClearPRStore() {
-	PRMutex.Lock()
-	defer PRMutex.Unlock()
-
-	for key := range tempPRStore {
-		delete(tempPRStore, key)
-	}
-}
 
 type MarketMaker struct {
 	ProcessingOrder      int32
@@ -230,6 +165,9 @@ func (m *MarketMaker) GetFairPrice() {
 				}
 				exchangeTotalVolume := math.Abs(priceTicker.Volume)
 				result := GetPriceReference(fieldName)
+				if err := BestPriceProcess(priceTicker, fieldName); err != nil {
+					log.Printf("error when best price processing: %+v", err)
+				}
 				if result == nil {
 					result = &PriceReference{
 						Exchange:           priceTicker.ExchangeName,
@@ -269,11 +207,13 @@ func (m *MarketMaker) PlaceOrder() {
 	defer atomic.StoreInt32(&m.ProcessingOrder, 0)
 
 	fairPrices := tempPRStore
+	bestPrices := tempBPStore
 
 	if len(fairPrices) == 0 {
 		return
 	}
-	// log.Printf("fairPrices: %+v", fairPrices)
+	log.Printf("fairPrices: %+v", fairPrices)
+	log.Printf("best prices: %+v", bestPrices)
 FairPricesLoop:
 	for _, value := range fairPrices {
 		if !strings.Contains(value.Symbol, "USDT") {
@@ -297,14 +237,7 @@ FairPricesLoop:
 			log.Printf("error getting created order: %+v", err)
 			continue
 		}
-
-		if len(createdOrders) > 10 {
-			if err := m.CancelAllOrders(createdOrders); err != nil {
-				log.Printf("error cancelling exceed orders: %+v", err)
-				continue FairPricesLoop
-			}
-		}
-
+		// log.Printf("length of created orders for %s: %d", value.Symbol, len(createdOrders))
 		if len(createdOrders) == 0 {
 			bidPriceLeves := GeneratePriceLevels(value.Price, value.PriceMultiplier, "bid")
 			for b := range bidPriceLeves {
@@ -349,18 +282,56 @@ FairPricesLoop:
 				continue
 			}
 
-			if !m.CheckPriceDifference(value.Price, createdOrders[i], value.PriceMultiplier) {
-				if err := m.ModifyOrders(createdOrders, value); err != nil {
-					log.Printf("error when modifying orders: %+v", err)
+			if !m.CheckPriceDifference(value.Price, createdOrders[i], value.PriceMultiplier) || len(createdOrders) != priceLevelDepth*2 {
+				if err := m.CancelAllOrders(createdOrders); err != nil {
+					log.Printf("error when cancelling orders: %+v", err)
 					continue
 				}
-				// log.Printf("price changed for %s", createdOrders[i].Pair.Base.String())
+				// if err := m.ModifyOrders(createdOrders, value); err != nil {
+				// 	log.Printf("error when modifying orders: %+v", err)
+				// 	continue
+				// }
+				log.Printf("price changed for %s", createdOrders[i].Pair.Base.String())
 				break ModifyOrderLoop
 			}
-			// log.Printf("price not change for %s", createdOrders[i].Pair.Base.String())
+			log.Printf("price not change for %s", createdOrders[i].Pair.Base.String())
 			continue FairPricesLoop
 		}
 
+		bidPriceLeves := GeneratePriceLevels(value.Price, value.PriceMultiplier, "bid")
+		for b := range bidPriceLeves {
+			reqOrder := order.Detail{
+				Exchange:  fixengine.CCX,
+				AssetType: asset.Futures,
+				Side:      order.Buy,
+				Type:      order.Limit,
+				Pair:      ccxPair,
+				Price:     bidPriceLeves[b],
+				Amount:    quantityLevels[b%len(quantityLevels)], // use config supplied quantity level that base on book depth and prevent out of range error
+			}
+
+			if err := m.FixEngine.NewOrderSingle(reqOrder); err != nil {
+				log.Printf("error when sent new order request: %+v", err)
+				continue
+			}
+		}
+
+		askPriceLeves := GeneratePriceLevels(value.Price, value.PriceMultiplier, "ask")
+		for b := range askPriceLeves {
+			reqOrder := order.Detail{
+				Exchange:  fixengine.CCX,
+				AssetType: asset.Futures,
+				Side:      order.Sell,
+				Type:      order.Limit,
+				Pair:      ccxPair,
+				Price:     askPriceLeves[b],
+				Amount:    quantityLevels[b%len(quantityLevels)],
+			}
+			if err := m.FixEngine.NewOrderSingle(reqOrder); err != nil {
+				log.Printf("error when sent new order request: %+v", err)
+				continue
+			}
+		}
 		continue
 	}
 }
@@ -456,6 +427,9 @@ func (m *MarketMaker) WsDataHandler(exchName string, data interface{}) error {
 
 		symbol := m.PairFormatter.Format(d.Pair)
 		fairPrice := GetPriceReference(symbol)
+		if err := BestPriceProcess(d, symbol); err != nil {
+			return err
+		}
 		if fairPrice == nil {
 			fairPrice = &PriceReference{
 				Exchange:           exchName,
@@ -597,7 +571,7 @@ func (m *MarketMaker) CreateCounterOrder() {
 		return
 	}
 
-	exch, err := m.ExchangeManager.GetExchangeByName(priceReference.Exchange)
+	exch, err := m.ExchangeManager.GetExchangeByName("okx")
 	if err != nil {
 		log.Printf("error when get exchange for: %+v", priceReference)
 		return
@@ -626,7 +600,7 @@ func (m *MarketMaker) CreateCounterOrder() {
 		Type:          orderDetail.Type,
 		AssetType:     a,
 		Pair:          orderDetail.Pair,
-		ClientOrderID: fixengine.GenerateClOrdID(),
+		ClientOrderID: orderDetail.ClientOrderID,
 		Price:         orderDetail.Price,
 		Amount:        orderDetail.Amount,
 		Side:          orderDetail.Side,

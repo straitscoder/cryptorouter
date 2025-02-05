@@ -7,10 +7,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"strconv"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/quickfixgo/enum"
 	"github.com/quickfixgo/quickfix"
@@ -43,9 +41,9 @@ func generateRandomString(n int) string {
 }
 
 func GenerateClOrdID() string {
-	timestamp := time.Now().Unix()        // Unix timestamp for uniqueness
-	randomPart := generateRandomString(5) // Random alphanumeric string
-	clOrdId := fmt.Sprintf("%s%s", randomPart, strconv.FormatInt(timestamp, 10)[4:])
+	// timestamp := time.Now().Unix()        // Unix timestamp for uniqueness
+	randomPart := generateRandomString(9) // Random alphanumeric string
+	clOrdId := randomPart
 	if len(clOrdId) > 9 {
 		clOrdId = clOrdId[:9]
 	}

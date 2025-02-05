@@ -9,6 +9,7 @@ import (
 type Order struct {
 	ClientOrderID string    `json:"clientOrderId" gorm:"primary_key"`
 	OrderID       string    `json:"orderId" gorm:"unique"`
+	ClientID      string    `json:"clientId"`
 	Exchange      string    `json:"exchange"`
 	Base          string    `json:"base"`
 	Quote         string    `json:"quote"`
@@ -103,6 +104,7 @@ func ToOrder(orderDetail order.Detail, description string) (Order, []Trade) {
 	return Order{
 		ClientOrderID: orderDetail.ClientOrderID,
 		OrderID:       orderDetail.OrderID,
+		ClientID:      orderDetail.ClientID,
 		Exchange:      orderDetail.Exchange,
 		Base:          orderDetail.Pair.Base.String(),
 		Quote:         orderDetail.Pair.Quote.String(),
