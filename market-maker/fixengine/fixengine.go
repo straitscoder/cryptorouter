@@ -5,17 +5,17 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"log"
 	"os"
 	"path"
-	"sync/atomic"
 	"time"
 
 	"github.com/quickfixgo/enum"
 	"github.com/quickfixgo/field"
+	"github.com/quickfixgo/fix42/executionreport"
 	"github.com/quickfixgo/fix42/newordersingle"
 	"github.com/quickfixgo/fix42/ordercancelreplacerequest"
 	"github.com/quickfixgo/fix42/ordercancelrequest"
+	"github.com/quickfixgo/fix42/securitydefinition"
 	"github.com/quickfixgo/fix42/securitydefinitionrequest"
 	"github.com/quickfixgo/quickfix"
 	"github.com/quickfixgo/quickfix/store/file"
@@ -23,6 +23,7 @@ import (
 	"github.com/shopspring/decimal"
 	"github.com/thrasher-corp/gocryptotrader/currency"
 	"github.com/thrasher-corp/gocryptotrader/exchanges/order"
+	"github.com/thrasher-corp/gocryptotrader/log"
 	model "github.com/thrasher-corp/gocryptotrader/market-maker/models"
 	"gopkg.in/ini.v1"
 )
@@ -39,147 +40,195 @@ type SecurityDetail struct {
 	PriceMultiplier    float64
 }
 
-type fixApplication struct {
-	Username string
-	Password string
+type FixEngine struct {
+	*quickfix.MessageRouter
+	Username      string
+	Password      string
+	processOrder  int32
+	senderCompId  string
+	targetCompId  string
+	accountCode   string
+	pairFormatter *currency.PairFormat
+	initiator     *quickfix.Initiator
+	settings      *quickfix.Settings
+	logFactory    *quickfix.LogFactory
+	storeFactory  quickfix.MessageStoreFactory
 }
 
-func (c *fixApplication) OnCreate(sessionID quickfix.SessionID) {}
-
-func (c *fixApplication) OnLogon(sessionID quickfix.SessionID) {}
-
-func (c *fixApplication) OnLogout(sessionID quickfix.SessionID) {}
-
-func (c *fixApplication) FromAdmin(msg *quickfix.Message, sessionID quickfix.SessionID) quickfix.MessageRejectError {
-	return nil
-}
-
-func (c *fixApplication) FromApp(msg *quickfix.Message, sessionID quickfix.SessionID) (reject quickfix.MessageRejectError) {
-	msgType, _ := msg.Header.GetString(tag.MsgType)
-	switch msgType {
-	case "d":
-		symbol, _ := msg.Body.GetString(tag.Symbol)
-		contractMultiplier, _ := msg.Body.GetString(tag.ContractMultiplier)
-		priceIncrement, _ := msg.Body.GetString(tag.TickIncrement)
-		if err := model.CheckExistingandAddPair(context.Background(), symbol, contractMultiplier, priceIncrement); err != nil {
-			log.Print(err)
-			return
-		}
-	case "8":
-		ordStatus, _ := msg.Body.GetString(tag.OrdStatus)
-		if ordStatus != "0" && ordStatus != "4" {
-			log.Printf("execution report: %+v", msg)
-		}
-		orderDetail := ToOrderDetail(msg)
-		// delete order from redis if it's been cancelled
-		switch orderDetail.Status {
-		case order.Cancelled:
-			if err := model.DeleteOrder(context.Background(), orderDetail); err != nil {
-				log.Printf("error when delete cancelled order: %+v", err)
-				return nil
-			}
-			return nil
-		case order.Filled:
-			log.Printf("filled order: %+v", orderDetail)
-			if err := c.AddCounterORderQueue(orderDetail); err != nil {
-				log.Printf("error when add counter order queue: %+v", err)
-				return nil
-			}
-			if err := model.UpdateOrCreateOrder(orderDetail, "filled order"); err != nil {
-				log.Printf("error when updating the order: %+v", err)
-				return nil
-			}
-			if err := model.DeleteOrder(context.Background(), orderDetail); err != nil {
-				log.Printf("error when delete filled order from redis: %+v", err)
-				return nil
-			}
-			executedAmountStr, _ := msg.Body.GetString(tag.LastQty)
-			lastPriceStr, _ := msg.Body.GetString(tag.LastPx)
-			if executedAmountStr != "0" && lastPriceStr != "0" {
-				executedAmount, _ := decimal.NewFromString(executedAmountStr)
-				lastPrice, _ := decimal.NewFromString(lastPriceStr)
-				trade := model.Trade{
-					TradeID:   orderDetail.ClientID,
-					OrderID:   orderDetail.OrderID,
-					Exchange:  CCX,
-					Price:     lastPrice.InexactFloat64(),
-					Quantity:  executedAmount.InexactFloat64(),
-					Timestamp: orderDetail.LastUpdated,
-				}
-				if err := model.UpdateOrCreateTrade(trade.TradeID, trade); err != nil {
-					log.Printf("error when saved trade: %+v", err)
-					return nil
-				}
-				return nil
-			}
-			return nil
-		case order.PartiallyFilled:
-			log.Printf("partially filled order: %+v", orderDetail)
-			if err := model.AddCancelQueue(context.Background(), orderDetail); err != nil {
-				log.Printf("error when add cancel order queue: %+v", err)
-				return
-			}
-			executedAmountStr, _ := msg.Body.GetString(tag.LastQty)
-			lastPriceStr, _ := msg.Body.GetString(tag.LastPx)
-			if executedAmountStr != "0" && lastPriceStr != "0" {
-				executedAmount, _ := decimal.NewFromString(executedAmountStr)
-				lastPrice, _ := decimal.NewFromString(lastPriceStr)
-				orderDetail.Price = lastPrice.InexactFloat64()
-				orderDetail.Amount = executedAmount.InexactFloat64()
-				if err := c.AddCounterORderQueue(orderDetail); err != nil {
-					log.Printf("error when add counter order queue: %+v", err)
-					return nil
-				}
-				trade := model.Trade{
-					TradeID:   orderDetail.ClientID,
-					OrderID:   orderDetail.OrderID,
-					Exchange:  orderDetail.Exchange,
-					Price:     lastPrice.InexactFloat64(),
-					Quantity:  executedAmount.InexactFloat64(),
-					Timestamp: orderDetail.LastUpdated,
-				}
-				if err := model.UpdateOrCreateTrade(trade.TradeID, trade); err != nil {
-					log.Printf("error when create trade: %+v", err)
-					return nil
-				}
-				return nil
-			}
-		case order.Rejected:
-			description, _ := msg.Body.GetString(tag.Text)
-			orderDetail.OrderID = fmt.Sprintf("%d-%s", time.Now().Unix(), generateRandomString(7))
-			if err := model.UpdateOrCreateOrder(orderDetail, description); err != nil {
-				log.Printf("error when save rejected order: %+v", err)
-				return nil
-			}
-			return nil
-		case order.New:
-			if err := model.UpdateOrCreateOrderRedis(context.Background(), orderDetail); err != nil {
-				log.Printf("error when updating the order: %+v", err)
-				return nil
-			}
-			return nil
-		default:
-			log.Printf("invalid order status: %+v", orderDetail)
-			return nil
-		}
+func NewFixEngine() *FixEngine {
+	app := &FixEngine{
+		MessageRouter: quickfix.NewMessageRouter(),
 	}
-	return nil
+	app.AddRoute(executionreport.Route(app.onExecutionReport))
+	app.AddRoute(securitydefinition.Route(app.onSecurityDefinition))
+	return app
 }
 
-func (c *fixApplication) ToAdmin(msg *quickfix.Message, sessionID quickfix.SessionID) {
+func (fe *FixEngine) OnCreate(sessionID quickfix.SessionID) {}
+
+func (fe *FixEngine) OnLogon(sessionID quickfix.SessionID) {
+	log.Infoln(log.FIXSys, "connected!")
+}
+
+func (fe *FixEngine) OnLogout(sessionID quickfix.SessionID) {}
+
+func (fe *FixEngine) ToAdmin(msg *quickfix.Message, sessionID quickfix.SessionID) {
 	msgType, _ := msg.Header.GetString(tag.MsgType)
 
 	if msgType == string(enum.MsgType_LOGON) {
-		msg.Body.Set(field.NewUsername(c.Username))
-		msg.Body.Set(field.NewPassword(c.Password))
+		msg.Body.Set(field.NewUsername(fe.Username))
+		msg.Body.Set(field.NewPassword(fe.Password))
 	}
 }
 
-func (c *fixApplication) ToApp(msg *quickfix.Message, sessionID quickfix.SessionID) error {
+func (fe *FixEngine) ToApp(msg *quickfix.Message, sessionID quickfix.SessionID) error {
 	return nil
 }
 
-func (c *fixApplication) AddCounterORderQueue(orderDetail order.Detail) error {
+func (fe *FixEngine) FromAdmin(msg *quickfix.Message, sessionID quickfix.SessionID) quickfix.MessageRejectError {
+	msgType, err := msg.Header.GetString(tag.MsgType)
+	if err != nil {
+		log.Errorf(log.FIXSys, "received message error: %+v", err)
+		return err
+	}
+	log.Debugf(log.FIXSys, "FromAdmin msg type: %s", msgType)
+	return nil
+}
+
+func (fe *FixEngine) FromApp(msg *quickfix.Message, sessionID quickfix.SessionID) quickfix.MessageRejectError {
+	log.Infof(log.FIXSys, "received message: %s", msg.String())
+	return fe.Route(msg, sessionID)
+}
+
+func (fe *FixEngine) onSecurityDefinition(msg securitydefinition.SecurityDefinition, sessionID quickfix.SessionID) quickfix.MessageRejectError {
+	symbol, err := msg.GetSymbol()
+	if err != nil {
+		return err
+	}
+	contractMultiplier, err := msg.GetContractMultiplier()
+	if err != nil {
+		return err
+	}
+	priceMultiplier, err := msg.Body.GetString(tag.TickIncrement)
+	if err != nil {
+		return err
+	}
+
+	if err := model.CheckExistingandAddPair(context.Background(), symbol, contractMultiplier.String(), priceMultiplier); err != nil {
+		log.Errorf(log.FIXSys, "error saving pair: %+v", err)
+		return nil
+	}
+	return nil
+}
+
+func (fe *FixEngine) onExecutionReport(msg executionreport.ExecutionReport, sessionID quickfix.SessionID) quickfix.MessageRejectError {
+	orderDetail, err := ToOrderDetail(msg)
+	if err != nil {
+		return err
+	}
+	// delete order from redis if it's been cancelled
+	switch orderDetail.Status {
+	case order.Cancelled:
+		if err := model.DeleteOrder(context.Background(), orderDetail.Copy()); err != nil {
+			log.Errorf(log.FIXSys, "error when delete cancelled order: %+v", err)
+			return nil
+		}
+		return nil
+	case order.Filled:
+		log.Debugf(log.FIXSys, "filled order: %+v", orderDetail)
+		if err := AddCounterORderQueue(orderDetail.Copy()); err != nil {
+			log.Errorf(log.FIXSys, "error when add counter order queue: %+v", err)
+			return nil
+		}
+		if err := model.UpdateOrCreateOrder(orderDetail.Copy(), "filled order"); err != nil {
+			log.Errorf(log.FIXSys, "error when updating the order: %+v", err)
+			return nil
+		}
+		if err := model.DeleteOrder(context.Background(), orderDetail.Copy()); err != nil {
+			log.Errorf(log.FIXSys, "error when delete filled order from redis: %+v", err)
+			return nil
+		}
+		executedAmount, err := msg.GetLastShares()
+		if err != nil {
+			return err
+		}
+		lastPrice, err := msg.GetLastPx()
+		if err != nil {
+			return err
+		}
+		if !decimal.Zero.Equal(executedAmount) && !decimal.Zero.Equal(lastPrice) {
+			trade := model.Trade{
+				TradeID:   orderDetail.ClientID,
+				OrderID:   orderDetail.OrderID,
+				Exchange:  CCX,
+				Price:     lastPrice.InexactFloat64(),
+				Quantity:  executedAmount.InexactFloat64(),
+				Timestamp: orderDetail.LastUpdated,
+			}
+			if err := model.UpdateOrCreateTrade(trade.TradeID, trade); err != nil {
+				log.Errorf(log.FIXSys, "error when saved trade: %+v", err)
+				return nil
+			}
+			return nil
+		}
+		return nil
+	case order.PartiallyFilled:
+		log.Debugf(log.FIXSys, "partially filled order: %+v", orderDetail)
+		if err := fe.CancelOrder(*orderDetail); err != nil {
+			log.Errorf(log.FIXSys, "failed to cancel partial filled order: %+v", err)
+			return nil
+		}
+		executedAmount, err := msg.GetLastShares()
+		if err != nil {
+			return err
+		}
+		lastPrice, err := msg.GetLastPx()
+		if err != nil {
+			return err
+		}
+		if !decimal.Zero.Equal(executedAmount) && !decimal.Zero.Equal(lastPrice) {
+			orderDetail.Price = lastPrice.InexactFloat64()
+			orderDetail.Amount = executedAmount.InexactFloat64()
+			if err := AddCounterORderQueue(orderDetail.Copy()); err != nil {
+				log.Errorf(log.FIXSys, "error when add counter order queue: %+v", err)
+				return nil
+			}
+			trade := model.Trade{
+				TradeID:   orderDetail.ClientID,
+				OrderID:   orderDetail.OrderID,
+				Exchange:  orderDetail.Exchange,
+				Price:     lastPrice.InexactFloat64(),
+				Quantity:  executedAmount.InexactFloat64(),
+				Timestamp: orderDetail.LastUpdated,
+			}
+			if err := model.UpdateOrCreateTrade(trade.TradeID, trade); err != nil {
+				log.Errorf(log.FIXSys, "error when create trade: %+v", err)
+				return nil
+			}
+			return nil
+		}
+	case order.Rejected:
+		description, _ := msg.Body.GetString(tag.Text)
+		orderDetail.OrderID = fmt.Sprintf("%d-%s", time.Now().Unix(), generateRandomString(7))
+		if err := model.UpdateOrCreateOrder(orderDetail.Copy(), description); err != nil {
+			log.Errorf(log.FIXSys, "error when save rejected order: %+v", err)
+			return nil
+		}
+		return nil
+	case order.New:
+		if err := model.UpdateOrCreateOrderRedis(context.Background(), orderDetail.Copy()); err != nil {
+			log.Errorf(log.FIXSys, "error when updating the order: %+v", err)
+			return nil
+		}
+		return nil
+	default:
+		log.Errorf(log.FIXSys, "invalid order status: %+v", orderDetail)
+		return nil
+	}
+	return nil
+}
+
+func AddCounterORderQueue(orderDetail order.Detail) error {
 	switch orderDetail.Side {
 	case order.Buy:
 		orderDetail.Side = order.Sell
@@ -194,18 +243,6 @@ func (c *fixApplication) AddCounterORderQueue(orderDetail order.Detail) error {
 		orderDetail.ClientOrderID = orderDetail.ClientID
 	}
 	return model.AddCounterOrderQueue(context.Background(), orderDetail)
-}
-
-type FixEngine struct {
-	processOrder  int32
-	senderCompId  string
-	targetCompId  string
-	accountCode   string
-	pairFormatter *currency.PairFormat
-	initiator     *quickfix.Initiator
-	settings      *quickfix.Settings
-	logFactory    *quickfix.LogFactory
-	storeFactory  quickfix.MessageStoreFactory
 }
 
 func (fe *FixEngine) Start() error {
@@ -248,37 +285,18 @@ func (fe *FixEngine) Start() error {
 		Delimiter: "-",
 	}
 
-	app := &fixApplication{}
-	app.Username = config.Section("SESSION").Key("UserName").String()
-	app.Password = config.Section("SESSION").Key("Password").String()
-	initiator, err := quickfix.NewInitiator(app, fe.storeFactory, fe.settings, *fe.logFactory)
+	fe.Username = config.Section("SESSION").Key("UserName").String()
+	fe.Password = config.Section("SESSION").Key("Password").String()
+	initiator, err := quickfix.NewInitiator(fe, fe.storeFactory, fe.settings, *fe.logFactory)
 	if err != nil {
 		return fmt.Errorf("error when initiate initiator : %+v", err)
 	}
 	fe.initiator = initiator
-	go fe.CancelOrderRoutine()
 	return fe.initiator.Start()
 }
 
 func (fe *FixEngine) Stop() {
 	fe.initiator.Stop()
-}
-
-func (fe *FixEngine) CancelOrderRoutine() {
-	if fe == nil {
-		return
-	}
-
-	ticker := time.NewTicker(time.Millisecond * 500)
-	defer ticker.Stop()
-	fe.SendCancelOrder()
-
-	for {
-		select {
-		case <-ticker.C:
-			go fe.SendCancelOrder()
-		}
-	}
 }
 
 func (fe *FixEngine) SecuritiesDetail() error {
@@ -382,33 +400,4 @@ func (fe *FixEngine) GetCCXPairs() ([]SecurityDetail, error) {
 		}
 	}
 	return ccxPairs, nil
-}
-
-func (fe *FixEngine) SendCancelOrder() {
-	if !atomic.CompareAndSwapInt32(&fe.processOrder, 0, 1) {
-		return
-	}
-	defer atomic.StoreInt32(&fe.processOrder, 0)
-
-	if !fe.initiator.BuildInitiators {
-		return
-	}
-
-	orderDetail, err := model.GetCancelQueue(context.Background())
-	if err != nil {
-		log.Printf("error when get counter order queue: %+v", err)
-		return
-	}
-	if orderDetail.OrderID == "" {
-		return
-	}
-	if err := fe.CancelOrder(orderDetail); err != nil {
-		log.Printf("error when send counter order queue: %+v", err)
-		if err := model.AddCancelQueue(context.Background(), orderDetail); err != nil {
-			log.Printf("error when resaved error counter order: %+v", err)
-			return
-		}
-		return
-	}
-	return
 }

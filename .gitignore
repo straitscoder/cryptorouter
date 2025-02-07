@@ -28,6 +28,7 @@ fixengine/fixengine
 fixcli/fixcli
 trading-service/trading-service
 market-maker/market-maker
+candle-data/candle-data
 *.exe
 *.exe~
 *.dll

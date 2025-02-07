@@ -44,7 +44,7 @@ func NewMarketMaker(exchManager *ExchangeManager, eventRoutine *websocketRoutine
 	marketMaker.Shutdown = make(chan struct{})
 	marketMaker.ExchangeManager = exchManager
 	marketMaker.SocketManager = eventRoutine
-	marketMaker.FixEngine = new(fixengine.FixEngine)
+	marketMaker.FixEngine = fixengine.NewFixEngine()
 	return &marketMaker, nil
 }
 
@@ -64,9 +64,10 @@ func (m *MarketMaker) Start() error {
 
 func (m *MarketMaker) Stop() {
 	m.Shutdown <- struct{}{}
+	ClearPRStore()
+	ClearBPStore()
 	m.ShutdownRoutine()
 	m.FixEngine.Stop()
-	ClearPRStore()
 	// if err := model.DeleteOrders(context.Background()); err != nil {
 	// 	log.Printf("failed to delete orders: %+v", err)
 	// }
@@ -207,13 +208,13 @@ func (m *MarketMaker) PlaceOrder() {
 	defer atomic.StoreInt32(&m.ProcessingOrder, 0)
 
 	fairPrices := tempPRStore
-	bestPrices := tempBPStore
+	// bestPrices := tempBPStore
 
 	if len(fairPrices) == 0 {
 		return
 	}
-	log.Printf("fairPrices: %+v", fairPrices)
-	log.Printf("best prices: %+v", bestPrices)
+	// log.Printf("fairPrices: %+v", fairPrices)
+	// log.Printf("best prices: %+v", bestPrices)
 FairPricesLoop:
 	for _, value := range fairPrices {
 		if !strings.Contains(value.Symbol, "USDT") {

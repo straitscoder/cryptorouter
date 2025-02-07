@@ -24,6 +24,7 @@ var (
 	ExchangeSys *SubLogger
 	GRPCSys     *SubLogger
 	RESTSys     *SubLogger
+	FIXSys      *SubLogger
 
 	Ticker    *SubLogger
 	OrderBook *SubLogger

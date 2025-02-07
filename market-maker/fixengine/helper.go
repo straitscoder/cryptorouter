@@ -11,8 +11,8 @@ import (
 	"sync"
 
 	"github.com/quickfixgo/enum"
+	"github.com/quickfixgo/fix42/executionreport"
 	"github.com/quickfixgo/quickfix"
-	"github.com/quickfixgo/tag"
 	"github.com/shopspring/decimal"
 	"github.com/thrasher-corp/gocryptotrader/currency"
 	"github.com/thrasher-corp/gocryptotrader/exchanges/asset"
@@ -185,66 +185,106 @@ func convertTIF(timeInForce string) enum.TimeInForce {
 	}
 }
 
-func ToStatus(ordStatus string) order.Status {
+func ToStatus(ordStatus enum.OrdStatus) order.Status {
 	switch ordStatus {
-	case "0":
+	case enum.OrdStatus_NEW:
 		return order.New
-	case "1":
+	case enum.OrdStatus_PARTIALLY_FILLED:
 		return order.PartiallyFilled
-	case "2":
+	case enum.OrdStatus_FILLED:
 		return order.Filled
-	case "4":
+	case enum.OrdStatus_CANCELED:
 		return order.Cancelled
-	case "6":
+	case enum.OrdStatus_PENDING_CANCEL:
 		return order.PendingCancel
-	case "A":
+	case enum.OrdStatus_PENDING_NEW:
 		return order.Pending
 	default:
 		return order.Rejected
 	}
 }
 
-func ToType(ordType string) order.Type {
+func ToType(ordType enum.OrdType) order.Type {
 	switch ordType {
-	case "1":
+	case enum.OrdType_MARKET:
 		return order.Market
-	case "2":
+	case enum.OrdType_LIMIT:
 		return order.Limit
-	case "3":
-		return order.Stop
-	case "4":
+	case enum.OrdType_STOP, enum.OrdType_STOP_LIMIT:
 		return order.Stop
 	default:
 		return order.UnknownType
 	}
 }
 
-func ToSide(side string) order.Side {
+func ToSide(side enum.Side) order.Side {
 	switch side {
-	case "1":
+	case enum.Side_BUY:
 		return order.Buy
-	case "2":
+	case enum.Side_SELL:
 		return order.Sell
 	default:
 		return order.AnySide
 	}
 }
 
-func ToOrderDetail(msg *quickfix.Message) order.Detail {
-	clOrdID, _ := msg.Body.GetString(tag.ClOrdID)
-	orderId, _ := msg.Body.GetString(tag.OrderID)
-	ordStatus, _ := msg.Body.GetString(tag.OrdStatus)
-	exchange, _ := msg.Body.GetString(tag.SecurityExchange)
-	ordType, _ := msg.Body.GetString(tag.OrdType)
-	symbol, _ := msg.Body.GetString(tag.Symbol)
-	side, _ := msg.Body.GetString(tag.Side)
-	ordQty, _ := msg.Body.GetString(tag.OrderQty)
-	price, _ := msg.Body.GetString(tag.Price)
-	remainingQty, _ := msg.Body.GetString(tag.LeavesQty)
-	filledQty, _ := msg.Body.GetString(tag.CumQty)
-	avgPrice, _ := msg.Body.GetString(tag.AvgPx)
-	timestamp, _ := msg.Body.GetTime(tag.TransactTime)
-	execID, _ := msg.Body.GetString(tag.ExecID)
+func ToOrderDetail(msg executionreport.ExecutionReport) (*order.Detail, quickfix.MessageRejectError) {
+	clOrdID, err := msg.GetClOrdID()
+	if err != nil {
+		return nil, err
+	}
+	orderId, err := msg.GetOrderID()
+	if err != nil {
+		return nil, err
+	}
+	ordStatus, err := msg.GetOrdStatus()
+	if err != nil {
+		return nil, err
+	}
+	exchange, err := msg.GetSecurityExchange()
+	if err != nil {
+		return nil, err
+	}
+	ordType, err := msg.GetOrdType()
+	if err != nil {
+		return nil, err
+	}
+	symbol, err := msg.GetSymbol()
+	if err != nil {
+		return nil, err
+	}
+	side, err := msg.GetSide()
+	if err != nil {
+		return nil, err
+	}
+	ordQty, err := msg.GetOrderQty()
+	if err != nil {
+		return nil, err
+	}
+	price, err := msg.GetPrice()
+	if err != nil {
+		return nil, err
+	}
+	remainingQty, err := msg.GetLeavesQty()
+	if err != nil {
+		return nil, err
+	}
+	filledQty, err := msg.GetCumQty()
+	if err != nil {
+		return nil, err
+	}
+	avgPrice, err := msg.GetAvgPx()
+	if err != nil {
+		return nil, err
+	}
+	timestamp, err := msg.GetTransactTime()
+	if err != nil {
+		return nil, err
+	}
+	execID, err := msg.GetExecID()
+	if err != nil {
+		return nil, err
+	}
 	orderDetail := order.Detail{
 		AssetType: asset.Futures,
 	}
@@ -269,26 +309,15 @@ func ToOrderDetail(msg *quickfix.Message) order.Detail {
 	if side != "" {
 		orderDetail.Side = ToSide(side)
 	}
-	if ordQty != "" {
-		amount, _ := decimal.NewFromString(ordQty)
-		orderDetail.Amount = amount.InexactFloat64()
+	if !decimal.Zero.Equal(ordQty) {
+		orderDetail.Amount = ordQty.InexactFloat64()
 	}
-	if price != "" {
-		priceD, _ := decimal.NewFromString(price)
-		orderDetail.Price = priceD.InexactFloat64()
+	if !decimal.Zero.Equal(price) {
+		orderDetail.Price = price.InexactFloat64()
 	}
-	if remainingQty != "" {
-		remainingAmount, _ := decimal.NewFromString(remainingQty)
-		orderDetail.RemainingAmount = remainingAmount.InexactFloat64()
-	}
-	if filledQty != "" {
-		FilledAmount, _ := decimal.NewFromString(filledQty)
-		orderDetail.ExecutedAmount = FilledAmount.InexactFloat64()
-	}
-	if avgPrice != "" {
-		avgPx, _ := decimal.NewFromString(avgPrice)
-		orderDetail.AverageExecutedPrice = avgPx.InexactFloat64()
-	}
+	orderDetail.RemainingAmount = remainingQty.InexactFloat64()
+	orderDetail.ExecutedAmount = filledQty.InexactFloat64()
+	orderDetail.AverageExecutedPrice = avgPrice.InexactFloat64()
 	if !timestamp.IsZero() {
 		orderDetail.LastUpdated = timestamp
 		orderDetail.Date = timestamp
@@ -296,7 +325,7 @@ func ToOrderDetail(msg *quickfix.Message) order.Detail {
 	if execID != "" {
 		orderDetail.ClientID = execID
 	}
-	return orderDetail
+	return &orderDetail, nil
 }
 
 var (

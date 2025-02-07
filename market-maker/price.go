@@ -116,6 +116,15 @@ func updateBestPrice(bestPrice BestPrice) error {
 	return nil
 }
 
+func ClearBPStore() {
+	BPMutex.Lock()
+	defer BPMutex.Unlock()
+
+	for key := range tempBPStore {
+		delete(tempBPStore, key)
+	}
+}
+
 func BestPriceProcess(ticks *ticker.Price, symbol string) error {
 	if ticks == nil {
 		return errors.New("ticker is nil")
@@ -146,6 +155,7 @@ func BestPriceProcess(ticks *ticker.Price, symbol string) error {
 	if bestPrice == nil {
 		saveBestPrice(askBestPrice)
 		saveBestPrice(bidBestPrice)
+		return nil
 	}
 
 	if bestPrice[bidBestPrice.Side].Price > bidBestPrice.Price && bidBestPrice.Price > 0 {

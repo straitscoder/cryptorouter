@@ -253,6 +253,7 @@ func init() {
 	ExchangeSys = registerNewSubLogger("EXCHANGE")
 	GRPCSys = registerNewSubLogger("GRPC")
 	RESTSys = registerNewSubLogger("REST")
+	FIXSys = registerNewSubLogger("FIX")
 
 	Ticker = registerNewSubLogger("TICKER")
 	OrderBook = registerNewSubLogger("ORDERBOOK")

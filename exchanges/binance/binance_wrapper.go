@@ -1919,6 +1919,16 @@ func (b *Binance) ValidateAPICredentials(ctx context.Context, assetType asset.It
 // FormatExchangeKlineInterval returns Interval to exchange formatted string
 func (b *Binance) FormatExchangeKlineInterval(interval kline.Interval) string {
 	switch interval {
+	case kline.OneMin:
+		return "1m"
+	case kline.FiveMin:
+		return "5m"
+	case kline.FifteenMin:
+		return "15m"
+	case kline.ThirtyMin:
+		return "30m"
+	case kline.OneHour:
+		return "1h"
 	case kline.OneDay:
 		return "1d"
 	case kline.ThreeDay:
