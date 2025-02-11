@@ -7,7 +7,8 @@ import (
 )
 
 type Order struct {
-	ClientOrderID string    `json:"clientOrderId" gorm:"primary_key"`
+	UniqueID      string    `json:"uniqueId" gorm:"primaryKey"`
+	ClientOrderID string    `json:"clientOrderId"`
 	OrderID       string    `json:"orderId" gorm:"unique"`
 	ClientID      string    `json:"clientId"`
 	Exchange      string    `json:"exchange"`
@@ -52,8 +53,13 @@ func GetOrderByOrderID(orderID string) (order Order) {
 	return
 }
 
-func UpdateOrder(clOrdId string, order Order) error {
-	if err := db.Model(&Order{}).Where(&Order{ClientOrderID: clOrdId}).Updates(order).Error; err != nil {
+func GetByUniqueID(uniqueID string) (order Order) {
+	db.Model(&Order{}).Where(&Order{UniqueID: uniqueID}).Preload("Trades").First(&order)
+	return
+}
+
+func UpdateOrder(uniqueId string, order Order) error {
+	if err := db.Model(&Order{}).Where(&Order{UniqueID: uniqueId}).Updates(order).Error; err != nil {
 		return err
 	}
 	return nil
@@ -61,7 +67,7 @@ func UpdateOrder(clOrdId string, order Order) error {
 
 func UpdateOrCreateOrder(orderDetail order.Detail, description string) error {
 	order, trades := ToOrder(orderDetail, description)
-	existingOrder := GetOrderByOrderID(order.OrderID)
+	existingOrder := GetByUniqueID(order.UniqueID)
 	if existingOrder.ClientOrderID == "" {
 		if len(trades) > 0 {
 			for x := range trades {
@@ -81,7 +87,7 @@ func UpdateOrCreateOrder(orderDetail order.Detail, description string) error {
 		}
 	}
 
-	return UpdateOrder(existingOrder.ClientOrderID, order)
+	return UpdateOrder(existingOrder.UniqueID, order)
 }
 
 func ToOrder(orderDetail order.Detail, description string) (Order, []Trade) {
@@ -102,6 +108,7 @@ func ToOrder(orderDetail order.Detail, description string) (Order, []Trade) {
 		}
 	}
 	return Order{
+		UniqueID:      orderDetail.ClientOrderID + "-" + orderDetail.OrderID,
 		ClientOrderID: orderDetail.ClientOrderID,
 		OrderID:       orderDetail.OrderID,
 		ClientID:      orderDetail.ClientID,

@@ -41,6 +41,8 @@ require (
 	gopkg.in/ini.v1 v1.67.0
 )
 
+require github.com/apache/thrift v0.21.0 // indirect
+
 require (
 	dario.cat/mergo v1.0.1 // indirect
 	github.com/Masterminds/goutils v1.1.1 // indirect

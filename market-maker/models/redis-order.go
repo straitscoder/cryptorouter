@@ -3,6 +3,7 @@ package model
 import (
 	"context"
 	"encoding/json"
+	"sync"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -33,6 +34,10 @@ type OrderRedis struct {
 const (
 	orderIDListKey = "orderIDList"
 	orderKey       = "order"
+)
+
+var (
+	redisMutex sync.Mutex
 )
 
 func ToOrderRedis(detail order.Detail) OrderRedis {
@@ -139,6 +144,8 @@ func AddOrderRedis(ctx context.Context, o order.Detail) error {
 }
 
 func GetOrdersRedis(ctx context.Context, cond, notCond *order.Filter) (orders []order.Detail, err error) {
+	redisMutex.Lock()
+	defer redisMutex.Unlock()
 	orderIDList, err := rdClient.LRange(ctx, orderIDListKey, 0, -1).Result()
 	if err != nil {
 		if err == redis.Nil {
@@ -199,6 +206,8 @@ func GetOrderRedis(ctx context.Context, orderID string) (order order.Detail, err
 }
 
 func UpdateOrCreateOrderRedis(ctx context.Context, orderD order.Detail) error {
+	redisMutex.Lock()
+	defer redisMutex.Unlock()
 	existingOrder, err := GetOrderRedis(ctx, orderD.OrderID)
 	if err != nil {
 		return err
@@ -237,6 +246,13 @@ func UpdateOrCreateOrderRedis(ctx context.Context, orderD order.Detail) error {
 }
 
 func DeleteOrder(ctx context.Context, orderDetail order.Detail) error {
+	existingOrder, err := GetOrderRedis(ctx, orderDetail.OrderID)
+	if err != nil {
+		return err
+	}
+	if existingOrder.OrderID == "" {
+		return nil
+	}
 	if err := rdClient.HDel(ctx, orderKey, orderDetail.OrderID).Err(); err != nil {
 		return err
 	}

@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"strconv"
+	"log"
 
 	"github.com/redis/go-redis/v9"
 )
@@ -15,6 +15,7 @@ const (
 )
 
 type Pair struct {
+	InstrumentID       int32   `json:"instrument_id"`
 	Base               string  `json:"base"`
 	Quote              string  `json:"quote"`
 	Delimiter          string  `json:"delimiter"`
@@ -53,27 +54,19 @@ func AddPair(ctx context.Context, pair Pair) error {
 	return nil
 }
 
-func CheckExistingandAddPair(ctx context.Context, base string, contractMultiplier string, priceIncrement string) error {
+func CheckExistingandAddPair(ctx context.Context, instrumentId int32, base string, contractMultiplier, priceIncrement float64) error {
 	jsonPair, err := rdClient.HGet(ctx, pairKey, base).Bytes()
 	if err != nil {
 		if err == redis.Nil {
-			cMultiplier, err := strconv.ParseFloat(contractMultiplier, 64)
-			if err != nil {
-				return err
-			}
-
-			prcIncrement, err := strconv.ParseFloat(priceIncrement, 64)
-			if err != nil {
-				return err
-			}
-
 			pair := Pair{
+				InstrumentID:       instrumentId,
 				Base:               base,
 				Delimiter:          "-",
 				Quote:              "USDT",
-				ContractMultiplier: cMultiplier,
-				PriceIncrement:     prcIncrement,
+				ContractMultiplier: contractMultiplier,
+				PriceIncrement:     priceIncrement,
 			}
+			log.Printf("saved pair: %+v", pair)
 			if err := AddPair(ctx, pair); err != nil {
 				return err
 			}

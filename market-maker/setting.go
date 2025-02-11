@@ -25,6 +25,12 @@ var (
 
 	priceLevelDepth   int
 	priceGapTolerance float64
+
+	host     string
+	port     int
+	username string
+	password string
+	exchCCX  string
 )
 
 func init() {
@@ -35,6 +41,7 @@ func init() {
 		return
 	}
 	LoadPrice()
+	LoadThriftServer()
 }
 
 func LoadPrice() {
@@ -68,4 +75,18 @@ func LoadPrice() {
 
 	priceLevelDepth = sec.Key("PriceLevelDepth").MustInt(5)
 	priceGapTolerance = sec.Key("PriceGapTolerance").MustFloat64(0.05)
+}
+
+func LoadThriftServer() {
+	sec, err := Cfg.GetSection("THRIFTSERVER")
+	if err != nil {
+		log.Fatalf("error load thrift server config: %+v", err)
+		return
+	}
+
+	host = sec.Key("Host").MustString("192.168.1.50")
+	port = sec.Key("Port").MustInt(9090)
+	username = sec.Key("Username").MustString("@@!@!@!!2")
+	password = sec.Key("Password").MustString("@!@!#!@@!@!")
+	exchCCX = sec.Key("Exchange").MustString("CCX")
 }

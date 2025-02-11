@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"math"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -18,17 +19,20 @@ import (
 	"github.com/thrasher-corp/gocryptotrader/exchanges/ticker"
 	"github.com/thrasher-corp/gocryptotrader/market-maker/fixengine"
 	model "github.com/thrasher-corp/gocryptotrader/market-maker/models"
+	tsclient "github.com/thrasher-corp/gocryptotrader/market-maker/trading-service"
+	"github.com/thrasher-corp/gocryptotrader/market-maker/trading-service/types"
 )
 
 type MarketMaker struct {
 	ProcessingOrder      int32
 	FetchTicker          int32
 	processExchangeOrder int32
-	FixEngine            *fixengine.FixEngine
-	ExchangeManager      *ExchangeManager
-	SocketManager        *websocketRoutineManager
-	PairFormatter        *currency.PairFormat
-	Shutdown             chan struct{}
+	// FixEngine            *fixengine.FixEngine
+	TSClient        *tsclient.TSClient
+	ExchangeManager *ExchangeManager
+	SocketManager   *websocketRoutineManager
+	PairFormatter   *currency.PairFormat
+	Shutdown        chan struct{}
 }
 
 func NewMarketMaker(exchManager *ExchangeManager, eventRoutine *websocketRoutineManager) (*MarketMaker, error) {
@@ -41,18 +45,20 @@ func NewMarketMaker(exchManager *ExchangeManager, eventRoutine *websocketRoutine
 			Delimiter: "-",
 		},
 	}
+
+	marketMaker.TSClient = tsclient.NewTSClient(username, password, host, port)
 	marketMaker.Shutdown = make(chan struct{})
 	marketMaker.ExchangeManager = exchManager
 	marketMaker.SocketManager = eventRoutine
-	marketMaker.FixEngine = fixengine.NewFixEngine()
+	// marketMaker.FixEngine = fixengine.NewFixEngine()
 	return &marketMaker, nil
 }
 
 func (m *MarketMaker) Start() error {
-	if err := m.FixEngine.Start(); err != nil {
+	if err := m.TSClient.Start(); err != nil {
 		return err
 	}
-	if err := m.FixEngine.SecuritiesDetail(); err != nil {
+	if err := m.TSClient.GetPairs(context.Background(), exchCCX); err != nil {
 		log.Printf("error when requesting security detail: %+v", err)
 		return err
 	}
@@ -67,7 +73,6 @@ func (m *MarketMaker) Stop() {
 	ClearPRStore()
 	ClearBPStore()
 	m.ShutdownRoutine()
-	m.FixEngine.Stop()
 	// if err := model.DeleteOrders(context.Background()); err != nil {
 	// 	log.Printf("failed to delete orders: %+v", err)
 	// }
@@ -76,6 +81,7 @@ func (m *MarketMaker) Stop() {
 }
 
 func (m *MarketMaker) run() {
+	// m.CheckOrderStatus()
 	m.PlaceOrder()
 	ticker := time.NewTicker(time.Millisecond * 500)
 	defer ticker.Stop()
@@ -88,7 +94,7 @@ func (m *MarketMaker) run() {
 		case <-ticker.C:
 			go m.GetFairPrice()
 			go m.PlaceOrder()
-			go m.CreateCounterOrder()
+			// go m.CheckOrderStatus()
 		}
 	}
 }
@@ -118,14 +124,14 @@ func (m *MarketMaker) GetFairPrice() {
 		}
 
 		for y := range enabledAssets {
-			ccxPairs, err := m.FixEngine.GetCCXPairs()
+			ccxPairs, err := m.TSClient.GetCCXPairs()
 			if err != nil {
 				log.Print(err)
 				continue
 			}
 
 			if len(ccxPairs) == 0 {
-				if err := m.FixEngine.SecuritiesDetail(); err != nil {
+				if err := m.TSClient.GetPairs(context.Background(), exchCCX); err != nil {
 					log.Print(err)
 					continue
 				}
@@ -206,7 +212,7 @@ func (m *MarketMaker) PlaceOrder() {
 		return
 	}
 	defer atomic.StoreInt32(&m.ProcessingOrder, 0)
-
+	m.CheckOrderStatus()
 	fairPrices := tempPRStore
 	// bestPrices := tempBPStore
 
@@ -230,7 +236,7 @@ FairPricesLoop:
 		ccxPair := currency.NewPairWithDelimiter(pair.Base.String(), "USD", "-")
 
 		createdOrders, err := model.GetOrdersRedis(context.Background(),
-			&order.Filter{Exchange: fixengine.CCX, Pair: ccxPair, Status: order.New},
+			&order.Filter{Exchange: exchCCX, Pair: ccxPair, Status: order.New},
 			nil,
 		)
 
@@ -243,7 +249,7 @@ FairPricesLoop:
 			bidPriceLeves := GeneratePriceLevels(value.Price, value.PriceMultiplier, "bid")
 			for b := range bidPriceLeves {
 				reqOrder := order.Detail{
-					Exchange:  fixengine.CCX,
+					Exchange:  exchCCX,
 					AssetType: asset.Futures,
 					Side:      order.Buy,
 					Type:      order.Limit,
@@ -252,7 +258,7 @@ FairPricesLoop:
 					Amount:    quantityLevels[b%len(quantityLevels)], // use config supplied quantity level that base on book depth and prevent out of range error
 				}
 
-				if err := m.FixEngine.NewOrderSingle(reqOrder); err != nil {
+				if err := m.TSClient.NewOrder(context.Background(), reqOrder); err != nil {
 					log.Printf("error when sent new order request: %+v", err)
 					continue
 				}
@@ -261,7 +267,7 @@ FairPricesLoop:
 			askPriceLeves := GeneratePriceLevels(value.Price, value.PriceMultiplier, "ask")
 			for b := range askPriceLeves {
 				reqOrder := order.Detail{
-					Exchange:  fixengine.CCX,
+					Exchange:  exchCCX,
 					AssetType: asset.Futures,
 					Side:      order.Sell,
 					Type:      order.Limit,
@@ -269,7 +275,7 @@ FairPricesLoop:
 					Price:     askPriceLeves[b],
 					Amount:    quantityLevels[b%len(quantityLevels)],
 				}
-				if err := m.FixEngine.NewOrderSingle(reqOrder); err != nil {
+				if err := m.TSClient.NewOrder(context.Background(), reqOrder); err != nil {
 					log.Printf("error when sent new order request: %+v", err)
 					continue
 				}
@@ -292,17 +298,17 @@ FairPricesLoop:
 				// 	log.Printf("error when modifying orders: %+v", err)
 				// 	continue
 				// }
-				log.Printf("price changed for %s", createdOrders[i].Pair.Base.String())
+				// log.Printf("price changed for %s", createdOrders[i].Pair.Base.String())
 				break ModifyOrderLoop
 			}
-			log.Printf("price not change for %s", createdOrders[i].Pair.Base.String())
+			// log.Printf("price not change for %s", createdOrders[i].Pair.Base.String())
 			continue FairPricesLoop
 		}
 
 		bidPriceLeves := GeneratePriceLevels(value.Price, value.PriceMultiplier, "bid")
 		for b := range bidPriceLeves {
 			reqOrder := order.Detail{
-				Exchange:  fixengine.CCX,
+				Exchange:  exchCCX,
 				AssetType: asset.Futures,
 				Side:      order.Buy,
 				Type:      order.Limit,
@@ -311,7 +317,7 @@ FairPricesLoop:
 				Amount:    quantityLevels[b%len(quantityLevels)], // use config supplied quantity level that base on book depth and prevent out of range error
 			}
 
-			if err := m.FixEngine.NewOrderSingle(reqOrder); err != nil {
+			if err := m.TSClient.NewOrder(context.Background(), reqOrder); err != nil {
 				log.Printf("error when sent new order request: %+v", err)
 				continue
 			}
@@ -320,7 +326,7 @@ FairPricesLoop:
 		askPriceLeves := GeneratePriceLevels(value.Price, value.PriceMultiplier, "ask")
 		for b := range askPriceLeves {
 			reqOrder := order.Detail{
-				Exchange:  fixengine.CCX,
+				Exchange:  exchCCX,
 				AssetType: asset.Futures,
 				Side:      order.Sell,
 				Type:      order.Limit,
@@ -328,7 +334,7 @@ FairPricesLoop:
 				Price:     askPriceLeves[b],
 				Amount:    quantityLevels[b%len(quantityLevels)],
 			}
-			if err := m.FixEngine.NewOrderSingle(reqOrder); err != nil {
+			if err := m.TSClient.NewOrder(context.Background(), reqOrder); err != nil {
 				log.Printf("error when sent new order request: %+v", err)
 				continue
 			}
@@ -339,7 +345,7 @@ FairPricesLoop:
 
 func (m *MarketMaker) CheckPriceDifference(fairPrice float64, orderDetail order.Detail, priceMultiplier float64) bool {
 	var allowedDifference float64
-	fairPrice = decimal.NewFromFloatWithExponent(fairPrice, -2).InexactFloat64()
+	fairPrice = decimal.NewFromFloatWithExponent(fairPrice, -GetExponent(priceMultiplier)).InexactFloat64()
 	// if fairPrice > 999 {
 	// 	priceMultiplier = 1
 	// }
@@ -376,7 +382,7 @@ func (m *MarketMaker) CheckPriceDifference(fairPrice float64, orderDetail order.
 
 func (m *MarketMaker) CancelAllOrders(orders []order.Detail) error {
 	for i := range orders {
-		if err := m.FixEngine.CancelOrder(orders[i]); err != nil {
+		if err := m.TSClient.CancelOrder(context.Background(), orders[i]); err != nil {
 			return err
 		}
 	}
@@ -385,7 +391,7 @@ func (m *MarketMaker) CancelAllOrders(orders []order.Detail) error {
 
 func (m *MarketMaker) ShutdownRoutine() {
 	existingOrders, err := model.GetOrdersRedis(context.Background(),
-		&order.Filter{Exchange: fixengine.CCX, Status: order.New},
+		&order.Filter{Exchange: exchCCX, Status: order.New},
 		nil,
 	)
 
@@ -399,7 +405,7 @@ func (m *MarketMaker) ShutdownRoutine() {
 	}
 
 	for i := range existingOrders {
-		if err := m.FixEngine.CancelOrder(existingOrders[i]); err != nil {
+		if err := m.TSClient.CancelOrder(context.Background(), existingOrders[i]); err != nil {
 			log.Printf("error when shutting down market maker: %+v", err)
 			return
 		}
@@ -525,7 +531,7 @@ func (m *MarketMaker) ModifyOrders(orders []order.Detail, fairPrice PriceReferen
 				Amount:    quantityLevels[x%len(quantityLevels)],
 			}
 
-			if err := m.FixEngine.NewOrderSingle(reqOrder); err != nil {
+			if err := m.TSClient.NewOrder(context.Background(), reqOrder); err != nil {
 				return err
 			}
 			continue PricesLoop
@@ -537,64 +543,168 @@ func (m *MarketMaker) ModifyOrders(orders []order.Detail, fairPrice PriceReferen
 	}
 
 	for i := range modifiedOrder {
-		if err := m.FixEngine.CancelReplaceOrder(modifiedOrder[i]); err != nil {
+		if err := m.TSClient.CancelOrder(context.Background(), modifiedOrder[i]); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (m *MarketMaker) CreateCounterOrder() {
+func (m *MarketMaker) CheckOrderStatus() {
 	if !atomic.CompareAndSwapInt32(&m.processExchangeOrder, 0, 1) {
 		return
 	}
 	defer atomic.StoreInt32(&m.processExchangeOrder, 0)
-	orderDetail, err := model.GetCounterOrderQueue(context.Background())
+	pairs, err := m.TSClient.GetCCXPairs()
 	if err != nil {
-		log.Printf("error when get counter order queue: %+v", err)
+		log.Printf("error when get ccx pairs: %+v", err)
 		return
 	}
 
-	if orderDetail.OrderID == "" {
+	if len(pairs) == 0 {
 		return
+	}
+
+	for x := range pairs {
+		ccxPair := currency.NewPairWithDelimiter(pairs[x].Pair.Base.String(), "USD", "-")
+		existingOrders, err := model.GetOrdersRedis(context.Background(),
+			&order.Filter{Exchange: exchCCX, Pair: ccxPair, Status: order.New},
+			nil,
+		)
+		if err != nil {
+			log.Printf("error when get exsiting order: %+v", err)
+			continue
+		}
+
+		if len(existingOrders) == 0 {
+			instrument := pairs[x].Pair.Base.String()
+			createdOrders, err := m.TSClient.GetOrders(context.Background(), &types.SearchCriteria{
+				Exchange:   &exchCCX,
+				Instrument: &instrument,
+				Account:    &username,
+			})
+
+			if err != nil {
+				log.Printf("error get orders from trading service: %+v", err)
+				continue
+			}
+			if len(createdOrders) != 0 {
+				for y := range createdOrders {
+					if err := m.ProcessOrder(createdOrders[y]); err != nil {
+						log.Printf("error updating order: %+v", err)
+						continue
+					}
+				}
+			}
+			continue
+		}
+
+		for y := range existingOrders {
+			updatedOrder, err := m.TSClient.GetOrder(context.Background(), existingOrders[y].OrderID)
+			if err != nil {
+				log.Printf("error check order on trading service: %+v", err)
+				continue
+			}
+			if err := m.ProcessOrder(updatedOrder); err != nil {
+				log.Printf("error updating order: %+v", err)
+				continue
+			}
+		}
+	}
+}
+
+func (m *MarketMaker) ProcessOrder(o order.Detail) error {
+	switch o.Status {
+	case order.Cancelled:
+		if err := model.DeleteOrder(context.Background(), o); err != nil {
+			return err
+		}
+		return nil
+	case order.Filled:
+		log.Printf("filled order: %+v", o)
+		if err := m.CreateCounterOrder(o); err != nil {
+			return err
+		}
+		if err := model.UpdateOrCreateOrder(o, "filled order"); err != nil {
+			return err
+		}
+		if err := model.DeleteOrder(context.Background(), o); err != nil {
+			return err
+		}
+		return nil
+	case order.PartiallyFilled:
+		log.Printf("partially filled order: %+v", o)
+		if err := m.TSClient.CancelOrder(context.Background(), o); err != nil {
+			return err
+		}
+		if err := model.UpdateOrCreateOrder(o, fmt.Sprintf("partial filled order by: %f", o.ExecutedAmount)); err != nil {
+			return err
+		}
+		o.Amount = o.ExecutedAmount
+		if err := m.CreateCounterOrder(o); err != nil {
+			return err
+		}
+		return nil
+	case order.Rejected:
+		if err := model.UpdateOrCreateOrder(o, "rejected order"); err != nil {
+			return err
+		}
+		return nil
+	case order.New:
+		if err := model.UpdateOrCreateOrderRedis(context.Background(), o); err != nil {
+			return err
+		}
+		return nil
+	default:
+		return errors.New("invalid order status: " + o.Status.String())
+	}
+}
+
+func (m *MarketMaker) CreateCounterOrder(orderDetail order.Detail) error {
+	if orderDetail.OrderID == "" {
+		return order.ErrOrderDetailIsNil
 	}
 
 	existingOrder := model.GetOrderByClOrdID(orderDetail.ClientOrderID)
 	if existingOrder.OrderID != "" {
-		return
+		return nil
 	}
 
 	orderDetail.Pair = currency.NewPairWithDelimiter(orderDetail.Pair.Base.String(), "USDT", "-")
 	symbol := m.PairFormatter.Format(orderDetail.Pair)
 	priceReference := GetPriceReference(symbol)
 	if priceReference == nil {
-		log.Printf("no price reference provided for: %+v", orderDetail)
-		return
+		return errors.New("no valid price reference")
 	}
 
 	exch, err := m.ExchangeManager.GetExchangeByName("okx")
 	if err != nil {
-		log.Printf("error when get exchange for: %+v", priceReference)
-		return
+		return err
 	}
 
 	a, err := asset.New(priceReference.AssetType)
 	if err != nil {
-		log.Printf("invalid asset: %+v", priceReference)
-		return
+		return err
 	}
 
+	priceReference.Price = decimal.NewFromFloatWithExponent(priceReference.Price, -GetExponent(priceReference.PriceMultiplier)).InexactFloat64()
 	err = exch.CheckOrderExecutionLimits(a, orderDetail.Pair, priceReference.Price, orderDetail.Amount, orderDetail.Type)
 	if err != nil {
-		log.Printf("Execution limit error %+v", err)
-		return
+		return err
 	}
 
 	err = exch.CanTradePair(orderDetail.Pair, a)
 	if err != nil {
-		log.Printf("Trade pair error: %+v", err)
-		return
+		return err
 	}
+
+	switch orderDetail.Side {
+	case order.Buy:
+		orderDetail.Side = order.Sell
+	case order.Sell:
+		orderDetail.Side = order.Buy
+	}
+	orderDetail.Type = order.Market
 
 	submiRequest := order.Submit{
 		Exchange:      exch.GetName(),
@@ -609,26 +719,21 @@ func (m *MarketMaker) CreateCounterOrder() {
 
 	response, err := exch.SubmitOrder(context.TODO(), &submiRequest)
 	if err != nil {
-		log.Printf("Failed to submit this order: %+v", submiRequest)
-		return
+		return err
 	}
 
 	if response == nil {
-		return
+		return nil
 	}
 	log.Printf("Submitted order: %+v", *response)
 
 	internalId, _ := uuid.NewV4()
 	willSaveORder, err := response.DeriveDetail(internalId)
 	if err != nil {
-		log.Printf("error when generate order detail: %+v", err)
-		return
+		return err
 	}
 
-	if err := model.UpdateOrCreateOrder(*willSaveORder, fmt.Sprintf("Hedging order from %s", willSaveORder.Exchange)); err != nil {
-		log.Printf("error when save hedging order: %+v", err)
-		return
-	}
+	return model.UpdateOrCreateOrder(*willSaveORder, fmt.Sprintf("Hedging order from %s", willSaveORder.Exchange))
 }
 
 func GeneratePriceLevels(price, priceMultiplier float64, side string) []float64 {
@@ -649,4 +754,13 @@ func GeneratePriceLevels(price, priceMultiplier float64, side string) []float64 
 		}
 	}
 	return priceDepth
+}
+
+func GetExponent(priceMultiplier float64) int32 {
+	pmStr := strconv.FormatFloat(priceMultiplier, 'f', -1, 64)
+	parts := strings.Split(pmStr, ".")
+	if len(parts) == 1 {
+		return 0
+	}
+	return int32(len(parts[1]))
 }

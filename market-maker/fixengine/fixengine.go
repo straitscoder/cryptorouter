@@ -32,8 +32,6 @@ const (
 	CCX = "CCX"
 )
 
-var seqNum int
-
 type SecurityDetail struct {
 	Pair               currency.Pair
 	ContractMultiplier float64
@@ -44,7 +42,6 @@ type FixEngine struct {
 	*quickfix.MessageRouter
 	Username      string
 	Password      string
-	processOrder  int32
 	senderCompId  string
 	targetCompId  string
 	accountCode   string
@@ -59,6 +56,7 @@ func NewFixEngine() *FixEngine {
 	app := &FixEngine{
 		MessageRouter: quickfix.NewMessageRouter(),
 	}
+	log.Infoln(log.FIXSys, "Fix engine initiated")
 	app.AddRoute(executionreport.Route(app.onExecutionReport))
 	app.AddRoute(securitydefinition.Route(app.onSecurityDefinition))
 	return app
@@ -101,23 +99,23 @@ func (fe *FixEngine) FromApp(msg *quickfix.Message, sessionID quickfix.SessionID
 }
 
 func (fe *FixEngine) onSecurityDefinition(msg securitydefinition.SecurityDefinition, sessionID quickfix.SessionID) quickfix.MessageRejectError {
-	symbol, err := msg.GetSymbol()
-	if err != nil {
-		return err
-	}
-	contractMultiplier, err := msg.GetContractMultiplier()
-	if err != nil {
-		return err
-	}
-	priceMultiplier, err := msg.Body.GetString(tag.TickIncrement)
-	if err != nil {
-		return err
-	}
+	// symbol, err := msg.GetSymbol()
+	// if err != nil {
+	// 	return err
+	// }
+	// contractMultiplier, err := msg.GetContractMultiplier()
+	// if err != nil {
+	// 	return err
+	// }
+	// priceMultiplier, err := msg.Body.GetString(tag.TickIncrement)
+	// if err != nil {
+	// 	return err
+	// }
 
-	if err := model.CheckExistingandAddPair(context.Background(), symbol, contractMultiplier.String(), priceMultiplier); err != nil {
-		log.Errorf(log.FIXSys, "error saving pair: %+v", err)
-		return nil
-	}
+	// if err := model.CheckExistingandAddPair(context.Background(), symbol, contractMultiplier.String(), priceMultiplier); err != nil {
+	// 	log.Errorf(log.FIXSys, "error saving pair: %+v", err)
+	// 	return nil
+	// }
 	return nil
 }
 
@@ -273,13 +271,13 @@ func (fe *FixEngine) Start() error {
 		return fmt.Errorf("error reading setting cfg: %+v", err)
 	}
 
+	fe.storeFactory = file.NewStoreFactory(fe.settings)
 	logFactory, err := quickfix.NewFileLogFactory(fe.settings)
 	if err != nil {
 		return fmt.Errorf("unable to create logger: %s", err)
 	}
 	fe.logFactory = &logFactory
 
-	fe.storeFactory = file.NewStoreFactory(fe.settings)
 	fe.pairFormatter = &currency.PairFormat{
 		Uppercase: true,
 		Delimiter: "-",
