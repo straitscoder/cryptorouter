@@ -591,7 +591,7 @@ func (bot *Engine) GetSpecificTicker(ctx context.Context, p currency.Pair, excha
 	if err != nil {
 		return nil, err
 	}
-	return exch.FetchTicker(ctx, p, assetType)
+	return exch.UpdateTicker(ctx, p, assetType)
 }
 
 // GetCollatedExchangeAccountInfoByCoin collates individual exchange account

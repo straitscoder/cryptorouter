@@ -828,21 +828,22 @@ func (bi *Binanceus) GetOrderInfo(ctx context.Context, orderID string, pair curr
 		}
 	}
 	return &order.Detail{
-		Amount:         resp.OrigQty,
-		Exchange:       bi.Name,
-		OrderID:        strconv.FormatInt(int64(resp.OrderID), 10),
-		ClientOrderID:  resp.ClientOrderID,
-		Side:           orderSide,
-		Type:           orderType,
-		Pair:           pair,
-		Cost:           resp.CummulativeQuoteQty,
-		AssetType:      assetType,
-		Status:         status,
-		Price:          resp.Price,
-		ExecutedAmount: resp.ExecutedQty,
-		Date:           resp.Time,
-		LastUpdated:    resp.UpdateTime,
-		Trades:         trades,
+		Amount:          resp.OrigQty,
+		Exchange:        bi.Name,
+		OrderID:         strconv.FormatInt(int64(resp.OrderID), 10),
+		ClientOrderID:   resp.ClientOrderID,
+		Side:            orderSide,
+		Type:            orderType,
+		Pair:            pair,
+		Cost:            resp.CummulativeQuoteQty,
+		AssetType:       assetType,
+		Status:          status,
+		Price:           resp.Price,
+		ExecutedAmount:  resp.ExecutedQty,
+		RemainingAmount: resp.OrigQty - resp.ExecutedQty,
+		Date:            resp.Time,
+		LastUpdated:     resp.UpdateTime,
+		Trades:          trades,
 	}, nil
 }
 

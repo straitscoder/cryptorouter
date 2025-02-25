@@ -219,7 +219,7 @@ func (m *MarketMaker) PlaceOrder() {
 	if len(fairPrices) == 0 {
 		return
 	}
-	// log.Printf("fairPrices: %+v", fairPrices)
+	log.Printf("fairPrices: %+v", fairPrices)
 	// log.Printf("best prices: %+v", bestPrices)
 FairPricesLoop:
 	for _, value := range fairPrices {
@@ -298,10 +298,10 @@ FairPricesLoop:
 				// 	log.Printf("error when modifying orders: %+v", err)
 				// 	continue
 				// }
-				// log.Printf("price changed for %s", createdOrders[i].Pair.Base.String())
+				log.Printf("price changed for %s", createdOrders[i].Pair.Base.String())
 				break ModifyOrderLoop
 			}
-			// log.Printf("price not change for %s", createdOrders[i].Pair.Base.String())
+			log.Printf("price not change for %s", createdOrders[i].Pair.Base.String())
 			continue FairPricesLoop
 		}
 
@@ -621,6 +621,10 @@ func (m *MarketMaker) ProcessOrder(o order.Detail) error {
 		}
 		return nil
 	case order.Filled:
+		existingOrder := model.GetOrderByOrderID(o.OrderID)
+		if existingOrder.ClientOrderID != "" && existingOrder.Exchange == exchCCX {
+			return nil
+		}
 		log.Printf("filled order: %+v", o)
 		if err := m.CreateCounterOrder(o); err != nil {
 			return err
@@ -633,15 +637,18 @@ func (m *MarketMaker) ProcessOrder(o order.Detail) error {
 		}
 		return nil
 	case order.PartiallyFilled:
+		existingOrder := model.GetOrderByOrderID(o.OrderID)
+		if existingOrder.ClientOrderID != "" && existingOrder.Exchange == exchCCX {
+			return nil
+		}
 		log.Printf("partially filled order: %+v", o)
 		if err := m.TSClient.CancelOrder(context.Background(), o); err != nil {
 			return err
 		}
-		if err := model.UpdateOrCreateOrder(o, fmt.Sprintf("partial filled order by: %f", o.ExecutedAmount)); err != nil {
+		if err := m.CreateCounterOrder(o); err != nil {
 			return err
 		}
-		o.Amount = o.ExecutedAmount
-		if err := m.CreateCounterOrder(o); err != nil {
+		if err := model.UpdateOrCreateOrder(o, fmt.Sprintf("partial filled order by: %f", o.ExecutedAmount)); err != nil {
 			return err
 		}
 		return nil
@@ -688,7 +695,7 @@ func (m *MarketMaker) CreateCounterOrder(orderDetail order.Detail) error {
 	}
 
 	priceReference.Price = decimal.NewFromFloatWithExponent(priceReference.Price, -GetExponent(priceReference.PriceMultiplier)).InexactFloat64()
-	err = exch.CheckOrderExecutionLimits(a, orderDetail.Pair, priceReference.Price, orderDetail.Amount, orderDetail.Type)
+	err = exch.CheckOrderExecutionLimits(a, orderDetail.Pair, priceReference.Price, orderDetail.ExecutedAmount, orderDetail.Type)
 	if err != nil {
 		return err
 	}
@@ -713,7 +720,7 @@ func (m *MarketMaker) CreateCounterOrder(orderDetail order.Detail) error {
 		Pair:          orderDetail.Pair,
 		ClientOrderID: orderDetail.ClientOrderID,
 		Price:         orderDetail.Price,
-		Amount:        orderDetail.Amount,
+		Amount:        orderDetail.ExecutedAmount,
 		Side:          orderDetail.Side,
 	}
 
