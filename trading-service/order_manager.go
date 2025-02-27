@@ -1355,11 +1355,11 @@ func (m *OrderManager) processFuturesPositions(exch exchange.IBotExchange, posit
 		}
 		return err
 	}
-	tick, err := exch.FetchTicker(context.TODO(), position.Pair, position.Asset)
+	tick, err := exch.UpdateOrderbook(context.TODO(), position.Pair, position.Asset)
 	if err != nil {
 		return fmt.Errorf("%w when fetching ticker data for %v %v %v", err, exch.GetName(), position.Asset, position.Pair)
 	}
-	_, err = m.UpdateOpenPositionUnrealisedPNL(exch.GetName(), position.Asset, position.Pair, tick.Last, tick.LastUpdated)
+	_, err = m.UpdateOpenPositionUnrealisedPNL(exch.GetName(), position.Asset, position.Pair, tick.Asks[0].Price, tick.LastUpdated)
 	if err != nil {
 		return fmt.Errorf("%w when updating unrealised PNL for %v %v %v", err, exch.GetName(), position.Asset, position.Pair)
 	}

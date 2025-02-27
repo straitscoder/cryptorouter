@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -33,27 +32,6 @@ import (
 	"github.com/thrasher-corp/gocryptotrader/log"
 	"github.com/thrasher-corp/gocryptotrader/portfolio/withdraw"
 )
-
-// GetDefaultConfig returns a default exchange config
-func (d *Deribit) GetDefaultConfig(ctx context.Context) (*config.Exchange, error) {
-	d.SetDefaults()
-	exchCfg, err := d.GetStandardConfig()
-	if err != nil {
-		return nil, err
-	}
-
-	err = d.SetupDefaults(exchCfg)
-	if err != nil {
-		return nil, err
-	}
-	if d.Features.Supports.RESTCapabilities.AutoPairUpdates {
-		err := d.UpdateTradablePairs(ctx, true)
-		if err != nil {
-			return nil, err
-		}
-	}
-	return exchCfg, nil
-}
 
 // SetDefaults sets the basic defaults for Deribit
 func (d *Deribit) SetDefaults() {
@@ -148,6 +126,7 @@ func (d *Deribit) SetDefaults() {
 				GlobalResultLimit: 500,
 			},
 		},
+		Subscriptions: defaultSubscriptions.Clone(),
 	}
 	d.Requester, err = request.New(d.Name,
 		common.NewHTTPClientWithTimeout(exchange.DefaultHTTPTimeout),
@@ -197,7 +176,7 @@ func (d *Deribit) Setup(exch *config.Exchange) error {
 		Connector:             d.WsConnect,
 		Subscriber:            d.Subscribe,
 		Unsubscriber:          d.Unsubscribe,
-		GenerateSubscriptions: d.GenerateDefaultSubscriptions,
+		GenerateSubscriptions: d.generateSubscriptions,
 		Features:              &d.Features.Supports.WebsocketCapabilities,
 		OrderbookBufferConfig: buffer.Config{
 			SortBuffer:            true,
@@ -209,19 +188,12 @@ func (d *Deribit) Setup(exch *config.Exchange) error {
 		return err
 	}
 
-	// setup option decimal regex at startup to make constant checks more efficient
-	optionRegex = regexp.MustCompile(optionDecimalRegex)
-
-	err = d.Websocket.SetupNewConnection(&stream.ConnectionSetup{
-		// URL:                  d.Websocket.GetWebsocketURL(),
+	return d.Websocket.SetupNewConnection(&stream.ConnectionSetup{
+		URL:                  d.Websocket.GetWebsocketURL(),
 		ResponseCheckTimeout: exch.WebsocketResponseCheckTimeout,
 		ResponseMaxLimit:     exch.WebsocketResponseMaxLimit,
 	})
-	if err != nil {
-		log.Errorf(log.ExchangeSys, "Error when connect to deribit websocket: %+v", err)
-		return err
-	}
-	return nil
+
 }
 
 // FetchTradablePairs returns a list of the exchanges tradable pairs
@@ -324,24 +296,6 @@ func (d *Deribit) UpdateTicker(ctx context.Context, p currency.Pair, assetType a
 	return ticker.GetTicker(d.Name, p, assetType)
 }
 
-// FetchTicker returns the ticker for a currency pair
-func (d *Deribit) FetchTicker(ctx context.Context, p currency.Pair, assetType asset.Item) (*ticker.Price, error) {
-	tickerNew, err := ticker.GetTicker(d.Name, p, assetType)
-	if err != nil {
-		return d.UpdateTicker(ctx, p, assetType)
-	}
-	return tickerNew, nil
-}
-
-// FetchOrderbook returns orderbook base on the currency pair
-func (d *Deribit) FetchOrderbook(ctx context.Context, currencyPair currency.Pair, assetType asset.Item) (*orderbook.Base, error) {
-	ob, err := orderbook.Get(d.Name, currencyPair, assetType)
-	if err != nil {
-		return d.UpdateOrderbook(ctx, currencyPair, assetType)
-	}
-	return ob, nil
-}
-
 // UpdateOrderbook updates and returns the orderbook for a currency pair
 func (d *Deribit) UpdateOrderbook(ctx context.Context, p currency.Pair, assetType asset.Item) (*orderbook.Base, error) {
 	p, err := d.FormatExchangeCurrency(p, assetType)
@@ -420,19 +374,6 @@ func (d *Deribit) UpdateAccountInfo(ctx context.Context, _ asset.Item) (account.
 		resp.Accounts[x] = subAcc
 	}
 	return resp, nil
-}
-
-// FetchAccountInfo retrieves balances for all enabled currencies
-func (d *Deribit) FetchAccountInfo(ctx context.Context, assetType asset.Item) (account.Holdings, error) {
-	creds, err := d.GetCredentials(ctx)
-	if err != nil {
-		return account.Holdings{}, err
-	}
-	accountData, err := account.GetHoldings(d.Name, creds, assetType)
-	if err != nil {
-		return d.UpdateAccountInfo(ctx, assetType)
-	}
-	return accountData, nil
 }
 
 // GetAccountFundingHistory returns funding history, deposits and withdrawals

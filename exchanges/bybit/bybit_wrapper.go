@@ -476,29 +476,6 @@ func (by *Bybit) UpdateTicker(ctx context.Context, p currency.Pair, assetType as
 	return ticker.GetTicker(by.Name, p, assetType)
 }
 
-// FetchTicker returns the ticker for a currency pair
-func (by *Bybit) FetchTicker(ctx context.Context, p currency.Pair, assetType asset.Item) (*ticker.Price, error) {
-	fPair, err := by.FormatExchangeCurrency(p, assetType)
-	if err != nil {
-		return nil, err
-	}
-
-	tickerNew, err := ticker.GetTicker(by.Name, fPair, assetType)
-	if err != nil {
-		return by.UpdateTicker(ctx, p, assetType)
-	}
-	return tickerNew, nil
-}
-
-// FetchOrderbook returns orderbook base on the currency pair
-func (by *Bybit) FetchOrderbook(ctx context.Context, currency currency.Pair, assetType asset.Item) (*orderbook.Base, error) {
-	ob, err := orderbook.Get(by.Name, currency, assetType)
-	if err != nil {
-		return by.UpdateOrderbook(ctx, currency, assetType)
-	}
-	return ob, nil
-}
-
 // UpdateOrderbook updates and returns the orderbook for a currency pair
 func (by *Bybit) UpdateOrderbook(ctx context.Context, p currency.Pair, assetType asset.Item) (*orderbook.Base, error) {
 	if p.IsEmpty() {
@@ -562,7 +539,7 @@ func (by *Bybit) UpdateAccountInfo(ctx context.Context, assetType asset.Item) (a
 	var acc account.SubAccount
 	var accountType string
 	info.Exchange = by.Name
-	err := by.RetrieveAndSetAccountType(ctx)
+	at, err := by.FetchAccountType(ctx)
 	if err != nil {
 		return info, err
 	}
@@ -570,7 +547,7 @@ func (by *Bybit) UpdateAccountInfo(ctx context.Context, assetType asset.Item) (a
 	case asset.Spot, asset.Options,
 		asset.USDCMarginedFutures,
 		asset.USDTMarginedFutures:
-		switch by.AccountType {
+		switch at {
 		case accountTypeUnified:
 			accountType = "UNIFIED"
 		case accountTypeNormal:
@@ -617,20 +594,6 @@ func (by *Bybit) UpdateAccountInfo(ctx context.Context, assetType asset.Item) (a
 		return account.Holdings{}, err
 	}
 	return info, nil
-}
-
-// FetchAccountInfo retrieves balances for all enabled currencies
-func (by *Bybit) FetchAccountInfo(ctx context.Context, assetType asset.Item) (account.Holdings, error) {
-	creds, err := by.GetCredentials(ctx)
-	if err != nil {
-		return account.Holdings{}, err
-	}
-	acc, err := account.GetHoldings(by.Name, creds, assetType)
-	if err != nil {
-		return by.UpdateAccountInfo(ctx, assetType)
-	}
-
-	return acc, nil
 }
 
 // GetAccountFundingHistory returns funding history, deposits and

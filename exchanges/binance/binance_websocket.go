@@ -2,7 +2,6 @@ package binance
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -15,6 +14,7 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/thrasher-corp/gocryptotrader/common"
 	"github.com/thrasher-corp/gocryptotrader/currency"
+	"github.com/thrasher-corp/gocryptotrader/encoding/json"
 	"github.com/thrasher-corp/gocryptotrader/exchanges/asset"
 	"github.com/thrasher-corp/gocryptotrader/exchanges/order"
 	"github.com/thrasher-corp/gocryptotrader/exchanges/orderbook"
@@ -421,16 +421,21 @@ func (b *Binance) wsHandleData(respRaw []byte) error {
 				b.Name,
 				err)
 		}
-		return b.Websocket.Trade.Update(saveTradeData,
-			trade.Data{
-				CurrencyPair: pair,
-				Timestamp:    t.TimeStamp,
-				Price:        t.Price.Float64(),
-				Amount:       t.Quantity.Float64(),
-				Exchange:     b.Name,
-				AssetType:    asset.Spot,
-				TID:          strconv.FormatInt(t.TradeID, 10),
-			})
+		td := trade.Data{
+			CurrencyPair: pair,
+			Timestamp:    t.TimeStamp,
+			Price:        t.Price.Float64(),
+			Amount:       t.Quantity.Float64(),
+			Exchange:     b.Name,
+			AssetType:    asset.Spot,
+			TID:          strconv.FormatInt(t.TradeID, 10)}
+
+		if t.IsBuyerMaker { // Seller is Taker
+			td.Side = order.Sell
+		} else { // Buyer is Taker
+			td.Side = order.Buy
+		}
+		return b.Websocket.Trade.Update(saveTradeData, td)
 	case "ticker":
 		var t TickerStream
 		err = json.Unmarshal(jsonData, &t)

@@ -141,7 +141,7 @@ func (m *MarketMaker) GetFairPrice() (PriceReferences, error) {
 					continue
 				}
 
-				orderbook, err := exchanges[x].FetchOrderbook(context.TODO(), ccxPairs[z], enabledAssets[y])
+				orderbook, err := exchanges[x].UpdateOrderbook(context.TODO(), ccxPairs[z], enabledAssets[y])
 				if err != nil {
 					// log.Printf("Error when fetch %s order book from %s %s: %+v", pairs[z].String(), exchanges[x].GetName(), enabledAssets[y].String(), err)
 					continue

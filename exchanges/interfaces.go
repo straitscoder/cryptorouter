@@ -42,15 +42,16 @@ type IBotExchange interface {
 	// GetTradingRequirements returns trading requirements for the exchange
 	GetTradingRequirements() protocol.TradingRequirements
 
-	FetchTicker(ctx context.Context, p currency.Pair, a asset.Item) (*ticker.Price, error)
+	GetCachedTicker(p currency.Pair, a asset.Item) (*ticker.Price, error)
 	UpdateTicker(ctx context.Context, p currency.Pair, a asset.Item) (*ticker.Price, error)
 	UpdateTickers(ctx context.Context, a asset.Item) error
-	FetchOrderbook(ctx context.Context, p currency.Pair, a asset.Item) (*orderbook.Base, error)
+	GetCachedOrderbook(p currency.Pair, a asset.Item) (*orderbook.Base, error)
 	UpdateOrderbook(ctx context.Context, p currency.Pair, a asset.Item) (*orderbook.Base, error)
 	FetchTradablePairs(ctx context.Context, a asset.Item) (currency.Pairs, error)
 	UpdateTradablePairs(ctx context.Context, forceUpdate bool) error
 	GetEnabledPairs(a asset.Item) (currency.Pairs, error)
 	GetAvailablePairs(a asset.Item) (currency.Pairs, error)
+	GetPairFormat(asset.Item, bool) (currency.PairFormat, error)
 	SetPairs(pairs currency.Pairs, a asset.Item, enabled bool) error
 	GetAssetTypes(enabled bool) asset.Items
 	GetRecentTrades(ctx context.Context, p currency.Pair, a asset.Item) ([]trade.Data, error)
@@ -148,7 +149,7 @@ type CurrencyStateManagement interface {
 // AccountManagement defines functionality for exchange account management
 type AccountManagement interface {
 	UpdateAccountInfo(ctx context.Context, a asset.Item) (account.Holdings, error)
-	FetchAccountInfo(ctx context.Context, a asset.Item) (account.Holdings, error)
+	GetCachedAccountInfo(ctx context.Context, a asset.Item) (account.Holdings, error)
 	HasAssetTypeAccountSegregation() bool
 }
 

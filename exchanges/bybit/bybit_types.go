@@ -1,12 +1,14 @@
 package bybit
 
 import (
-	"encoding/json"
+	"sync"
 	"time"
 
 	"github.com/gofrs/uuid"
 	"github.com/thrasher-corp/gocryptotrader/currency"
+	"github.com/thrasher-corp/gocryptotrader/encoding/json"
 	"github.com/thrasher-corp/gocryptotrader/exchanges/orderbook"
+	"github.com/thrasher-corp/gocryptotrader/exchanges/subscription"
 	"github.com/thrasher-corp/gocryptotrader/types"
 )
 
@@ -32,10 +34,11 @@ type Authenticate struct {
 
 // SubscriptionArgument represents a subscription arguments.
 type SubscriptionArgument struct {
-	auth      bool     `json:"-"`
-	RequestID string   `json:"req_id"`
-	Operation string   `json:"op"`
-	Arguments []string `json:"args"`
+	auth           bool              `json:"-"`
+	RequestID      string            `json:"req_id"`
+	Operation      string            `json:"op"`
+	Arguments      []string          `json:"args"`
+	associatedSubs subscription.List `json:"-"`
 }
 
 // Fee holds fee information
@@ -2034,4 +2037,27 @@ type Error struct {
 	ReturnMessageV5 string `json:"retMsg"`
 	ExtCode         string `json:"ext_code"`
 	ExtMsg          string `json:"ext_info"`
+}
+
+// accountTypeHolder holds the account type associated with the loaded API key.
+type accountTypeHolder struct {
+	accountType AccountType
+	m           sync.Mutex
+}
+
+// AccountType constants
+type AccountType uint8
+
+// String returns the account type as a string
+func (a AccountType) String() string {
+	switch a {
+	case 0:
+		return "unset"
+	case accountTypeNormal:
+		return "normal"
+	case accountTypeUnified:
+		return "unified"
+	default:
+		return "unknown"
+	}
 }

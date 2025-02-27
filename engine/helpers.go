@@ -581,7 +581,7 @@ func (bot *Engine) GetSpecificOrderbook(ctx context.Context, p currency.Pair, ex
 	if err != nil {
 		return nil, err
 	}
-	return exch.FetchOrderbook(ctx, p, assetType)
+	return exch.UpdateOrderbook(ctx, p, assetType)
 }
 
 // GetSpecificTicker returns a specific ticker given the currency,
@@ -830,7 +830,7 @@ func (bot *Engine) GetExchangeNames(enabledOnly bool) []string {
 }
 
 // GetAllActiveTickers returns all enabled exchange tickers
-func (bot *Engine) GetAllActiveTickers(ctx context.Context) []EnabledExchangeCurrencies {
+func (bot *Engine) GetAllActiveTickers() []EnabledExchangeCurrencies {
 	var tickerData []EnabledExchangeCurrencies
 	exchanges := bot.GetExchanges()
 	for x := range exchanges {
@@ -842,21 +842,16 @@ func (bot *Engine) GetAllActiveTickers(ctx context.Context) []EnabledExchangeCur
 		for y := range assets {
 			currencies, err := exchanges[x].GetEnabledPairs(assets[y])
 			if err != nil {
-				log.Errorf(log.ExchangeSys,
-					"Exchange %s could not retrieve enabled currencies. Err: %s\n",
-					exchName,
-					err)
+				log.Errorf(log.ExchangeSys, "Exchange %s could not retrieve enabled currencies. Err: %s\n", exchName, err)
 				continue
 			}
 			for z := range currencies {
-				tp, err := exchanges[x].FetchTicker(ctx, currencies[z], assets[y])
+				tp, err := exchanges[x].GetCachedTicker(currencies[z], assets[y])
 				if err != nil {
-					log.Errorf(log.ExchangeSys, "Exchange %s failed to retrieve %s ticker. Err: %s\n", exchName,
-						currencies[z].String(),
-						err)
+					log.Errorf(log.ExchangeSys, "Exchange %s failed to retrieve %s ticker. Err: %s\n", exchName, currencies[z].String(), err)
 					continue
 				}
-				exchangeTicker.ExchangeValues = append(exchangeTicker.ExchangeValues, *tp)
+				exchangeTicker.ExchangeValues = append(exchangeTicker.ExchangeValues, tp)
 			}
 			tickerData = append(tickerData, exchangeTicker)
 		}

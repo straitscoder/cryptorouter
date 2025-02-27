@@ -2,7 +2,6 @@ package deribit
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log"
 	"os"
@@ -17,17 +16,18 @@ import (
 	"github.com/thrasher-corp/gocryptotrader/common/key"
 	"github.com/thrasher-corp/gocryptotrader/core"
 	"github.com/thrasher-corp/gocryptotrader/currency"
+	"github.com/thrasher-corp/gocryptotrader/encoding/json"
 	exchange "github.com/thrasher-corp/gocryptotrader/exchanges"
 	"github.com/thrasher-corp/gocryptotrader/exchanges/asset"
 	"github.com/thrasher-corp/gocryptotrader/exchanges/fundingrate"
 	"github.com/thrasher-corp/gocryptotrader/exchanges/futures"
 	"github.com/thrasher-corp/gocryptotrader/exchanges/kline"
 	"github.com/thrasher-corp/gocryptotrader/exchanges/order"
-	"github.com/thrasher-corp/gocryptotrader/exchanges/orderbook"
 	"github.com/thrasher-corp/gocryptotrader/exchanges/sharedtestvalues"
-	"github.com/thrasher-corp/gocryptotrader/exchanges/ticker"
+	"github.com/thrasher-corp/gocryptotrader/exchanges/subscription"
 	"github.com/thrasher-corp/gocryptotrader/exchanges/trade"
 	testexch "github.com/thrasher-corp/gocryptotrader/internal/testing/exchange"
+	testsubs "github.com/thrasher-corp/gocryptotrader/internal/testing/subscriptions"
 	"github.com/thrasher-corp/gocryptotrader/portfolio/withdraw"
 )
 
@@ -941,7 +941,7 @@ func TestWSCancelTransferByID(t *testing.T) {
 	assert.NotNil(t, result)
 }
 
-const getTransferResponseJSON = `{"count": 2, "data":[{"amount": 0.2, "created_timestamp": 1550579457727, "currency": "BTC", "direction": "payment", "id": 2, "other_side": "2MzyQc5Tkik61kJbEpJV5D5H9VfWHZK9Sgy", "state": "prepared", "type": "user", "updated_timestamp": 1550579457727 }, { "amount": 0.3, "created_timestamp": 1550579255800, "currency": "BTC", "direction": "payment", "id": 1, "other_side": "new_user_1_1", "state": "confirmed", "type": "subaccount", "updated_timestamp": 1550579255800 } ] }`
+const getTransferResponseJSON = `{"count": 2, "data":[{"amount": 0.2, "created_timestamp": 1550579457727, "currency": "BTC", "direction": "payment", "id": 2, "other_side": "2MzyQc5Tkik61kJbEpJV5D5H9VfWHZK9Sgy", "state": "prepared", "type": "user", "updated_timestamp": 1550579457727}, { "amount": 0.3, "created_timestamp": 1550579255800, "currency": "BTC", "direction": "payment", "id": 1, "other_side": "new_user_1_1", "state": "confirmed", "type": "subaccount", "updated_timestamp": 1550579255800} ] }`
 
 func TestGetTransfers(t *testing.T) {
 	t.Parallel()
@@ -968,7 +968,7 @@ func TestWSRetrieveTransfers(t *testing.T) {
 	assert.NotNil(t, result)
 }
 
-const cancelWithdrawlPushDataJSON = `{"address": "2NBqqD5GRJ8wHy1PYyCXTe9ke5226FhavBz", "amount": 0.5, "confirmed_timestamp": null, "created_timestamp": 1550571443070, "currency": "BTC", "fee": 0.0001, "id": 1, "priority": 0.15, "state": "cancelled", "transaction_id": null, "updated_timestamp": 1550571443070 }`
+const cancelWithdrawlPushDataJSON = `{"address": "2NBqqD5GRJ8wHy1PYyCXTe9ke5226FhavBz", "amount": 0.5, "confirmed_timestamp": null, "created_timestamp": 1550571443070, "currency": "BTC", "fee": 0.0001, "id": 1, "priority": 0.15, "state": "cancelled", "transaction_id": null, "updated_timestamp": 1550571443070}`
 
 func TestCancelWithdrawal(t *testing.T) {
 	t.Parallel()
@@ -1043,7 +1043,7 @@ func TestWSRetrieveCurrentDepositAddress(t *testing.T) {
 	assert.NotNil(t, result)
 }
 
-const getDepositPushDataJSON = `{"count": 1, "data": [ { "address": "2N35qDKDY22zmJq9eSyiAerMD4enJ1xx6ax", "amount": 5, "currency": "BTC", "received_timestamp": 1549295017670, "state": "completed", "transaction_id": "230669110fdaf0a0dbcdc079b6b8b43d5af29cc73683835b9bc6b3406c065fda", "updated_timestamp": 1549295130159 } ] }`
+const getDepositPushDataJSON = `{"count": 1, "data": [ { "address": "2N35qDKDY22zmJq9eSyiAerMD4enJ1xx6ax", "amount": 5, "currency": "BTC", "received_timestamp": 1549295017670, "state": "completed", "transaction_id": "230669110fdaf0a0dbcdc079b6b8b43d5af29cc73683835b9bc6b3406c065fda", "updated_timestamp": 1549295130159} ] }`
 
 func TestGetDeposits(t *testing.T) {
 	t.Parallel()
@@ -1070,7 +1070,7 @@ func TestWSRetrieveDeposits(t *testing.T) {
 	assert.NotNil(t, result)
 }
 
-const getWithdrawalResponseJSON = `{"count": 1, "data": [ { "address": "2NBqqD5GRJ8wHy1PYyCXTe9ke5226FhavBz", "amount": 0.5, "confirmed_timestamp": null, "created_timestamp": 1550571443070, "currency": "BTC", "fee": 0.0001, "id": 1, "priority": 0.15, "state": "unconfirmed", "transaction_id": null, "updated_timestamp": 1550571443070 } ] }`
+const getWithdrawalResponseJSON = `{"count": 1, "data": [ { "address": "2NBqqD5GRJ8wHy1PYyCXTe9ke5226FhavBz", "amount": 0.5, "confirmed_timestamp": null, "created_timestamp": 1550571443070, "currency": "BTC", "fee": 0.0001, "id": 1, "priority": 0.15, "state": "unconfirmed", "transaction_id": null, "updated_timestamp": 1550571443070} ] }`
 
 func TestGetWithdrawals(t *testing.T) {
 	t.Parallel()
@@ -1187,7 +1187,7 @@ func TestWSSubmitTransferToUser(t *testing.T) {
 	assert.NotNil(t, result)
 }
 
-const submitWithdrawalResponseJSON = `{"address": "2NBqqD5GRJ8wHy1PYyCXTe9ke5226FhavBz", "amount": 0.4, "confirmed_timestamp": null, "created_timestamp": 1550574558607, "currency": "BTC", "fee": 0.0001, "id": 4, "priority": 1, "state": "unconfirmed", "transaction_id": null, "updated_timestamp": 1550574558607 }`
+const submitWithdrawalResponseJSON = `{"address": "2NBqqD5GRJ8wHy1PYyCXTe9ke5226FhavBz", "amount": 0.4, "confirmed_timestamp": null, "created_timestamp": 1550574558607, "currency": "BTC", "fee": 0.0001, "id": 4, "priority": 1, "state": "unconfirmed", "transaction_id": null, "updated_timestamp": 1550574558607}`
 
 func TestSubmitWithdraw(t *testing.T) {
 	t.Parallel()
@@ -3266,33 +3266,82 @@ func setupWs() {
 	}
 }
 
-func TestGenerateDefaultSubscriptions(t *testing.T) {
+func TestGenerateSubscriptions(t *testing.T) {
 	t.Parallel()
-	result, err := d.GenerateDefaultSubscriptions()
+
+	d := new(Deribit) //nolint:govet // Intentional lexical scope shadow
+	require.NoError(t, testexch.Setup(d), "Test instance Setup must not error")
+
+	d.Websocket.SetCanUseAuthenticatedEndpoints(true)
+	subs, err := d.generateSubscriptions()
 	require.NoError(t, err)
-	assert.NotNil(t, result)
+	exp := subscription.List{}
+	for _, s := range d.Features.Subscriptions {
+		for _, a := range d.GetAssetTypes(true) {
+			if !d.IsAssetWebsocketSupported(a) {
+				continue
+			}
+			pairs, err := d.GetEnabledPairs(a)
+			require.NoErrorf(t, err, "GetEnabledPairs %s must not error", a)
+			s := s.Clone() //nolint:govet // Intentional lexical scope shadow
+			s.Asset = a
+			if isSymbolChannel(s) {
+				for i, p := range pairs {
+					s := s.Clone() //nolint:govet // Intentional lexical scope shadow
+					s.QualifiedChannel = channelName(s) + "." + p.String()
+					if s.Interval != 0 {
+						s.QualifiedChannel += "." + channelInterval(s)
+					}
+					s.Pairs = pairs[i : i+1]
+					exp = append(exp, s)
+				}
+			} else {
+				s.Pairs = pairs
+				s.QualifiedChannel = channelName(s)
+				exp = append(exp, s)
+			}
+		}
+	}
+	testsubs.EqualLists(t, exp, subs)
 }
 
-func TestFetchTicker(t *testing.T) {
+func TestChannelInterval(t *testing.T) {
 	t.Parallel()
-	var result *ticker.Price
-	var err error
-	for assetType, cp := range assetTypeToPairsMap {
-		result, err = d.FetchTicker(context.Background(), cp, assetType)
-		require.NoErrorf(t, err, "expected nil, got %v for asset type %s pair %s", err, assetType, cp)
-		require.NotNilf(t, result, "expected result not to be nil for asset type %s pair %s", assetType, cp)
+
+	for _, i := range []int64{1, 3, 5, 10, 15, 30, 60, 120, 180, 360, 720} {
+		a := channelInterval(&subscription.Subscription{Channel: subscription.CandlesChannel, Interval: kline.Interval(i * int64(time.Minute))})
+		assert.Equal(t, strconv.Itoa(int(i)), a)
 	}
+
+	a := channelInterval(&subscription.Subscription{Channel: subscription.CandlesChannel, Interval: kline.OneDay})
+	assert.Equal(t, "1D", a)
+
+	assert.Panics(t, func() {
+		channelInterval(&subscription.Subscription{Channel: subscription.CandlesChannel, Interval: kline.OneMonth})
+	})
+
+	a = channelInterval(&subscription.Subscription{Channel: subscription.OrderbookChannel, Interval: kline.ThousandMilliseconds})
+	assert.Equal(t, "agg2", a, "1 second should expand to agg2")
+
+	a = channelInterval(&subscription.Subscription{Channel: subscription.OrderbookChannel, Interval: kline.HundredMilliseconds})
+	assert.Equal(t, "100ms", a, "100ms should expand correctly")
+
+	a = channelInterval(&subscription.Subscription{Channel: subscription.OrderbookChannel, Interval: kline.Raw})
+	assert.Equal(t, "raw", a, "raw should expand correctly")
+
+	assert.Panics(t, func() {
+		channelInterval(&subscription.Subscription{Channel: subscription.OrderbookChannel, Interval: kline.OneMonth})
+	})
+
+	a = channelInterval(&subscription.Subscription{Channel: userAccessLogChannel})
+	assert.Empty(t, a, "Anything else should return empty")
 }
 
-func TestFetchOrderbook(t *testing.T) {
+func TestChannelName(t *testing.T) {
 	t.Parallel()
-	var result *orderbook.Base
-	var err error
-	for assetType, cp := range assetTypeToPairsMap {
-		result, err = d.FetchOrderbook(context.Background(), cp, assetType)
-		require.NoErrorf(t, err, "expected nil, got %v for asset type %s", err, assetType)
-		require.NotNilf(t, result, "expected result not to be nil for asset type %s", assetType)
-	}
+	assert.Equal(t, tickerChannel, channelName(&subscription.Subscription{Channel: subscription.TickerChannel}))
+	assert.Equal(t, userLockChannel, channelName(&subscription.Subscription{Channel: userLockChannel}))
+	assert.Panics(t, func() { channelName(&subscription.Subscription{Channel: "wibble"}) }, "Unknown channels should panic")
 }
 
 func TestUpdateAccountInfo(t *testing.T) {
@@ -3301,17 +3350,6 @@ func TestUpdateAccountInfo(t *testing.T) {
 	result, err := d.UpdateAccountInfo(context.Background(), asset.Futures)
 	require.NoError(t, err)
 	assert.NotNil(t, result)
-}
-
-func TestFetchAccountInfo(t *testing.T) {
-	t.Parallel()
-	sharedtestvalues.SkipTestIfCredentialsUnset(t, d)
-	assetTypes := d.GetAssetTypes(true)
-	for _, assetType := range assetTypes {
-		result, err := d.FetchAccountInfo(context.Background(), assetType)
-		require.NoErrorf(t, err, "expected nil, got %v for asset type %s", err, assetType)
-		require.NotNilf(t, result, "expected result not to be nil for asset type %s", assetType)
-	}
 }
 
 func TestGetFundingHistory(t *testing.T) {
@@ -3681,18 +3719,15 @@ func TestFormatFuturesTradablePair(t *testing.T) {
 
 func TestOptionPairToString(t *testing.T) {
 	t.Parallel()
-	optionsList := map[currency.Pair]string{
+	for pair, exp := range map[currency.Pair]string{
 		{Delimiter: currency.DashDelimiter, Base: currency.BTC, Quote: currency.NewCode("30MAY24-61000-C")}:      "BTC-30MAY24-61000-C",
 		{Delimiter: currency.DashDelimiter, Base: currency.ETH, Quote: currency.NewCode("1JUN24-3200-P")}:        "ETH-1JUN24-3200-P",
 		{Delimiter: currency.DashDelimiter, Base: currency.SOL, Quote: currency.NewCode("USDC-31MAY24-162-P")}:   "SOL_USDC-31MAY24-162-P",
 		{Delimiter: currency.DashDelimiter, Base: currency.MATIC, Quote: currency.NewCode("USDC-6APR24-0d98-P")}: "MATIC_USDC-6APR24-0d98-P",
-	}
-	for pair, instrumentID := range optionsList {
-		t.Run(instrumentID, func(t *testing.T) {
-			t.Parallel()
-			instrument := d.optionPairToString(pair)
-			require.Equal(t, instrumentID, instrument)
-		})
+		{Delimiter: currency.DashDelimiter, Base: currency.MATIC, Quote: currency.NewCode("USDC-8JUN24-0D99-P")}: "MATIC_USDC-8JUN24-0d99-P",
+		{Delimiter: currency.DashDelimiter, Base: currency.MATIC, Quote: currency.NewCode("USDC-6DEC29-0D87-C")}: "MATIC_USDC-6DEC29-0d87-C",
+	} {
+		assert.Equal(t, exp, d.optionPairToString(pair), "optionPairToString should return correctly")
 	}
 }
 
@@ -4058,4 +4093,15 @@ func TestGetCurrencyTradeURL(t *testing.T) {
 	resp, err = d.GetCurrencyTradeURL(context.Background(), asset.Options, cp)
 	require.NoError(t, err)
 	assert.NotEmpty(t, resp)
+}
+
+func TestFormatChannelPair(t *testing.T) {
+	t.Parallel()
+	pair := currency.NewPair(currency.BTC, currency.NewCode("USDC-PERPETUAL"))
+	pair.Delimiter = "-"
+	assert.Equal(t, "BTC_USDC-PERPETUAL", formatChannelPair(pair))
+
+	pair = currency.NewPair(currency.BTC, currency.NewCode("PERPETUAL"))
+	pair.Delimiter = "-"
+	assert.Equal(t, "BTC-PERPETUAL", formatChannelPair(pair))
 }

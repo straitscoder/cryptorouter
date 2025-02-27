@@ -700,7 +700,7 @@ func (m *syncManager) worker() {
 												}
 												err = exchanges[x].UpdateTickers(context.TODO(), c.AssetType)
 												if err == nil {
-													result, err = exchanges[x].FetchTicker(context.TODO(), c.Pair, c.AssetType)
+													result, err = exchanges[x].UpdateTicker(context.TODO(), c.Pair, c.AssetType)
 												}
 												m.tickerBatchLastRequested[exchangeName] = time.Now()
 												m.mux.Unlock()
@@ -708,7 +708,7 @@ func (m *syncManager) worker() {
 												if m.config.Verbose {
 													log.Debugf(log.SyncMgr, "%s Using recent batching cache", exchangeName)
 												}
-												result, err = exchanges[x].FetchTicker(context.TODO(),
+												result, err = exchanges[x].UpdateTicker(context.TODO(),
 													c.Pair,
 													c.AssetType)
 											}

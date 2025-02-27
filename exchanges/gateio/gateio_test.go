@@ -2,8 +2,8 @@ package gateio
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"os"
 	"slices"
@@ -18,6 +18,7 @@ import (
 	"github.com/thrasher-corp/gocryptotrader/common/key"
 	"github.com/thrasher-corp/gocryptotrader/core"
 	"github.com/thrasher-corp/gocryptotrader/currency"
+	"github.com/thrasher-corp/gocryptotrader/encoding/json"
 	"github.com/thrasher-corp/gocryptotrader/exchanges/asset"
 	"github.com/thrasher-corp/gocryptotrader/exchanges/fundingrate"
 	"github.com/thrasher-corp/gocryptotrader/exchanges/futures"
@@ -439,12 +440,11 @@ func TestCancelSingleSpotOrder(t *testing.T) {
 	}
 }
 
-func TestGetPersonalTradingHistory(t *testing.T) {
+func TestGetMySpotTradingHistory(t *testing.T) {
 	t.Parallel()
 	sharedtestvalues.SkipTestIfCredentialsUnset(t, g)
-	if _, err := g.GateIOGetPersonalTradingHistory(context.Background(), currency.Pair{Base: currency.BTC, Quote: currency.USDT, Delimiter: currency.UnderscoreDelimiter}, "", 0, 0, false, time.Time{}, time.Time{}); err != nil {
-		t.Errorf("%s GetPersonalTradingHistory() error %v", g.Name, err)
-	}
+	_, err := g.GetMySpotTradingHistory(context.Background(), currency.Pair{Base: currency.BTC, Quote: currency.USDT, Delimiter: currency.UnderscoreDelimiter}, "", 0, 0, false, time.Time{}, time.Time{})
+	require.NoError(t, err)
 }
 
 func TestGetServerTime(t *testing.T) {
@@ -968,12 +968,12 @@ func TestGetAllFutureContracts(t *testing.T) {
 	}
 }
 
-func TestGetSingleContract(t *testing.T) {
+func TestGetFuturesContract(t *testing.T) {
 	t.Parallel()
 	settle, err := getSettlementFromCurrency(getPair(t, asset.Futures))
 	require.NoError(t, err, "getSettlementFromCurrency must not error")
-	_, err = g.GetSingleContract(context.Background(), settle, getPair(t, asset.Futures).String())
-	assert.NoError(t, err, "GetSingleContract should not error")
+	_, err = g.GetFuturesContract(context.Background(), settle, getPair(t, asset.Futures).String())
+	assert.NoError(t, err, "GetFuturesContract should not error")
 }
 
 func TestGetFuturesOrderbook(t *testing.T) {
@@ -1156,11 +1156,11 @@ func TestCancelSingleDeliveryOrder(t *testing.T) {
 	assert.NoError(t, err, "CancelSingleDeliveryOrder should not error")
 }
 
-func TestGetDeliveryPersonalTradingHistory(t *testing.T) {
+func TestGetMyDeliveryTradingHistory(t *testing.T) {
 	t.Parallel()
 	sharedtestvalues.SkipTestIfCredentialsUnset(t, g)
-	_, err := g.GetDeliveryPersonalTradingHistory(context.Background(), currency.USDT, "", getPair(t, asset.DeliveryFutures), 0, 0, 1, "")
-	assert.NoError(t, err, "GetDeliveryPersonalTradingHistory should not error")
+	_, err := g.GetMyDeliveryTradingHistory(context.Background(), currency.USDT, "", getPair(t, asset.DeliveryFutures), 0, 0, 1, "")
+	assert.NoError(t, err, "GetMyDeliveryTradingHistory should not error")
 }
 
 func TestGetDeliveryPositionCloseHistory(t *testing.T) {
@@ -1368,11 +1368,11 @@ func TestAmendFuturesOrder(t *testing.T) {
 	assert.NoError(t, err, "AmendFuturesOrder should not error")
 }
 
-func TestGetMyPersonalTradingHistory(t *testing.T) {
+func TestGetMyFuturesTradingHistory(t *testing.T) {
 	t.Parallel()
 	sharedtestvalues.SkipTestIfCredentialsUnset(t, g)
-	_, err := g.GetMyPersonalTradingHistory(context.Background(), currency.BTC, "", "", getPair(t, asset.Futures), 0, 0, 0)
-	assert.NoError(t, err, "GetMyPersonalTradingHistory should not error")
+	_, err := g.GetMyFuturesTradingHistory(context.Background(), currency.BTC, "", "", getPair(t, asset.Futures), 0, 0, 0)
+	assert.NoError(t, err, "GetMyFuturesTradingHistory should not error")
 }
 
 func TestGetFuturesPositionCloseHistory(t *testing.T) {
@@ -1457,12 +1457,12 @@ func TestGetAllDeliveryContracts(t *testing.T) {
 	}
 }
 
-func TestGetSingleDeliveryContracts(t *testing.T) {
+func TestGetDeliveryContract(t *testing.T) {
 	t.Parallel()
 	settle, err := getSettlementFromCurrency(getPair(t, asset.DeliveryFutures))
 	require.NoError(t, err, "getSettlementFromCurrency must not error")
-	_, err = g.GetSingleDeliveryContracts(context.Background(), settle, getPair(t, asset.DeliveryFutures))
-	assert.NoError(t, err, "GetSingleDeliveryContracts should not error")
+	_, err = g.GetDeliveryContract(context.Background(), settle, getPair(t, asset.DeliveryFutures))
+	assert.NoError(t, err, "GetDeliveryContract should not error")
 }
 
 func TestGetDeliveryOrderbook(t *testing.T) {
@@ -1767,12 +1767,12 @@ func TestCancelSingleOrder(t *testing.T) {
 	}
 }
 
-func TestGetOptionsPersonalTradingHistory(t *testing.T) {
+func TestGetMyOptionsTradingHistory(t *testing.T) {
 	t.Parallel()
+
 	sharedtestvalues.SkipTestIfCredentialsUnset(t, g)
-	if _, err := g.GetOptionsPersonalTradingHistory(context.Background(), "BTC_USDT", currency.EMPTYPAIR, 0, 0, time.Time{}, time.Time{}); err != nil {
-		t.Errorf("%s GetOptionPersonalTradingHistory() error %v", g.Name, err)
-	}
+	_, err := g.GetMyOptionsTradingHistory(context.Background(), "BTC_USDT", currency.EMPTYPAIR, 0, 0, time.Time{}, time.Time{})
+	require.NoError(t, err)
 }
 
 func TestWithdrawCurrency(t *testing.T) {
@@ -2658,7 +2658,7 @@ func TestOptionsUnderlyingTradesPushData(t *testing.T) {
 	}
 }
 
-const optionsUnderlyingPricePushDataJSON = `{	"time": 1630576356,	"channel": "options.ul_price",	"event": "update",	"result": {	   "underlying": "BTC_USDT",	   "price": 49653.24,"time": 1639143988,"time_ms": 1639143988931	}}`
+const optionsUnderlyingPricePushDataJSON = `{	"time": 1630576356,	"channel": "options.ul_price",	"event": "update",	"result": {	   "underlying": "BTC_USDT",	   "price": 49653.24,"time": 1639143988,"time_ms": 1639143988931}}`
 
 func TestOptionsUnderlyingPricePushData(t *testing.T) {
 	t.Parallel()
@@ -2667,7 +2667,7 @@ func TestOptionsUnderlyingPricePushData(t *testing.T) {
 	}
 }
 
-const optionsMarkPricePushDataJSON = `{	"time": 1630576356,	"channel": "options.mark_price",	"event": "update",	"result": {    "contract": "BTC_USDT-20211231-59800-P",    "price": 11021.27,    "time": 1639143401,    "time_ms": 1639143401676	}}`
+const optionsMarkPricePushDataJSON = `{	"time": 1630576356,	"channel": "options.mark_price",	"event": "update",	"result": {    "contract": "BTC_USDT-20211231-59800-P",    "price": 11021.27,    "time": 1639143401,    "time_ms": 1639143401676}}`
 
 func TestOptionsMarkPricePushData(t *testing.T) {
 	t.Parallel()
@@ -2676,7 +2676,7 @@ func TestOptionsMarkPricePushData(t *testing.T) {
 	}
 }
 
-const optionsSettlementsPushDataJSON = `{	"time": 1630576356,	"channel": "options.settlements",	"event": "update",	"result": {	   "contract": "BTC_USDT-20211130-55000-P",	   "orderbook_id": 2,	   "position_size": 1,	   "profit": 0.5,	   "settle_price": 70000,	   "strike_price": 65000,	   "tag": "WEEK",	   "trade_id": 1,	   "trade_size": 1,	   "underlying": "BTC_USDT",	   "time": 1639051907,	   "time_ms": 1639051907000	}}`
+const optionsSettlementsPushDataJSON = `{	"time": 1630576356,	"channel": "options.settlements",	"event": "update",	"result": {	   "contract": "BTC_USDT-20211130-55000-P",	   "orderbook_id": 2,	   "position_size": 1,	   "profit": 0.5,	   "settle_price": 70000,	   "strike_price": 65000,	   "tag": "WEEK",	   "trade_id": 1,	   "trade_size": 1,	   "underlying": "BTC_USDT",	   "time": 1639051907,	   "time_ms": 1639051907000}}`
 
 func TestSettlementsPushData(t *testing.T) {
 	t.Parallel()
@@ -2685,7 +2685,7 @@ func TestSettlementsPushData(t *testing.T) {
 	}
 }
 
-const optionsContractPushDataJSON = `{"time": 1630576356,	"channel": "options.contracts",	"event": "update",	"result": {	   "contract": "BTC_USDT-20211130-50000-P",	   "create_time": 1637917026,	   "expiration_time": 1638230400,	   "init_margin_high": 0.15,	   "init_margin_low": 0.1,	   "is_call": false,	   "maint_margin_base": 0.075,	   "maker_fee_rate": 0.0004,	   "mark_price_round": 0.1,	   "min_balance_short": 0.5,	   "min_order_margin": 0.1,	   "multiplier": 0.0001,	   "order_price_deviate": 0,	   "order_price_round": 0.1,	   "order_size_max": 1,	   "order_size_min": 10,	   "orders_limit": 100000,	   "ref_discount_rate": 0.1,	   "ref_rebate_rate": 0,	   "strike_price": 50000,	   "tag": "WEEK",	   "taker_fee_rate": 0.0004,	   "underlying": "BTC_USDT",	   "time": 1639051907,	   "time_ms": 1639051907000	}}`
+const optionsContractPushDataJSON = `{"time": 1630576356,	"channel": "options.contracts",	"event": "update",	"result": {	   "contract": "BTC_USDT-20211130-50000-P",	   "create_time": 1637917026,	   "expiration_time": 1638230400,	   "init_margin_high": 0.15,	   "init_margin_low": 0.1,	   "is_call": false,	   "maint_margin_base": 0.075,	   "maker_fee_rate": 0.0004,	   "mark_price_round": 0.1,	   "min_balance_short": 0.5,	   "min_order_margin": 0.1,	   "multiplier": 0.0001,	   "order_price_deviate": 0,	   "order_price_round": 0.1,	   "order_size_max": 1,	   "order_size_min": 10,	   "orders_limit": 100000,	   "ref_discount_rate": 0.1,	   "ref_rebate_rate": 0,	   "strike_price": 50000,	   "tag": "WEEK",	   "taker_fee_rate": 0.0004,	   "underlying": "BTC_USDT",	   "time": 1639051907,	   "time_ms": 1639051907000}}`
 
 func TestOptionsContractPushData(t *testing.T) {
 	t.Parallel()
@@ -2711,26 +2711,20 @@ func TestOptionsCandlesticksPushData(t *testing.T) {
 
 const (
 	optionsOrderbookTickerPushDataJSON              = `{	"time": 1630650452,	"channel": "options.book_ticker",	"event": "update",	"result": {    "t": 1615366379123,    "u": 2517661076,    "s": "BTC_USDT-20211130-50000-C",    "b": "54696.6",    "B": 37000,    "a": "54696.7",    "A": 47061	}}`
-	optionsOrderbookUpdatePushDataJSON              = `{	"time": 1630650445,	"channel": "options.order_book_update",	"event": "update",	"result": {    "t": 1615366381417,    "s": "BTC_USDT-20211130-50000-C",    "U": 2517661101,    "u": 2517661113,    "b": [        {            "p": "54672.1",            "s": 95        },        {            "p": "54664.5",            "s": 58794        }    ],    "a": [        {            "p": "54743.6",            "s": 95        },        {            "p": "54742",            "s": 95        }    ]	}}`
+	optionsOrderbookUpdatePushDataJSON              = `{	"time": 1630650445,	"channel": "options.order_book_update",	"event": "update",	"result": {    "t": 1615366381417,    "s": "%s",    "U": 2517661101,    "u": 2517661113,    "b": [        {            "p": "54672.1",            "s": 95        },        {            "p": "54664.5",            "s": 58794        }    ],    "a": [        {            "p": "54743.6",            "s": 95        },        {            "p": "54742",            "s": 95        }    ]	}}`
 	optionsOrderbookSnapshotPushDataJSON            = `{	"time": 1630650445,	"channel": "options.order_book",	"event": "all",	"result": {    "t": 1541500161123,    "contract": "BTC_USDT-20211130-50000-C",    "id": 93973511,    "asks": [        {            "p": "97.1",            "s": 2245        },		{            "p": "97.2",            "s": 2245        }    ],    "bids": [		{            "p": "97.2",            "s": 2245        },        {            "p": "97.1",            "s": 2245        }    ]	}}`
 	optionsOrderbookSnapshotUpdateEventPushDataJSON = `{"channel": "options.order_book",	"event": "update",	"time": 1630650445,	"result": [	  {		"p": "49525.6",		"s": 7726,		"c": "BTC_USDT-20211130-50000-C",		"id": 93973511	  }	]}`
 )
 
 func TestOptionsOrderbookPushData(t *testing.T) {
 	t.Parallel()
-	err := g.WsHandleOptionsData(context.Background(), []byte(optionsOrderbookTickerPushDataJSON))
-	if err != nil {
-		t.Errorf("%s websocket options orderbook ticker push data error: %v", g.Name, err)
-	}
-	if err = g.WsHandleOptionsData(context.Background(), []byte(optionsOrderbookSnapshotPushDataJSON)); err != nil {
-		t.Errorf("%s websocket options orderbook snapshot push data error: %v", g.Name, err)
-	}
-	if err = g.WsHandleOptionsData(context.Background(), []byte(optionsOrderbookUpdatePushDataJSON)); err != nil {
-		t.Errorf("%s websocket options orderbook update push data error: %v", g.Name, err)
-	}
-	if err = g.WsHandleOptionsData(context.Background(), []byte(optionsOrderbookSnapshotUpdateEventPushDataJSON)); err != nil {
-		t.Errorf("%s websocket options orderbook snapshot update event push data error: %v", g.Name, err)
-	}
+	testexch.UpdatePairsOnce(t, g)
+	assert.NoError(t, g.WsHandleOptionsData(context.Background(), []byte(optionsOrderbookTickerPushDataJSON)))
+	avail, err := g.GetAvailablePairs(asset.Options)
+	require.NoError(t, err, "GetAvailablePairs must not error")
+	assert.NoError(t, g.WsHandleOptionsData(context.Background(), []byte(fmt.Sprintf(optionsOrderbookUpdatePushDataJSON, avail[0].Upper().String()))))
+	assert.NoError(t, g.WsHandleOptionsData(context.Background(), []byte(optionsOrderbookSnapshotPushDataJSON)))
+	assert.NoError(t, g.WsHandleOptionsData(context.Background(), []byte(optionsOrderbookSnapshotUpdateEventPushDataJSON)))
 }
 
 const optionsOrderPushDataJSON = `{"time": 1630654851,"channel": "options.orders",	"event": "update",	"result": [	   {		  "contract": "BTC_USDT-20211130-65000-C",		  "create_time": 1637897000,		  "fill_price": 0,		  "finish_as": "cancelled",		  "iceberg": 0,		  "id": 106,		  "is_close": false,		  "is_liq": false,		  "is_reduce_only": false,		  "left": -10,		  "mkfr": 0.0004,		  "price": 15000,		  "refr": 0,		  "refu": 0,		  "size": -10,		  "status": "finished",		  "text": "web",		  "tif": "gtc",		  "tkfr": 0.0004,		  "underlying": "BTC_USDT",		  "user": "9xxx",		  "time": 1639051907,"time_ms": 1639051907000}]}`
@@ -2751,7 +2745,7 @@ func TestOptionUserTradesPushData(t *testing.T) {
 	}
 }
 
-const optionsLiquidatesPushDataJSON = `{	"channel": "options.liquidates",	"event": "update",	"time": 1630654851,	"result": [	   {		  "user": "1xxxx",		  "init_margin": 1190,		  "maint_margin": 1042.5,		  "order_margin": 0,		  "time": 1639051907,		  "time_ms": 1639051907000	   }	]}`
+const optionsLiquidatesPushDataJSON = `{	"channel": "options.liquidates",	"event": "update",	"time": 1630654851,	"result": [	   {		  "user": "1xxxx",		  "init_margin": 1190,		  "maint_margin": 1042.5,		  "order_margin": 0,		  "time": 1639051907,		  "time_ms": 1639051907000}	]}`
 
 func TestOptionsLiquidatesPushData(t *testing.T) {
 	t.Parallel()
@@ -2787,7 +2781,7 @@ func TestOptionsBalancePushData(t *testing.T) {
 	}
 }
 
-const optionsPositionPushDataJSON = `{"time": 1630654851,	"channel": "options.positions",	"event": "update",	"error": null,	"result": [	   {		  "entry_price": 0,		  "realised_pnl": -13.028,		  "size": 0,		  "contract": "BTC_USDT-20211130-65000-C",		  "user": "9010",		  "time": 1639051907,		  "time_ms": 1639051907000	   }	]}`
+const optionsPositionPushDataJSON = `{"time": 1630654851,	"channel": "options.positions",	"event": "update",	"error": null,	"result": [	   {		  "entry_price": 0,		  "realised_pnl": -13.028,		  "size": 0,		  "contract": "BTC_USDT-20211130-65000-C",		  "user": "9010",		  "time": 1639051907,		  "time_ms": 1639051907000}	]}`
 
 func TestOptionsPositionPushData(t *testing.T) {
 	t.Parallel()
@@ -3186,22 +3180,20 @@ func TestForceFileStandard(t *testing.T) {
 func TestGetFuturesContractDetails(t *testing.T) {
 	t.Parallel()
 	_, err := g.GetFuturesContractDetails(context.Background(), asset.Spot)
-	if !errors.Is(err, futures.ErrNotFuturesAsset) {
-		t.Error(err)
-	}
-	_, err = g.GetFuturesContractDetails(context.Background(), asset.PerpetualContract)
-	if !errors.Is(err, asset.ErrNotSupported) {
-		t.Error(err)
-	}
+	require.ErrorIs(t, err, futures.ErrNotFuturesAsset)
 
-	_, err = g.GetFuturesContractDetails(context.Background(), asset.DeliveryFutures)
-	if !errors.Is(err, nil) {
-		t.Error(err)
-	}
-	_, err = g.GetFuturesContractDetails(context.Background(), asset.Futures)
-	if !errors.Is(err, nil) {
-		t.Error(err)
-	}
+	_, err = g.GetFuturesContractDetails(context.Background(), asset.PerpetualContract)
+	require.ErrorIs(t, err, asset.ErrNotSupported)
+
+	exp, err := g.GetAllDeliveryContracts(context.Background(), currency.USDT)
+	require.NoError(t, err, "GetAllDeliveryContracts must not error")
+	c, err := g.GetFuturesContractDetails(context.Background(), asset.DeliveryFutures)
+	require.NoError(t, err, "GetFuturesContractDetails must not error for DeliveryFutures")
+	assert.Equal(t, len(exp), len(c), "GetFuturesContractDetails should return same number of Delivery contracts as exist")
+
+	c, err = g.GetFuturesContractDetails(context.Background(), asset.Futures)
+	require.NoError(t, err, "GetFuturesContractDetails must not error for DeliveryFutures")
+	assert.NotEmpty(t, c, "GetFuturesContractDetails should return same number of Future contracts as exist")
 }
 
 func TestGetLatestFundingRates(t *testing.T) {
@@ -3527,4 +3519,29 @@ func TestHandleSubscriptions(t *testing.T) {
 		return []WsInput{{}}, nil
 	})
 	require.NoError(t, err)
+}
+
+func TestParseWSHeader(t *testing.T) {
+	in := []string{
+		`{"time":1726121320,"time_ms":1726121320745,"id":1,"channel":"spot.tickers","event":"subscribe","result":{"status":"success"},"request_id":"a4"}`,
+		`{"time_ms":1726121320746,"id":2,"channel":"spot.tickers","event":"subscribe","result":{"status":"success"},"request_id":"a4"}`,
+		`{"time":1726121321,"id":3,"channel":"spot.tickers","event":"subscribe","result":{"status":"success"},"request_id":"a4"}`,
+	}
+	for _, i := range in {
+		h, err := parseWSHeader([]byte(i))
+		require.NoError(t, err)
+		require.NotEmpty(t, h.ID)
+		assert.Equal(t, "a4", h.RequestID)
+		assert.Equal(t, "spot.tickers", h.Channel)
+		assert.Equal(t, "subscribe", h.Event)
+		assert.NotEmpty(t, h.Result)
+		switch h.ID {
+		case 1:
+			assert.Equal(t, int64(1726121320745), h.Time.UnixMilli())
+		case 2:
+			assert.Equal(t, int64(1726121320746), h.Time.UnixMilli())
+		case 3:
+			assert.Equal(t, int64(1726121321), h.Time.Unix())
+		}
+	}
 }
