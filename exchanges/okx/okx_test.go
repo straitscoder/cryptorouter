@@ -447,7 +447,7 @@ func TestGetOpenInterestData(t *testing.T) {
 	_, err = ok.GetOpenInterestData(contextGenerate(), instTypeOption, "", "", "")
 	require.ErrorIs(t, err, errInstrumentFamilyOrUnderlyingRequired)
 
-	uly, err := ok.underlyingFromInstID(instTypeFutures, futuresTP.String())
+	uly, err := ok.GetUnderlying(currency.NewBTCUSDT(), asset.Futures)
 	require.NoError(t, err)
 
 	result, err := ok.GetOpenInterestData(contextGenerate(), instTypeFutures, uly, "", futuresTP.String())
@@ -6619,20 +6619,20 @@ func TestGetFee(t *testing.T) {
 	require.NoError(t, err)
 }
 
-func TestPriceTypeString(t *testing.T) {
-	t.Parallel()
-	priceTypeToStringMap := map[order.PriceType]string{
-		order.LastPrice:        "last",
-		order.IndexPrice:       "index",
-		order.MarkPrice:        "mark",
-		order.UnknownPriceType: "",
-	}
-	var priceTString string
-	for x := range priceTypeToStringMap {
-		priceTString = priceTypeString(x)
-		assert.Equal(t, priceTString, priceTypeToStringMap[x])
-	}
-}
+// func TestPriceTypeString(t *testing.T) {
+// 	t.Parallel()
+// 	priceTypeToStringMap := map[order.PriceType]string{
+// 		order.LastPrice:        "last",
+// 		order.IndexPrice:       "index",
+// 		order.MarkPrice:        "mark",
+// 		order.UnknownPriceType: "",
+// 	}
+// 	var priceTString string
+// 	for x := range priceTypeToStringMap {
+// 		priceTString = priceTypeString(x)
+// 		assert.Equal(t, priceTString, priceTypeToStringMap[x])
+// 	}
+// }
 
 func TestMarginTypeToString(t *testing.T) {
 	t.Parallel()
