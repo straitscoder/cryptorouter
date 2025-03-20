@@ -811,6 +811,7 @@ message UpdateExchangeSupportedPairsRequest {
 
 message GetExchangeAssetsRequest {
   string exchange = 1;
+  bool enable = 2;
 }
 
 message GetExchangeAssetsResponse {

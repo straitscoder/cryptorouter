@@ -821,8 +821,13 @@ func (bot *Engine) GetAllExchangeCryptocurrencyDepositAddresses() map[string]map
 func (bot *Engine) GetExchangeNames(enabledOnly bool) []string {
 	exchanges := bot.GetExchanges()
 	var response []string
+
 	for i := range exchanges {
-		if !enabledOnly || (enabledOnly && exchanges[i].IsEnabled()) {
+		if !enabledOnly {
+			response = append(response, exchanges[i].GetName())
+			continue
+		}
+		if exchanges[i].IsEnabled() {
 			response = append(response, exchanges[i].GetName())
 		}
 	}

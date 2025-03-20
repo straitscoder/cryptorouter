@@ -1750,6 +1750,12 @@
             "in": "query",
             "required": false,
             "type": "string"
+          },
+          {
+            "name": "enable",
+            "in": "query",
+            "required": false,
+            "type": "boolean"
           }
         ],
         "tags": [

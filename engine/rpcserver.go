@@ -2973,7 +2973,7 @@ func (s *RPCServer) GetExchangeAssets(_ context.Context, r *gctrpc.GetExchangeAs
 	}
 
 	return &gctrpc.GetExchangeAssetsResponse{
-		Assets: exch.GetAssetTypes(false).JoinToString(","),
+		Assets: exch.GetAssetTypes(r.Enable).JoinToString(","),
 	}, nil
 }
 
