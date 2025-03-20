@@ -409,7 +409,7 @@ func (d *Deribit) processUserOrderChanges(respRaw []byte, channels []string) err
 			AssetType:    a,
 		}
 	}
-	// err = trade.AddTradesToBuffer(d.Name, td...)
+	// err = trade.AddTradesToBuffer(td...)
 	// if err != nil {
 	// 	return err
 	// }
@@ -514,7 +514,7 @@ func (d *Deribit) processTrades(respRaw []byte, channels []string) error {
 			AssetType:    a,
 		}
 	}
-	return trade.AddTradesToBuffer(d.Name, tradeDatas...)
+	return trade.AddTradesToBuffer(tradeDatas...)
 }
 
 func (d *Deribit) processIncrementalTicker(respRaw []byte, channels []string) error {

@@ -3,6 +3,8 @@ package btse
 import (
 	"time"
 
+	"github.com/thrasher-corp/gocryptotrader/types"
+
 	"github.com/thrasher-corp/gocryptotrader/exchanges/asset"
 	"github.com/thrasher-corp/gocryptotrader/exchanges/order"
 )
@@ -319,12 +321,12 @@ type wsOrderBook struct {
 }
 
 type wsTradeData struct {
-	Amount          float64 `json:"amount"`
-	Gain            int64   `json:"gain"`
-	Newest          int64   `json:"newest"`
-	Price           float64 `json:"price"`
-	ID              int64   `json:"serialId"`
-	TransactionTime int64   `json:"transactionUnixTime"`
+	Symbol    string     `json:"symbol"`
+	Side      order.Side `json:"side"`
+	Size      float64    `json:"size"`
+	Price     float64    `json:"price"`
+	TID       int64      `json:"tradeID"`
+	Timestamp types.Time `json:"timestamp"`
 }
 
 type wsTradeHistory struct {

@@ -17,6 +17,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"math"
 	"os"
 	"slices"
 	"strconv"
@@ -26,17 +27,19 @@ import (
 	"github.com/thrasher-corp/gocryptotrader/common"
 )
 
-// LatestVersion used as version param to Deploy to automatically use the latest version
-const LatestVersion = -1
+// UseLatestVersion used as version param to Deploy to automatically use the latest version
+const UseLatestVersion = math.MaxUint16
 
 var (
-	errMissingVersion      = errors.New("missing version")
-	errVersionIncompatible = errors.New("version does not implement ConfigVersion or ExchangeVersion")
-	errModifyingExchange   = errors.New("error modifying exchange config")
-	errNoVersions          = errors.New("error retrieving latest config version: No config versions are registered")
-	errApplyingVersion     = errors.New("error applying version")
-	errConfigVersion       = errors.New("version in config file is higher than the latest available version")
-	errTargetVersion       = errors.New("target downgrade version is higher than the latest available version")
+	errVersionIncompatible   = errors.New("version does not implement ConfigVersion or ExchangeVersion")
+	errModifyingExchange     = errors.New("error modifying exchange config")
+	errNoVersions            = errors.New("error retrieving latest config version: No config versions are registered")
+	errApplyingVersion       = errors.New("error applying version")
+	errTargetVersion         = errors.New("target downgrade version is higher than the latest available version")
+	errConfigVersion         = errors.New("invalid version in config")
+	errConfigVersionUnavail  = errors.New("version is higher than the latest available version")
+	errConfigVersionNegative = errors.New("version is negative")
+	errConfigVersionMax      = errors.New("version is above max versions")
 )
 
 // ConfigVersion is a version that affects the general configuration
@@ -62,9 +65,9 @@ type manager struct {
 var Manager = &manager{}
 
 // Deploy upgrades or downgrades the config between versions
-// Pass LatestVersion for version to use the latest version automatically
+// Pass UseLatestVersion for version to use the latest version automatically
 // Prints an error an exits if the config file version or version param is not registered
-func (m *manager) Deploy(ctx context.Context, j []byte, version int) ([]byte, error) {
+func (m *manager) Deploy(ctx context.Context, j []byte, version uint16) ([]byte, error) {
 	if err := m.checkVersions(); err != nil {
 		return j, err
 	}
@@ -75,7 +78,7 @@ func (m *manager) Deploy(ctx context.Context, j []byte, version int) ([]byte, er
 	}
 
 	target := latest
-	if version != LatestVersion {
+	if version != UseLatestVersion {
 		target = version
 	}
 
@@ -83,20 +86,25 @@ func (m *manager) Deploy(ctx context.Context, j []byte, version int) ([]byte, er
 	defer m.m.RUnlock()
 
 	current64, err := jsonparser.GetInt(j, "version")
-	current := int(current64)
 	switch {
 	case errors.Is(err, jsonparser.KeyPathNotFoundError):
-		current = -1
+		// With no version first upgrade is to Version1; current64 is already 0
 	case err != nil:
-		return j, fmt.Errorf("%w `version`: %w", common.ErrGettingField, err)
+		return j, fmt.Errorf("%w: %w `version`: %w", errConfigVersion, common.ErrGettingField, err)
+	case current64 < 0:
+		return j, fmt.Errorf("%w: %w `version`: `%d`", errConfigVersion, errConfigVersionNegative, current64)
+	case current64 >= UseLatestVersion:
+		return j, fmt.Errorf("%w: %w `version`: `%d`", errConfigVersion, errConfigVersionMax, current64)
 	}
+	current := uint16(current64)
 
 	switch {
 	case target == current:
 		return j, nil
 	case latest < current:
-		warnVersionNotRegistered(current, latest, errConfigVersion)
-		return j, errConfigVersion
+		err := fmt.Errorf("%w: %w", errConfigVersion, errConfigVersionUnavail)
+		warnVersionNotRegistered(current, latest, err)
+		return j, err
 	case target > latest:
 		warnVersionNotRegistered(target, latest, errTargetVersion)
 		return j, errTargetVersion
@@ -115,9 +123,19 @@ func (m *manager) Deploy(ctx context.Context, j []byte, version int) ([]byte, er
 			exchMethod = ExchangeVersion.DowngradeExchange
 		}
 
-		log.Printf("Running %s config version %v\n", action, patchVersion)
-
 		patch := m.versions[patchVersion]
+
+		current = patchVersion
+		if target < current {
+			current = patchVersion - 1
+		}
+
+		if patch == nil {
+			log.Printf("Skipping missing config version %v\n", patchVersion)
+			continue
+		}
+
+		log.Printf("Running %s config version %v\n", action, patchVersion)
 
 		if cPatch, ok := patch.(ConfigVersion); ok {
 			if j, err = configMethod(cPatch, ctx, j); err != nil {
@@ -136,7 +154,7 @@ func (m *manager) Deploy(ctx context.Context, j []byte, version int) ([]byte, er
 			current = patchVersion - 1
 		}
 
-		if j, err = jsonparser.Set(j, []byte(strconv.Itoa(current)), "version"); err != nil {
+		if j, err = jsonparser.Set(j, []byte(strconv.FormatUint(uint64(current), 10)), "version"); err != nil {
 			return j, fmt.Errorf("%w `version` during %s %v: %w", common.ErrSettingField, action, patchVersion, err)
 		}
 	}
@@ -159,7 +177,7 @@ func exchangeDeploy(ctx context.Context, patch ExchangeVersion, method func(Exch
 		defer func() { i++ }()
 		name, err := jsonparser.GetString(exchOrig, "name")
 		if err != nil {
-			errs = common.AppendError(errs, fmt.Errorf("%w: %w `name`: %w", errModifyingExchange, common.ErrGettingField, err))
+			errs = common.AppendError(errs, fmt.Errorf("%w [%d]: %w `name`: %w", errModifyingExchange, i, common.ErrGettingField, err))
 			return
 		}
 		for _, want := range wanted {
@@ -168,12 +186,12 @@ func exchangeDeploy(ctx context.Context, patch ExchangeVersion, method func(Exch
 			}
 			exchNew, err := method(patch, ctx, exchOrig)
 			if err != nil {
-				errs = common.AppendError(errs, fmt.Errorf("%w: %w", errModifyingExchange, err))
+				errs = common.AppendError(errs, fmt.Errorf("%w for `%s`: %w", errModifyingExchange, name, err))
 				continue
 			}
 			if !bytes.Equal(exchNew, exchOrig) {
 				if j, err = jsonparser.Set(j, exchNew, "exchanges", "["+strconv.Itoa(i)+"]"); err != nil {
-					errs = common.AppendError(errs, fmt.Errorf("%w: %w `exchanges.[%d]`: %w", errModifyingExchange, common.ErrSettingField, i, err))
+					errs = common.AppendError(errs, fmt.Errorf("%w `%s`/exchanges[%d]: %w: %w", errModifyingExchange, name, i, common.ErrSettingField, err))
 				}
 			}
 		}
@@ -202,13 +220,13 @@ func (m *manager) registerVersion(ver int, v any) {
 }
 
 // latest returns the highest version number
-func (m *manager) latest() (int, error) {
+func (m *manager) latest() (uint16, error) {
 	m.m.RLock()
 	defer m.m.RUnlock()
 	if len(m.versions) == 0 {
 		return 0, errNoVersions
 	}
-	return len(m.versions) - 1, nil
+	return uint16(len(m.versions)) - 1, nil //nolint:gosec // Ignore this as we hardcode version numbers
 }
 
 // checkVersions ensures that registered versions are consistent
@@ -217,18 +235,15 @@ func (m *manager) checkVersions() error {
 	defer m.m.RUnlock()
 	for ver, v := range m.versions {
 		switch v.(type) {
-		case ExchangeVersion, ConfigVersion:
+		case ExchangeVersion, ConfigVersion, nil:
 		default:
 			return fmt.Errorf("%w: %v", errVersionIncompatible, ver)
-		}
-		if v == nil {
-			return fmt.Errorf("%w: v%v", errMissingVersion, ver)
 		}
 	}
 	return nil
 }
 
-func warnVersionNotRegistered(current, latest int, msg error) {
+func warnVersionNotRegistered(current, latest uint16, msg error) {
 	fmt.Fprintf(os.Stderr, `
 %s ('%d' > '%d')
 Switch back to the version of GoCryptoTrader containing config version '%d' and run:

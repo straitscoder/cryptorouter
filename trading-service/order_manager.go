@@ -109,9 +109,7 @@ func SetupOrderManager(exchangeManager iExchangeManager, communicationsManager i
 	}
 
 	var respectOrderHistoryLimits bool
-	if cfg.RespectOrderHistoryLimits != nil {
-		respectOrderHistoryLimits = *cfg.RespectOrderHistoryLimits
-	}
+	respectOrderHistoryLimits = cfg.RespectOrderHistoryLimits
 	om := &OrderManager{
 		shutdown:                      make(chan struct{}),
 		activelyTrackFuturesPositions: cfg.ActivelyTrackFuturesPositions,
