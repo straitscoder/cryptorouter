@@ -27,12 +27,12 @@ type MarketMaker struct {
 	ProcessingOrder      int32
 	FetchTicker          int32
 	processExchangeOrder int32
-	// FixEngine            *fixengine.FixEngine
-	TSClient        *tsclient.TSClient
-	ExchangeManager *ExchangeManager
-	SocketManager   *websocketRoutineManager
-	PairFormatter   *currency.PairFormat
-	Shutdown        chan struct{}
+	FixEngine            *fixengine.FixEngine
+	TSClient             *tsclient.TSClient
+	ExchangeManager      *ExchangeManager
+	SocketManager        *websocketRoutineManager
+	PairFormatter        *currency.PairFormat
+	Shutdown             chan struct{}
 }
 
 func NewMarketMaker(exchManager *ExchangeManager, eventRoutine *websocketRoutineManager) (*MarketMaker, error) {
@@ -50,11 +50,14 @@ func NewMarketMaker(exchManager *ExchangeManager, eventRoutine *websocketRoutine
 	marketMaker.Shutdown = make(chan struct{})
 	marketMaker.ExchangeManager = exchManager
 	marketMaker.SocketManager = eventRoutine
-	// marketMaker.FixEngine = fixengine.NewFixEngine()
+	marketMaker.FixEngine = fixengine.NewFixEngine()
 	return &marketMaker, nil
 }
 
 func (m *MarketMaker) Start() error {
+	if err := m.FixEngine.Start(); err != nil {
+		return err
+	}
 	if err := m.TSClient.Start(); err != nil {
 		return err
 	}
@@ -258,7 +261,8 @@ FairPricesLoop:
 					Amount:    quantityLevels[b%len(quantityLevels)], // use config supplied quantity level that base on book depth and prevent out of range error
 				}
 
-				if err := m.TSClient.NewOrder(context.Background(), reqOrder); err != nil {
+				// if err := m.TSClient.NewOrder(context.Background(), reqOrder); err != nil {
+				if err := m.FixEngine.NewOrderSingle(reqOrder); err != nil {
 					log.Printf("error when sent new order request: %+v", err)
 					continue
 				}
@@ -275,7 +279,8 @@ FairPricesLoop:
 					Price:     askPriceLeves[b],
 					Amount:    quantityLevels[b%len(quantityLevels)],
 				}
-				if err := m.TSClient.NewOrder(context.Background(), reqOrder); err != nil {
+				// if err := m.TSClient.NewOrder(context.Background(), reqOrder); err != nil {
+				if err := m.FixEngine.NewOrderSingle(reqOrder); err != nil {
 					log.Printf("error when sent new order request: %+v", err)
 					continue
 				}
@@ -382,7 +387,8 @@ func (m *MarketMaker) CheckPriceDifference(fairPrice float64, orderDetail order.
 
 func (m *MarketMaker) CancelAllOrders(orders []order.Detail) error {
 	for i := range orders {
-		if err := m.TSClient.CancelOrder(context.Background(), orders[i]); err != nil {
+		// if err := m.TSClient.CancelOrder(context.Background(), orders[i]); err != nil {
+		if err := m.FixEngine.CancelOrder(orders[i]); err != nil {
 			return err
 		}
 	}
@@ -405,7 +411,8 @@ func (m *MarketMaker) ShutdownRoutine() {
 	}
 
 	for i := range existingOrders {
-		if err := m.TSClient.CancelOrder(context.Background(), existingOrders[i]); err != nil {
+		// if err := m.TSClient.CancelOrder(context.Background(), existingOrders[i]); err != nil {
+		if err := m.FixEngine.CancelOrder(existingOrders[i]); err != nil {
 			log.Printf("error when shutting down market maker: %+v", err)
 			return
 		}
